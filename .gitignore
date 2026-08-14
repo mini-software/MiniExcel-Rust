@@ -1,0 +1,6 @@
+/target/
+/web-demo/dist/
+/web-demo/node_modules/
+/web-demo/playwright-report/
+/web-demo/test-results/
+*.log

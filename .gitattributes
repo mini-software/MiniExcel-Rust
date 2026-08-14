@@ -1,0 +1,8 @@
+* text=auto
+
+*.html -text
+*.css -text
+*.js -text
+
+tests/data/** binary
+tests/data/** linguist-generated

@@ -127,7 +127,7 @@ dotnet test ../MiniExcel/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.c
 
 ## 公开 API
 
-`MiniExcel` 是唯一公开的行为入口。reader、writer、ZIP/XML parser 和 iterator 具体类型全部保留在 crate 内部。crate 根其余导出仅为数据与配置契约：`CellValue`、`DynamicRow`、`CellReference`、`ReadOptions`、`WriteOptions`、`HeaderMode`、`SheetInfo`、`SheetType`、`SheetVisibility`、`Error` 和 `Result`。日期/时间 Serde adapter 位于 `serde_helpers`。
+`MiniExcel` 是唯一公开的行为入口。reader、writer、ZIP/XML parser 和 iterator 具体类型全部保留在 crate 内部。crate 根其余导出仅为数据与配置契约：`CellValue`、`DynamicRow`、`CellReference`、`ExcelRange`、`ReadOptions`、`WriteOptions`、`HeaderMode`、`SheetInfo`、`SheetType`、`SheetVisibility`、`Error` 和 `Result`。日期/时间 Serde adapter 位于 `serde_helpers`。
 
 路径和内存 XLSX 数据都可以读取 worksheet 元数据：
 
@@ -135,7 +135,13 @@ dotnet test ../MiniExcel/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.c
 use miniexcel::{MiniExcel, SheetVisibility};
 
 for sheet in MiniExcel::get_sheet_info("book.xlsx")? {
-    println!("{}: {:?}", sheet.name(), sheet.visibility());
+    println!(
+        "{} (id={}): {:?}, active={}",
+        sheet.name(),
+        sheet.id(),
+        sheet.visibility(),
+        sheet.is_active()
+    );
     if sheet.visibility() == SheetVisibility::Hidden {
         println!("{} is hidden", sheet.name());
     }

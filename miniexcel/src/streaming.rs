@@ -79,6 +79,18 @@ pub(crate) fn sheet_names_from_bytes(bytes: &[u8]) -> Result<Vec<String>> {
     ooxml::sheet_names_from_bytes(bytes)
 }
 
+pub(crate) fn sheet_names(path: impl AsRef<Path>) -> Result<Vec<String>> {
+    ooxml::sheet_names(path)
+}
+
+pub(crate) fn sheet_info(path: impl AsRef<Path>) -> Result<Vec<crate::SheetInfo>> {
+    ooxml::sheet_info(path)
+}
+
+pub(crate) fn sheet_info_from_bytes(bytes: &[u8]) -> Result<Vec<crate::SheetInfo>> {
+    ooxml::sheet_info_from_bytes(bytes)
+}
+
 pub(crate) fn sheet_dimensions(path: impl AsRef<Path>) -> Result<Vec<crate::ExcelRange>> {
     ooxml::sheet_dimensions(path)
 }

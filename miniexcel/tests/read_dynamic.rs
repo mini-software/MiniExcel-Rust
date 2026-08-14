@@ -200,12 +200,20 @@ fn reads_sheet_metadata_and_visibility_from_paths_and_bytes() {
 
     assert_eq!(sheet_info.len(), 4);
     assert_eq!(sheet_info[0].index(), 0);
+    assert_eq!(sheet_info[0].id(), 2);
     assert_eq!(sheet_info[0].name(), "Sheet2");
     assert_eq!(sheet_info[0].sheet_type(), SheetType::Worksheet);
     assert_eq!(sheet_info[0].visibility(), SheetVisibility::Visible);
+    assert!(!sheet_info[0].is_active());
+    assert_eq!(sheet_info[1].id(), 1);
+    assert!(!sheet_info[1].is_active());
+    assert_eq!(sheet_info[2].id(), 3);
+    assert!(sheet_info[2].is_active());
     assert_eq!(sheet_info[3].index(), 3);
+    assert_eq!(sheet_info[3].id(), 5);
     assert_eq!(sheet_info[3].name(), "HiddenSheet4");
     assert_eq!(sheet_info[3].visibility(), SheetVisibility::Hidden);
+    assert!(!sheet_info[3].is_active());
 
     let bytes = std::fs::read(path).expect("read fixture bytes");
     assert_eq!(

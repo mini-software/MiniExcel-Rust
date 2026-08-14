@@ -1,7 +1,5 @@
-use std::io::Cursor;
 use std::path::Path;
 
-use calamine::{Reader, Xlsx, open_workbook};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -15,8 +13,7 @@ pub struct MiniExcel;
 impl MiniExcel {
     /// Returns worksheet names in workbook order.
     pub fn get_sheet_names(path: impl AsRef<Path>) -> Result<Vec<String>> {
-        let workbook: Xlsx<_> = open_workbook(path)?;
-        Ok(workbook.sheet_names())
+        crate::streaming::sheet_names(path)
     }
 
     /// Returns worksheet names from an in-memory XLSX workbook.
@@ -26,24 +23,12 @@ impl MiniExcel {
 
     /// Returns worksheet metadata in workbook order.
     pub fn get_sheet_info(path: impl AsRef<Path>) -> Result<Vec<SheetInfo>> {
-        let workbook: Xlsx<_> = open_workbook(path)?;
-        Ok(workbook
-            .sheets_metadata()
-            .iter()
-            .enumerate()
-            .map(|(index, sheet)| SheetInfo::from_calamine(index, sheet))
-            .collect())
+        crate::streaming::sheet_info(path)
     }
 
     /// Returns worksheet metadata from an in-memory XLSX workbook.
     pub fn get_sheet_info_from_bytes(bytes: &[u8]) -> Result<Vec<SheetInfo>> {
-        let workbook = Xlsx::new(Cursor::new(bytes))?;
-        Ok(workbook
-            .sheets_metadata()
-            .iter()
-            .enumerate()
-            .map(|(index, sheet)| SheetInfo::from_calamine(index, sheet))
-            .collect())
+        crate::streaming::sheet_info_from_bytes(bytes)
     }
 
     /// Returns the used range of each worksheet in workbook order.

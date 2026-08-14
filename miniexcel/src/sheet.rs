@@ -1,5 +1,3 @@
-use calamine::{Sheet, SheetType as CalamineSheetType, SheetVisible};
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SheetType {
     Worksheet,
@@ -18,30 +16,29 @@ pub enum SheetVisibility {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SheetInfo {
+    id: u32,
     index: usize,
     name: String,
     sheet_type: SheetType,
     visibility: SheetVisibility,
+    is_active: bool,
 }
 
 impl SheetInfo {
-    pub(crate) fn from_calamine(index: usize, sheet: &Sheet) -> Self {
-        Self {
-            index,
-            name: sheet.name.clone(),
-            sheet_type: match sheet.typ {
-                CalamineSheetType::WorkSheet => SheetType::Worksheet,
-                CalamineSheetType::DialogSheet => SheetType::DialogSheet,
-                CalamineSheetType::MacroSheet => SheetType::MacroSheet,
-                CalamineSheetType::ChartSheet => SheetType::ChartSheet,
-                CalamineSheetType::Vba => SheetType::Vba,
-            },
-            visibility: match sheet.visible {
-                SheetVisible::Visible => SheetVisibility::Visible,
-                SheetVisible::Hidden => SheetVisibility::Hidden,
-                SheetVisible::VeryHidden => SheetVisibility::VeryHidden,
-            },
-        }
+    pub(crate) fn new(
+        id: u32,
+        index: usize,
+        name: String,
+        sheet_type: SheetType,
+        visibility: SheetVisibility,
+        is_active: bool,
+    ) -> Self {
+        Self { id, index, name, sheet_type, visibility, is_active }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> u32 {
+        self.id
     }
 
     #[must_use]
@@ -62,5 +59,10 @@ impl SheetInfo {
     #[must_use]
     pub const fn visibility(&self) -> SheetVisibility {
         self.visibility
+    }
+
+    #[must_use]
+    pub const fn is_active(&self) -> bool {
+        self.is_active
     }
 }

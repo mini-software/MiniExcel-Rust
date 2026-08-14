@@ -30,6 +30,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Typed `Query<T>` | `MiniExcel::query_as<T>()` | Streams rows and applies Serde mapping one row at a time |
 | `QueryRange` | `ReadOptions::with_start_cell()` / `with_end_cell()` | Inclusive A1 range for dynamic and typed reads |
 | `GetSheetNames` | `MiniExcel::get_sheet_names()` | Workbook order is preserved |
+| `GetSheetInformations` | `MiniExcel::get_sheet_info()` | Includes OOXML ID, order, name, type, visibility, and active state |
 | `GetSheetDimensions` | `MiniExcel::get_sheet_dimensions()` | Returns used ranges in workbook order with 1-based indices |
 | `GetColumns` | `MiniExcel::get_columns()` | Returns selected dynamic keys or an empty vector |
 | `startCell` | `ReadOptions::with_start_cell()` | A1 start coordinate |
@@ -119,7 +120,7 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | Dynamic and typed XLSX query | Implemented | Yes |
 | `QueryRange` with A1 coordinates | Implemented | Yes |
 | `GetSheetNames` and `GetColumns` | Implemented | Yes |
-| `GetSheetInformations` name/index/type/visibility | Implemented | Rust/browser tests |
+| `GetSheetInformations` ID/index/name/type/visibility/active | Implemented | Rust tests against .NET fixtures |
 | `GetSheetDimensions` | Implemented | Rust tests against .NET fixtures |
 | New-workbook `SaveAs` | Implemented and roundtrip-tested | Not yet |
 | Byte-array query/write for WASM | Implemented | Rust/browser tests |

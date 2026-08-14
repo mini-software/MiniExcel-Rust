@@ -18,7 +18,10 @@ use zip::result::ZipError;
 
 use crate::cell::MAX_EXCEL_COLUMN;
 use crate::reader::SelectedRow;
-use crate::{CellReference, Error, ExcelRange, ReadOptions, Result};
+use crate::{
+    CellReference, Error, ExcelRange, ReadOptions, Result, SheetInfo as PublicSheetInfo, SheetType,
+    SheetVisibility,
+};
 
 const ROW_BUFFER_SIZE: usize = 8;
 
@@ -54,6 +57,56 @@ pub(super) fn sheet_names_from_bytes(bytes: &[u8]) -> Result<Vec<String>> {
     Ok(read_workbook_info(&mut archive)?.sheets.into_iter().map(|sheet| sheet.name).collect())
 }
 
+pub(super) fn sheet_names(path: impl AsRef<Path>) -> Result<Vec<String>> {
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(BufReader::new(file))
+        .map_err(|error| stream_error("cannot open XLSX workbook:", error))?;
+    Ok(read_workbook_info(&mut archive)?.sheets.into_iter().map(|sheet| sheet.name).collect())
+}
+
+pub(super) fn sheet_info(path: impl AsRef<Path>) -> Result<Vec<PublicSheetInfo>> {
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(BufReader::new(file))
+        .map_err(|error| stream_error("cannot open XLSX workbook:", error))?;
+    read_sheet_info(&mut archive)
+}
+
+pub(super) fn sheet_info_from_bytes(bytes: &[u8]) -> Result<Vec<PublicSheetInfo>> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|error| stream_error("cannot open in-memory XLSX data:", error))?;
+    read_sheet_info(&mut archive)
+}
+
+fn read_sheet_info<R>(archive: &mut ZipArchive<R>) -> Result<Vec<PublicSheetInfo>>
+where
+    R: Read + Seek,
+{
+    let workbook = read_workbook_info(archive)?;
+    let relationships = read_workbook_relationships(archive)?;
+    workbook
+        .sheets
+        .into_iter()
+        .enumerate()
+        .map(|(index, sheet)| {
+            let relationship = relationships.get(&sheet.relationship_id).ok_or_else(|| {
+                Error::stream(format!(
+                    "worksheet relationship '{}' was not found",
+                    sheet.relationship_id
+                ))
+            })?;
+            let sheet_type = sheet_type_from_relationship(&relationship.relationship_type)?;
+            Ok(PublicSheetInfo::new(
+                sheet.id,
+                index,
+                sheet.name,
+                sheet_type,
+                sheet.visibility,
+                index == workbook.active_sheet_index,
+            ))
+        })
+        .collect()
+}
+
 pub(super) fn sheet_dimensions(path: impl AsRef<Path>) -> Result<Vec<ExcelRange>> {
     let file = File::open(path)?;
     let mut archive = ZipArchive::new(BufReader::new(file))
@@ -72,16 +125,19 @@ where
     R: Read + Seek,
 {
     let workbook = read_workbook_info(archive)?;
-    let relationship_targets = read_relationship_targets(archive)?;
+    let relationships = read_workbook_relationships(archive)?;
     let cancelled = AtomicBool::new(false);
     let mut dimensions = Vec::with_capacity(workbook.sheets.len());
     for sheet in workbook.sheets {
-        let sheet_path = relationship_targets.get(&sheet.relationship_id).ok_or_else(|| {
-            Error::stream(format!(
-                "worksheet relationship '{}' was not found",
-                sheet.relationship_id
-            ))
-        })?;
+        let sheet_path = &relationships
+            .get(&sheet.relationship_id)
+            .ok_or_else(|| {
+                Error::stream(format!(
+                    "worksheet relationship '{}' was not found",
+                    sheet.relationship_id
+                ))
+            })?
+            .target;
         let extent = match read_declared_worksheet_extent(archive, sheet_path)? {
             Some(extent) => extent,
             None => scan_worksheet_extent(archive, sheet_path, &cancelled)?,
@@ -180,13 +236,21 @@ enum CellFormat {
 
 #[derive(Default)]
 struct WorkbookInfo {
-    sheets: Vec<SheetInfo>,
+    sheets: Vec<WorkbookSheet>,
     is_1904: bool,
+    active_sheet_index: usize,
 }
 
-struct SheetInfo {
+struct WorkbookSheet {
+    id: u32,
     name: String,
     relationship_id: String,
+    visibility: SheetVisibility,
+}
+
+struct WorkbookRelationship {
+    target: String,
+    relationship_type: String,
 }
 
 fn worker_main<R>(
@@ -285,9 +349,20 @@ where
                     .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
             }
             Event::Start(event) | Event::Empty(event)
+                if is_name(event.name().as_ref(), b"workbookView") =>
+            {
+                if let Some(index) = attribute(&event, xml.decoder(), b"activeTab")?
+                    .and_then(|value| value.parse().ok())
+                {
+                    workbook.active_sheet_index = index;
+                }
+            }
+            Event::Start(event) | Event::Empty(event)
                 if is_name(event.name().as_ref(), b"sheet") =>
             {
-                let Some(name) = attribute(&event, xml.decoder(), b"name")? else {
+                let Some(name) =
+                    attribute(&event, xml.decoder(), b"name")?.filter(|name| !name.is_empty())
+                else {
                     buffer.clear();
                     continue;
                 };
@@ -295,7 +370,25 @@ where
                     buffer.clear();
                     continue;
                 };
-                workbook.sheets.push(SheetInfo { name, relationship_id });
+                let id = attribute(&event, xml.decoder(), b"sheetId")?
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0);
+                let visibility = match attribute(&event, xml.decoder(), b"state")? {
+                    None => SheetVisibility::Visible,
+                    Some(state) if state.eq_ignore_ascii_case("visible") => {
+                        SheetVisibility::Visible
+                    }
+                    Some(state) if state.eq_ignore_ascii_case("hidden") => SheetVisibility::Hidden,
+                    Some(state) if state.eq_ignore_ascii_case("veryHidden") => {
+                        SheetVisibility::VeryHidden
+                    }
+                    Some(state) => {
+                        return Err(Error::stream(format!(
+                            "unable to parse state '{state}' for worksheet '{name}'"
+                        )));
+                    }
+                };
+                workbook.sheets.push(WorkbookSheet { id, name, relationship_id, visibility });
             }
             Event::Eof => break,
             _ => {}
@@ -339,7 +432,9 @@ where
     Err(Error::stream(format!("worksheet relationship '{relationship_id}' was not found")))
 }
 
-fn read_relationship_targets<R>(archive: &mut ZipArchive<R>) -> Result<HashMap<String, String>>
+fn read_workbook_relationships<R>(
+    archive: &mut ZipArchive<R>,
+) -> Result<HashMap<String, WorkbookRelationship>>
 where
     R: Read + Seek,
 {
@@ -348,7 +443,7 @@ where
         .map_err(|error| stream_error("cannot read workbook relationships:", error))?;
     let mut xml = Reader::from_reader(BufReader::new(file));
     let mut buffer = Vec::new();
-    let mut targets = HashMap::new();
+    let mut relationships = HashMap::new();
     loop {
         match xml
             .read_event_into(&mut buffer)
@@ -357,11 +452,18 @@ where
             Event::Start(event) | Event::Empty(event)
                 if is_name(event.name().as_ref(), b"Relationship") =>
             {
-                if let (Some(id), Some(target)) = (
+                if let (Some(id), Some(target), Some(relationship_type)) = (
                     attribute(&event, xml.decoder(), b"Id")?,
                     attribute(&event, xml.decoder(), b"Target")?,
+                    attribute(&event, xml.decoder(), b"Type")?,
                 ) {
-                    targets.insert(id, normalize_zip_path(&target));
+                    relationships.insert(
+                        id,
+                        WorkbookRelationship {
+                            target: normalize_zip_path(&target),
+                            relationship_type,
+                        },
+                    );
                 }
             }
             Event::Eof => break,
@@ -369,7 +471,20 @@ where
         }
         buffer.clear();
     }
-    Ok(targets)
+    Ok(relationships)
+}
+
+fn sheet_type_from_relationship(relationship_type: &str) -> Result<SheetType> {
+    match relationship_type.rsplit('/').next() {
+        Some("worksheet") => Ok(SheetType::Worksheet),
+        Some("dialogsheet") => Ok(SheetType::DialogSheet),
+        Some("macrosheet") => Ok(SheetType::MacroSheet),
+        Some("chartsheet") => Ok(SheetType::ChartSheet),
+        Some("vbaProject") => Ok(SheetType::Vba),
+        _ => Err(Error::stream(format!(
+            "unsupported worksheet relationship type '{relationship_type}'"
+        ))),
+    }
 }
 
 fn read_shared_strings<R>(archive: &mut ZipArchive<R>) -> Result<Vec<String>>

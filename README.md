@@ -129,7 +129,7 @@ Both commands must pass for a behavior to be considered equivalent. See [Compati
 
 ## Public API
 
-`MiniExcel` is the only public behavior entry point. Reader, writer, ZIP/XML parser, and iterator implementation types are internal. The remaining root exports are data and configuration contracts: `CellValue`, `DynamicRow`, `CellReference`, `ReadOptions`, `WriteOptions`, `HeaderMode`, `SheetInfo`, `SheetType`, `SheetVisibility`, `Error`, and `Result`. Date/time Serde adapters are available under `serde_helpers`.
+`MiniExcel` is the only public behavior entry point. Reader, writer, ZIP/XML parser, and iterator implementation types are internal. The remaining root exports are data and configuration contracts: `CellValue`, `DynamicRow`, `CellReference`, `ExcelRange`, `ReadOptions`, `WriteOptions`, `HeaderMode`, `SheetInfo`, `SheetType`, `SheetVisibility`, `Error`, and `Result`. Date/time Serde adapters are available under `serde_helpers`.
 
 Worksheet metadata is available from paths or in-memory XLSX data:
 
@@ -137,7 +137,13 @@ Worksheet metadata is available from paths or in-memory XLSX data:
 use miniexcel::{MiniExcel, SheetVisibility};
 
 for sheet in MiniExcel::get_sheet_info("book.xlsx")? {
-    println!("{}: {:?}", sheet.name(), sheet.visibility());
+    println!(
+        "{} (id={}): {:?}, active={}",
+        sheet.name(),
+        sheet.id(),
+        sheet.visibility(),
+        sheet.is_active()
+    );
     if sheet.visibility() == SheetVisibility::Hidden {
         println!("{} is hidden", sheet.name());
     }

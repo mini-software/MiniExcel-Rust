@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 
 use crate::streaming::{StreamingRows, StreamingTypedRows};
 use crate::writer::XlsxWriter;
-use crate::{DynamicRow, ReadOptions, Result, SheetInfo, WriteOptions};
+use crate::{DynamicRow, ExcelRange, ReadOptions, Result, SheetInfo, WriteOptions};
 
 /// Convenience entry points for the common path-based MiniExcel workflow.
 pub struct MiniExcel;
@@ -44,6 +44,16 @@ impl MiniExcel {
             .enumerate()
             .map(|(index, sheet)| SheetInfo::from_calamine(index, sheet))
             .collect())
+    }
+
+    /// Returns the used range of each worksheet in workbook order.
+    pub fn get_sheet_dimensions(path: impl AsRef<Path>) -> Result<Vec<ExcelRange>> {
+        crate::streaming::sheet_dimensions(path)
+    }
+
+    /// Returns worksheet used ranges from an in-memory XLSX workbook.
+    pub fn get_sheet_dimensions_from_bytes(bytes: &[u8]) -> Result<Vec<ExcelRange>> {
+        crate::streaming::sheet_dimensions_from_bytes(bytes)
     }
 
     /// Streams dynamic rows from the first worksheet without a header row.

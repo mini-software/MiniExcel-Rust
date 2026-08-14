@@ -166,6 +166,34 @@ fn selects_sheets_in_workbook_order() {
 }
 
 #[test]
+fn reads_sheet_dimensions_in_workbook_order() {
+    let dimensions = MiniExcel::get_sheet_dimensions(common::fixture("TestTypeMapping.xlsx"))
+        .expect("read sheet dimensions");
+    assert_eq!(dimensions.len(), 1);
+    assert_eq!(dimensions[0].start_cell().expect("start cell").to_string(), "A1");
+    assert_eq!(dimensions[0].end_cell().expect("end cell").to_string(), "H101");
+    assert_eq!(dimensions[0].row_count(), 101);
+    assert_eq!(dimensions[0].column_count(), 8);
+    assert_eq!(dimensions[0].start_row_index(), Some(1));
+    assert_eq!(dimensions[0].end_row_index(), Some(101));
+    assert_eq!(dimensions[0].start_column_index(), Some(1));
+    assert_eq!(dimensions[0].end_column_index(), Some(8));
+
+    let path = common::fixture("TestMultiSheet.xlsx");
+    let dimensions = MiniExcel::get_sheet_dimensions(&path).expect("read multi-sheet dimensions");
+    assert_eq!(dimensions.len(), 3);
+    assert_eq!(dimensions[0].end_cell().expect("Sheet1 end cell").to_string(), "D12");
+    assert_eq!(dimensions[1].end_cell().expect("Sheet2 end cell").to_string(), "D12");
+    assert_eq!(dimensions[2].end_cell().expect("Sheet3 end cell").to_string(), "B5");
+
+    let bytes = std::fs::read(path).expect("read fixture bytes");
+    assert_eq!(
+        MiniExcel::get_sheet_dimensions_from_bytes(&bytes).expect("read in-memory dimensions"),
+        dimensions
+    );
+}
+
+#[test]
 fn reads_sheet_metadata_and_visibility_from_paths_and_bytes() {
     let path = common::fixture("TestMultiSheetWithHiddenSheet.xlsx");
     let sheet_info = MiniExcel::get_sheet_info(&path).expect("read sheet metadata");

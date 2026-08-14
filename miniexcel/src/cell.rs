@@ -156,6 +156,84 @@ impl TryFrom<&str> for CellReference {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExcelRange {
+    start_cell: Option<CellReference>,
+    end_cell: Option<CellReference>,
+}
+
+impl ExcelRange {
+    pub(crate) fn from_bounds(
+        start_row: Option<usize>,
+        start_column: Option<usize>,
+        end_row: Option<usize>,
+        end_column: Option<usize>,
+    ) -> Self {
+        let start_cell =
+            start_row.zip(start_column).map(|(row, column)| CellReference { row, column });
+        let end_cell = end_row.zip(end_column).map(|(row, column)| CellReference { row, column });
+        Self { start_cell, end_cell }
+    }
+
+    #[must_use]
+    pub const fn start_cell(&self) -> Option<CellReference> {
+        self.start_cell
+    }
+
+    #[must_use]
+    pub const fn end_cell(&self) -> Option<CellReference> {
+        self.end_cell
+    }
+
+    #[must_use]
+    pub const fn start_row_index(&self) -> Option<usize> {
+        match self.start_cell {
+            Some(cell) => Some(cell.row + 1),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn end_row_index(&self) -> Option<usize> {
+        match self.end_cell {
+            Some(cell) => Some(cell.row + 1),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn start_column_index(&self) -> Option<usize> {
+        match self.start_cell {
+            Some(cell) => Some(cell.column + 1),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn end_column_index(&self) -> Option<usize> {
+        match self.end_cell {
+            Some(cell) => Some(cell.column + 1),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn row_count(&self) -> usize {
+        match (self.start_cell, self.end_cell) {
+            (Some(start), Some(end)) => end.row - start.row + 1,
+            _ => 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn column_count(&self) -> usize {
+        match (self.start_cell, self.end_cell) {
+            (Some(start), Some(end)) => end.column - start.column + 1,
+            _ => 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::CellReference;

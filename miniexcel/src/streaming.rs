@@ -79,6 +79,14 @@ pub(crate) fn sheet_names_from_bytes(bytes: &[u8]) -> Result<Vec<String>> {
     ooxml::sheet_names_from_bytes(bytes)
 }
 
+pub(crate) fn sheet_dimensions(path: impl AsRef<Path>) -> Result<Vec<crate::ExcelRange>> {
+    ooxml::sheet_dimensions(path)
+}
+
+pub(crate) fn sheet_dimensions_from_bytes(bytes: &[u8]) -> Result<Vec<crate::ExcelRange>> {
+    ooxml::sheet_dimensions_from_bytes(bytes)
+}
+
 fn to_dynamic_row(headers: &mut Headers, selected_row: crate::reader::SelectedRow) -> DynamicRow {
     let headers = headers.for_width(selected_row.values.len());
     let mut row = DynamicRow::with_capacity(headers.len());

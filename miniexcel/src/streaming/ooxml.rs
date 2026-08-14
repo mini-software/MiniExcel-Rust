@@ -18,7 +18,7 @@ use zip::result::ZipError;
 
 use crate::cell::MAX_EXCEL_COLUMN;
 use crate::reader::SelectedRow;
-use crate::{Error, ReadOptions, Result};
+use crate::{CellReference, Error, ExcelRange, ReadOptions, Result};
 
 const ROW_BUFFER_SIZE: usize = 8;
 
@@ -52,6 +52,48 @@ pub(super) fn sheet_names_from_bytes(bytes: &[u8]) -> Result<Vec<String>> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|error| stream_error("cannot open in-memory XLSX data:", error))?;
     Ok(read_workbook_info(&mut archive)?.sheets.into_iter().map(|sheet| sheet.name).collect())
+}
+
+pub(super) fn sheet_dimensions(path: impl AsRef<Path>) -> Result<Vec<ExcelRange>> {
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(BufReader::new(file))
+        .map_err(|error| stream_error("cannot open XLSX workbook:", error))?;
+    read_sheet_dimensions(&mut archive)
+}
+
+pub(super) fn sheet_dimensions_from_bytes(bytes: &[u8]) -> Result<Vec<ExcelRange>> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|error| stream_error("cannot open in-memory XLSX data:", error))?;
+    read_sheet_dimensions(&mut archive)
+}
+
+fn read_sheet_dimensions<R>(archive: &mut ZipArchive<R>) -> Result<Vec<ExcelRange>>
+where
+    R: Read + Seek,
+{
+    let workbook = read_workbook_info(archive)?;
+    let relationship_targets = read_relationship_targets(archive)?;
+    let cancelled = AtomicBool::new(false);
+    let mut dimensions = Vec::with_capacity(workbook.sheets.len());
+    for sheet in workbook.sheets {
+        let sheet_path = relationship_targets.get(&sheet.relationship_id).ok_or_else(|| {
+            Error::stream(format!(
+                "worksheet relationship '{}' was not found",
+                sheet.relationship_id
+            ))
+        })?;
+        let extent = match read_declared_worksheet_extent(archive, sheet_path)? {
+            Some(extent) => extent,
+            None => scan_worksheet_extent(archive, sheet_path, &cancelled)?,
+        };
+        dimensions.push(ExcelRange::from_bounds(
+            extent.start_row,
+            extent.start_column,
+            extent.end_row,
+            extent.end_column,
+        ));
+    }
+    Ok(dimensions)
 }
 
 impl StreamingRawRows {
@@ -297,6 +339,39 @@ where
     Err(Error::stream(format!("worksheet relationship '{relationship_id}' was not found")))
 }
 
+fn read_relationship_targets<R>(archive: &mut ZipArchive<R>) -> Result<HashMap<String, String>>
+where
+    R: Read + Seek,
+{
+    let file = archive
+        .by_name("xl/_rels/workbook.xml.rels")
+        .map_err(|error| stream_error("cannot read workbook relationships:", error))?;
+    let mut xml = Reader::from_reader(BufReader::new(file));
+    let mut buffer = Vec::new();
+    let mut targets = HashMap::new();
+    loop {
+        match xml
+            .read_event_into(&mut buffer)
+            .map_err(|error| stream_error("invalid workbook relationships:", error))?
+        {
+            Event::Start(event) | Event::Empty(event)
+                if is_name(event.name().as_ref(), b"Relationship") =>
+            {
+                if let (Some(id), Some(target)) = (
+                    attribute(&event, xml.decoder(), b"Id")?,
+                    attribute(&event, xml.decoder(), b"Target")?,
+                ) {
+                    targets.insert(id, normalize_zip_path(&target));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(targets)
+}
+
 fn read_shared_strings<R>(archive: &mut ZipArchive<R>) -> Result<Vec<String>>
 where
     R: Read + Seek,
@@ -428,8 +503,53 @@ struct RowState {
 
 #[derive(Clone, Copy, Default)]
 struct WorksheetExtent {
+    start_row: Option<usize>,
+    start_column: Option<usize>,
     end_row: Option<usize>,
     end_column: Option<usize>,
+}
+
+fn read_declared_worksheet_extent<R>(
+    archive: &mut ZipArchive<R>,
+    sheet_path: &str,
+) -> Result<Option<WorksheetExtent>>
+where
+    R: Read + Seek,
+{
+    let file = archive
+        .by_name(sheet_path)
+        .map_err(|error| stream_error("cannot read worksheet dimensions:", error))?;
+    let mut xml = Reader::from_reader(BufReader::new(file));
+    let mut buffer = Vec::new();
+    loop {
+        match xml
+            .read_event_into(&mut buffer)
+            .map_err(|error| stream_error("invalid worksheet XML dimensions:", error))?
+        {
+            Event::Start(event) | Event::Empty(event)
+                if is_name(event.name().as_ref(), b"dimension") =>
+            {
+                let reference = attribute(&event, xml.decoder(), b"ref")?
+                    .ok_or_else(|| Error::stream("worksheet dimension has no reference"))?;
+                let mut cells = reference.split(':');
+                let start = cells
+                    .next()
+                    .ok_or_else(|| Error::stream("worksheet dimension is empty"))?
+                    .parse::<CellReference>()?;
+                let end = cells.next().unwrap_or(&reference).parse::<CellReference>()?;
+                return Ok(Some(WorksheetExtent {
+                    start_row: Some(start.row()),
+                    start_column: Some(start.column()),
+                    end_row: Some(end.row()),
+                    end_column: Some(end.column()),
+                }));
+            }
+            Event::Start(event) if is_name(event.name().as_ref(), b"sheetData") => return Ok(None),
+            Event::Eof => return Ok(None),
+            _ => {}
+        }
+        buffer.clear();
+    }
 }
 
 fn scan_worksheet_extent<R>(
@@ -469,6 +589,7 @@ where
                 let row = row_index(&event, xml.decoder(), last_declared_row)?;
                 current_row = Some(row);
                 last_declared_row = Some(row);
+                extent.start_row = Some(extent.start_row.map_or(row, |start| start.min(row)));
                 extent.end_row = Some(extent.end_row.map_or(row, |end| end.max(row)));
                 next_column = 0;
             }
@@ -479,6 +600,8 @@ where
                     .and_then(|reference| parse_column(&reference))
                     .unwrap_or(next_column);
                 next_column = column.saturating_add(1);
+                extent.start_column =
+                    Some(extent.start_column.map_or(column, |start| start.min(column)));
                 extent.end_column = Some(extent.end_column.map_or(column, |end| end.max(column)));
             }
             Event::End(event) if is_name(event.name().as_ref(), b"row") => {

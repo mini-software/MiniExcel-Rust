@@ -52,6 +52,18 @@ enum ErrorKind {
         #[source]
         source: calamine::DeError,
     },
+
+    #[error("invalid analytics query: {0}")]
+    InvalidQuery(String),
+
+    #[error("analytics failed in worksheet '{sheet}' at {column}{row}: {message}")]
+    Analytics { sheet: String, row: usize, column: String, message: String },
+
+    #[error("analytics query exceeded max_groups ({limit})")]
+    GroupLimit { limit: usize },
+
+    #[error("RAG export of {visibility} worksheet '{sheet}' requires explicit opt-in")]
+    HiddenSheet { sheet: String, visibility: &'static str },
 }
 
 impl Error {
@@ -101,6 +113,33 @@ impl Error {
         source: calamine::DeError,
     ) -> Self {
         ErrorKind::Deserialize { sheet: sheet.into(), row, source }.into()
+    }
+
+    pub(crate) fn invalid_query(message: impl Into<String>) -> Self {
+        ErrorKind::InvalidQuery(message.into()).into()
+    }
+
+    pub(crate) fn analytics(
+        sheet: impl Into<String>,
+        row: usize,
+        column: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        ErrorKind::Analytics {
+            sheet: sheet.into(),
+            row,
+            column: column.into(),
+            message: message.into(),
+        }
+        .into()
+    }
+
+    pub(crate) fn group_limit(limit: usize) -> Self {
+        ErrorKind::GroupLimit { limit }.into()
+    }
+
+    pub(crate) fn hidden_sheet(sheet: impl Into<String>, visibility: &'static str) -> Self {
+        ErrorKind::HiddenSheet { sheet: sheet.into(), visibility }.into()
     }
 }
 

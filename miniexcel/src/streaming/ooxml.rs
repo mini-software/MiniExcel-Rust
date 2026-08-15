@@ -32,23 +32,41 @@ pub(super) struct StreamingRawRows {
     cancelled: Arc<AtomicBool>,
 }
 
-pub(super) struct CollectedRawRows {
-    pub(super) rows: Vec<SelectedRow>,
-}
-
-pub(super) fn collect_raw_rows(bytes: &[u8], options: &ReadOptions) -> Result<CollectedRawRows> {
+pub(super) fn visit_raw_rows<F>(
+    bytes: &[u8],
+    options: &ReadOptions,
+    preserve_structure: bool,
+    mut visitor: F,
+) -> Result<String>
+where
+    F: FnMut(&str, SelectedRow) -> Result<bool>,
+{
     validate_range(options)?;
     let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|error| stream_error("cannot open in-memory XLSX data:", error))?;
-    let context = prepare_workbook(&mut archive, options, false)?;
+    let context = prepare_workbook(&mut archive, options, preserve_structure)?;
+    let sheet_name = context.sheet_name.clone();
     let cancelled = AtomicBool::new(false);
     let extent = scan_worksheet_extent(&mut archive, &context.sheet_path, &cancelled)?;
-    let mut rows = Vec::new();
-    stream_worksheet(&mut archive, context, extent, options, &cancelled, &mut |row| {
-        rows.push(row);
-        true
-    })?;
-    Ok(CollectedRawRows { rows })
+    let mut visitor_error = None;
+    stream_worksheet(
+        &mut archive,
+        context,
+        extent,
+        options,
+        &cancelled,
+        &mut |row| match visitor(&sheet_name, row) {
+            Ok(should_continue) => should_continue,
+            Err(error) => {
+                visitor_error = Some(error);
+                false
+            }
+        },
+    )?;
+    if let Some(error) = visitor_error {
+        return Err(error);
+    }
+    Ok(sheet_name)
 }
 
 pub(super) fn sheet_names_from_bytes(bytes: &[u8]) -> Result<Vec<String>> {

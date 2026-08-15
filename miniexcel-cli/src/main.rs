@@ -2,14 +2,15 @@ use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, ExitCode};
 
 use chrono::NaiveDate;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use miniexcel::{
-    CellReference, CellValue, DynamicRow, HeaderMode, MiniExcel, ReadOptions, WriteOptions,
+    CellReference, CellValue, DynamicRow, HeaderMode, MiniExcel, QueryPlan, RagExportOptions,
+    ReadOptions, WriteOptions,
 };
 use serde_json::{Map, Number, Value};
 
@@ -31,6 +32,10 @@ enum CliCommand {
     },
     /// Stream rows from an XLSX workbook.
     Query(QueryArgs),
+    /// Run a low-memory grouped analysis from a versioned JSON query plan.
+    Analyze(AnalyzeArgs),
+    /// Stream provenance-preserving RAG chunks and a manifest to files.
+    RagExport(RagExportArgs),
     /// Create and read back a small workbook.
     WriteDemo {
         /// Destination XLSX path.
@@ -74,6 +79,82 @@ struct QueryArgs {
     format: OutputFormat,
 }
 
+#[derive(Debug, Args)]
+struct AnalyzeArgs {
+    /// Path to an XLSX workbook.
+    file: PathBuf,
+
+    /// Query plan JSON file. Use - to read the plan from stdin.
+    #[arg(long)]
+    plan: PathBuf,
+
+    /// Worksheet name. The first worksheet is used when omitted.
+    #[arg(long)]
+    sheet: Option<String>,
+
+    /// Treat the first selected row as column headers.
+    #[arg(long)]
+    header: bool,
+
+    /// First cell to read, in A1 notation.
+    #[arg(long, default_value = "A1")]
+    start_cell: CellReference,
+
+    /// Last cell to read, in A1 notation.
+    #[arg(long)]
+    end_cell: Option<CellReference>,
+
+    /// Omit rows whose selected cells are all empty.
+    #[arg(long)]
+    ignore_empty_rows: bool,
+
+    /// Output representation.
+    #[arg(long, value_enum, default_value = "json")]
+    format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+struct RagExportArgs {
+    /// Path to an XLSX workbook.
+    file: PathBuf,
+
+    /// Prefix for .chunks.jsonl and .manifest.json output files.
+    #[arg(long)]
+    output_prefix: PathBuf,
+
+    /// Worksheet name. The first worksheet is used when omitted.
+    #[arg(long)]
+    sheet: Option<String>,
+
+    /// Repeat the first selected row as addressed header context in every chunk.
+    #[arg(long)]
+    header: bool,
+
+    /// First cell to read, in A1 notation.
+    #[arg(long, default_value = "A1")]
+    start_cell: CellReference,
+
+    /// Last cell to read, in A1 notation.
+    #[arg(long)]
+    end_cell: Option<CellReference>,
+
+    /// Omit rows whose selected cells are all empty.
+    #[arg(long)]
+    ignore_empty_rows: bool,
+
+    /// Data rows per JSONL chunk.
+    #[arg(long, default_value_t = 25)]
+    chunk_rows: usize,
+
+    /// Maximum data rows to export.
+    #[arg(long)]
+    max_rows: Option<usize>,
+
+    /// Allow export from hidden and very-hidden worksheets.
+    #[arg(long)]
+    allow_hidden_sheets: bool,
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum OutputFormat {
     Table,
@@ -114,9 +195,133 @@ fn run(cli: Cli) -> CliResult<()> {
     match cli.command {
         CliCommand::Sheets { file } => list_sheets(&file),
         CliCommand::Query(arguments) => query(arguments),
+        CliCommand::Analyze(arguments) => analyze(arguments),
+        CliCommand::RagExport(arguments) => rag_export(arguments),
         CliCommand::WriteDemo { output } => write_demo(&output),
         CliCommand::Parity(arguments) => parity(arguments),
     }
+}
+
+fn analyze(arguments: AnalyzeArgs) -> CliResult<()> {
+    let options = read_options(
+        arguments.sheet,
+        arguments.header,
+        arguments.start_cell,
+        arguments.end_cell,
+        arguments.ignore_empty_rows,
+    );
+    let plan = read_query_plan(&arguments.plan)?;
+    let result = MiniExcel::analyze_with_options(&arguments.file, &options, &plan)?;
+    match arguments.format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        OutputFormat::Jsonl => {
+            let stdout = io::stdout();
+            let mut output = stdout.lock();
+            for row in result.rows() {
+                serde_json::to_writer(&mut output, row)?;
+                output.write_all(b"\n")?;
+            }
+        }
+        OutputFormat::Table => {
+            let rows = result.rows().iter().map(|row| row.values().clone()).collect::<Vec<_>>();
+            print_table(&rows);
+            eprintln!(
+                "seen={} matched={} groups={} returned={} truncated={}",
+                result.stats().seen_rows(),
+                result.stats().matched_rows(),
+                result.stats().total_groups(),
+                result.stats().returned_rows(),
+                result.stats().truncated()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn rag_export(arguments: RagExportArgs) -> CliResult<()> {
+    let options = read_options(
+        arguments.sheet,
+        arguments.header,
+        arguments.start_cell,
+        arguments.end_cell,
+        arguments.ignore_empty_rows,
+    );
+    let mut export_options = RagExportOptions::new()
+        .with_chunk_rows(arguments.chunk_rows)
+        .with_allow_hidden_sheets(arguments.allow_hidden_sheets)
+        .with_source_name(
+            arguments.file.file_name().and_then(|name| name.to_str()).unwrap_or("workbook.xlsx"),
+        );
+    if let Some(max_rows) = arguments.max_rows {
+        export_options = export_options.with_max_rows(max_rows);
+    }
+
+    let chunks_path = append_path_suffix(&arguments.output_prefix, ".chunks.jsonl");
+    let manifest_path = append_path_suffix(&arguments.output_prefix, ".manifest.json");
+    let parent = chunks_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut chunks_file = tempfile::NamedTempFile::new_in(parent)?;
+    let mut manifest_file = tempfile::NamedTempFile::new_in(parent)?;
+
+    let mut export = MiniExcel::export_rag(&arguments.file, &options, &export_options)?;
+    for chunk in export.by_ref() {
+        serde_json::to_writer(chunks_file.as_file_mut(), &chunk?)?;
+        chunks_file.as_file_mut().write_all(b"\n")?;
+    }
+    chunks_file.as_file_mut().flush()?;
+    serde_json::to_writer_pretty(manifest_file.as_file_mut(), export.manifest())?;
+    manifest_file.as_file_mut().write_all(b"\n")?;
+    manifest_file.as_file_mut().flush()?;
+
+    chunks_file.persist(&chunks_path)?;
+    if let Err(error) = manifest_file.persist(&manifest_path) {
+        let _ = fs::remove_file(&chunks_path);
+        return Err(error.into());
+    }
+    println!("Chunks: {}", chunks_path.display());
+    println!("Manifest: {}", manifest_path.display());
+    Ok(())
+}
+
+fn read_options(
+    sheet: Option<String>,
+    header: bool,
+    start_cell: CellReference,
+    end_cell: Option<CellReference>,
+    ignore_empty_rows: bool,
+) -> ReadOptions {
+    let mut options = ReadOptions::new()
+        .with_start_cell(start_cell)
+        .with_header_mode(if header { HeaderMode::FirstRow } else { HeaderMode::None })
+        .with_ignore_empty_rows(ignore_empty_rows);
+    if let Some(sheet) = sheet {
+        options = options.with_sheet_name(sheet);
+    }
+    if let Some(end_cell) = end_cell {
+        options = options.with_end_cell(end_cell);
+    }
+    options
+}
+
+fn read_query_plan(path: &Path) -> CliResult<QueryPlan> {
+    let mut json = String::new();
+    if path == Path::new("-") {
+        io::stdin().read_to_string(&mut json)?;
+    } else {
+        json = fs::read_to_string(path)?;
+    }
+    Ok(serde_json::from_str(&json)?)
+}
+
+fn append_path_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut value = path.as_os_str().to_os_string();
+    value.push(suffix);
+    PathBuf::from(value)
 }
 
 fn list_sheets(file: &Path) -> CliResult<()> {

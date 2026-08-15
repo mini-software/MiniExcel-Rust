@@ -2,18 +2,29 @@
 
 //! Experimental Rust XLSX support for MiniExcel.
 
+mod analytics;
 mod cell;
 mod error;
 mod facade;
 mod options;
+mod rag;
 mod reader;
 pub mod serde_helpers;
 mod sheet;
 mod streaming;
 mod writer;
 
+pub use analytics::{
+    AggregateOp, AggregateSpec, AnalysisResult, AnalysisRow, AnalysisStats, ComparisonOp,
+    FilterExpr, QueryLiteral, QueryPlan,
+};
 pub use cell::{CellReference, CellValue, DynamicRow, ExcelRange, StructuredCell, StructuredRow};
 pub use error::{Error, Result};
 pub use facade::MiniExcel;
 pub use options::{HeaderMode, ReadOptions, WriteOptions};
+pub use rag::{
+    FormulaCalculationStatus, RagCell, RagChunk, RagExport, RagExportOptions, RagManifest, RagRow,
+    RagValue,
+};
 pub use sheet::{SheetInfo, SheetType, SheetVisibility};
+pub use streaming::ByteQuerySummary;

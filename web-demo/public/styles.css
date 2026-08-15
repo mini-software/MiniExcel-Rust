@@ -180,7 +180,7 @@ input:disabled {
 .workspace {
   min-height: 0;
   display: grid;
-  grid-template-columns: 330px minmax(0, 1fr);
+  grid-template-columns: 380px minmax(0, 1fr);
   padding: 16px;
   gap: 16px;
 }
@@ -208,12 +208,67 @@ input:disabled {
   border-bottom: 0;
 }
 
+.mode-section {
+  padding-block: 12px;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.segment {
+  min-height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.segment.is-active {
+  color: #fff;
+  background: var(--ink);
+}
+
 .section-heading {
   justify-content: space-between;
   min-height: 30px;
   margin-bottom: 14px;
   font-size: 13px;
   font-weight: 700;
+}
+
+.subsection-heading {
+  min-height: 24px;
+  margin-top: 18px;
+  margin-bottom: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.small-command {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--green);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.small-command:hover {
+  border-color: var(--green);
 }
 
 .local-pill {
@@ -384,6 +439,15 @@ input:disabled {
   font-size: 12px;
 }
 
+.field select[multiple] {
+  height: 104px;
+  padding-block: 5px;
+}
+
+.field select[multiple] option {
+  padding: 4px 6px;
+}
+
 .field input:focus,
 .field select:focus {
   border-color: var(--green);
@@ -393,6 +457,57 @@ input:disabled {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.builder-list {
+  display: grid;
+  gap: 8px;
+}
+
+.builder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(76px, 0.72fr) minmax(0, 1fr) 30px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.builder-row select,
+.builder-row input {
+  min-width: 0;
+  width: 100%;
+  height: 34px;
+  padding: 0 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--ink);
+  background: var(--surface);
+  font: 400 10px/1 "IBM Plex Mono", monospace;
+}
+
+.remove-button {
+  width: 30px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--coral);
+  background: var(--surface-soft);
+  cursor: pointer;
+  font-size: 17px;
+}
+
+.full-button {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.warning-toggle {
+  margin-bottom: 10px;
+  padding-inline: 9px;
+  border: 1px solid #e4c36c;
+  border-radius: 5px;
+  background: #fff9e8;
 }
 
 .toggle-row {
@@ -763,6 +878,8 @@ input:disabled {
 
   .source-section,
   .query-section,
+  .mode-section,
+  .workflow-section,
   .export-section {
     border-bottom: 1px solid var(--line);
   }
@@ -791,6 +908,23 @@ input:disabled {
   .field-pair {
     grid-template-columns: 1fr;
     gap: 0;
+  }
+
+  .builder-row {
+    grid-template-columns: minmax(0, 1fr) minmax(84px, 0.8fr) 30px;
+  }
+
+  .builder-row input[data-role="value"],
+  .builder-row input[data-role="alias"] {
+    grid-column: 1 / 3;
+    grid-row: 2;
+  }
+
+  .builder-row .remove-button {
+    grid-column: 3;
+    grid-row: 1 / 3;
+    height: 100%;
+    min-height: 34px;
   }
 
   .command-row {

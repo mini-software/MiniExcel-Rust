@@ -27,6 +27,15 @@ impl Headers {
             }
         }
     }
+
+    fn columns(&self) -> Vec<String> {
+        match self {
+            Self::FirstRow(headers) => headers.iter().flatten().cloned().collect(),
+            Self::ColumnLetters { headers, .. } => {
+                headers.as_deref().unwrap_or_default().iter().flatten().cloned().collect()
+            }
+        }
+    }
 }
 
 /// A bounded-memory iterator over dynamic XLSX rows.
@@ -47,17 +56,30 @@ impl StreamingRows {
         };
         Ok(Self { rows, headers })
     }
+
+    pub(crate) fn next_with_excel_row(&mut self) -> Option<Result<(usize, DynamicRow)>> {
+        let selected_row = match self.rows.next()? {
+            Ok(row) => row,
+            Err(error) => return Some(Err(error)),
+        };
+        let excel_row = selected_row.excel_row + 1;
+        Some(Ok((excel_row, to_dynamic_row(&mut self.headers, selected_row))))
+    }
+
+    pub(crate) fn sheet_name(&self) -> &str {
+        self.rows.sheet_name()
+    }
+
+    pub(crate) fn columns(&self) -> Vec<String> {
+        self.headers.columns()
+    }
 }
 
 impl Iterator for StreamingRows {
     type Item = Result<DynamicRow>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let selected_row = match self.rows.next()? {
-            Ok(row) => row,
-            Err(error) => return Some(Err(error)),
-        };
-        Some(Ok(to_dynamic_row(&mut self.headers, selected_row)))
+        self.next_with_excel_row().map(|result| result.map(|(_, row)| row))
     }
 }
 
@@ -85,43 +107,86 @@ impl Iterator for StreamingStructuredRows {
             Ok(row) => row,
             Err(error) => return Some(Err(error)),
         };
-        let cells = selected_row
-            .cells
-            .into_iter()
-            .map(|metadata| {
-                let offset = metadata
-                    .excel_column
-                    .checked_sub(selected_row.start_column)
-                    .expect("selected cell is within the selected range");
-                let value =
-                    selected_row.values.get(offset).expect("selected cell has an aligned value");
-                StructuredCell::new(
-                    selected_row.excel_row,
-                    metadata.excel_column,
-                    to_cell_value(value),
-                    metadata.formula,
-                    metadata.style_id,
-                    metadata.number_format,
-                )
-            })
-            .collect();
-        Some(Ok(StructuredRow::new(Arc::clone(&self.sheet_name), selected_row.excel_row, cells)))
+        Some(Ok(to_structured_row(Arc::clone(&self.sheet_name), selected_row)))
     }
 }
 
 impl FusedIterator for StreamingStructuredRows {}
 
 pub(crate) fn query_bytes(bytes: &[u8], options: &ReadOptions) -> Result<Vec<DynamicRow>> {
-    let collected = ooxml::collect_raw_rows(bytes, options)?;
-    let mut rows = collected.rows.into_iter();
-    let mut headers = if options.uses_headers(false) {
-        let headers = rows.next().map_or_else(Vec::new, |row| header_names(&row.values));
-        Headers::FirstRow(headers)
-    } else {
-        Headers::ColumnLetters { start_column: options.start_cell().column(), headers: None }
-    };
+    let mut rows = Vec::new();
+    visit_dynamic_rows(bytes, options, |_, _, row| {
+        rows.push(row);
+        Ok(true)
+    })?;
+    Ok(rows)
+}
 
-    Ok(rows.map(|row| to_dynamic_row(&mut headers, row)).collect())
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ByteQuerySummary {
+    sheet_name: String,
+    columns: Vec<String>,
+    visited_rows: usize,
+}
+
+impl ByteQuerySummary {
+    #[must_use]
+    pub fn sheet_name(&self) -> &str {
+        &self.sheet_name
+    }
+
+    #[must_use]
+    pub fn columns(&self) -> &[String] {
+        &self.columns
+    }
+
+    #[must_use]
+    pub const fn visited_rows(&self) -> usize {
+        self.visited_rows
+    }
+}
+
+pub(crate) fn visit_structured_rows<F>(
+    bytes: &[u8],
+    options: &ReadOptions,
+    mut visitor: F,
+) -> Result<String>
+where
+    F: FnMut(StructuredRow) -> Result<bool>,
+{
+    let mut shared_sheet_name = None;
+    ooxml::visit_raw_rows(bytes, options, true, |sheet_name, selected_row| {
+        let sheet_name =
+            Arc::clone(shared_sheet_name.get_or_insert_with(|| Arc::<str>::from(sheet_name)));
+        visitor(to_structured_row(sheet_name, selected_row))
+    })
+}
+
+pub(crate) fn visit_dynamic_rows<F>(
+    bytes: &[u8],
+    options: &ReadOptions,
+    mut visitor: F,
+) -> Result<ByteQuerySummary>
+where
+    F: FnMut(&str, usize, DynamicRow) -> Result<bool>,
+{
+    let mut headers = (!options.uses_headers(false)).then(|| Headers::ColumnLetters {
+        start_column: options.start_cell().column(),
+        headers: None,
+    });
+    let mut visited_rows = 0;
+    let sheet_name = ooxml::visit_raw_rows(bytes, options, false, |sheet_name, selected_row| {
+        if headers.is_none() {
+            headers = Some(Headers::FirstRow(header_names(&selected_row.values)));
+            return Ok(true);
+        }
+        let excel_row = selected_row.excel_row + 1;
+        let row = to_dynamic_row(headers.as_mut().expect("headers initialized"), selected_row);
+        visited_rows += 1;
+        visitor(sheet_name, excel_row, row)
+    })?;
+    let columns = headers.map_or_else(Vec::new, |headers| headers.columns());
+    Ok(ByteQuerySummary { sheet_name, columns, visited_rows })
 }
 
 pub(crate) fn sheet_names_from_bytes(bytes: &[u8]) -> Result<Vec<String>> {
@@ -159,6 +224,33 @@ fn to_dynamic_row(headers: &mut Headers, selected_row: crate::reader::SelectedRo
         row.insert(header.clone(), value);
     }
     row
+}
+
+fn to_structured_row(
+    sheet_name: Arc<str>,
+    selected_row: crate::reader::SelectedRow,
+) -> StructuredRow {
+    let cells = selected_row
+        .cells
+        .into_iter()
+        .map(|metadata| {
+            let offset = metadata
+                .excel_column
+                .checked_sub(selected_row.start_column)
+                .expect("selected cell is within the selected range");
+            let value =
+                selected_row.values.get(offset).expect("selected cell has an aligned value");
+            StructuredCell::new(
+                selected_row.excel_row,
+                metadata.excel_column,
+                to_cell_value(value),
+                metadata.formula,
+                metadata.style_id,
+                metadata.number_format,
+            )
+        })
+        .collect();
+    StructuredRow::new(sheet_name, selected_row.excel_row, cells)
 }
 
 /// A bounded-memory iterator that deserializes XLSX rows through Serde.

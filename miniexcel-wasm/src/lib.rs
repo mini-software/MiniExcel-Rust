@@ -4,8 +4,9 @@ use std::str::FromStr;
 
 use chrono::NaiveDate;
 use miniexcel::{
-    CellReference, CellValue, DynamicRow, HeaderMode, MiniExcel, ReadOptions, SheetType,
-    SheetVisibility, WriteOptions,
+    CellReference, CellValue, DynamicRow, HeaderMode, MiniExcel, QueryPlan, RagChunk,
+    RagExportOptions, RagManifest, ReadOptions, SheetInfo, SheetType, SheetVisibility,
+    WriteOptions,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
@@ -47,6 +48,64 @@ struct SheetSummary {
     visibility: &'static str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisResponse {
+    selected_sheet: String,
+    columns: Vec<String>,
+    rows: Vec<AnalysisResponseRow>,
+    stats: Value,
+    plan: Value,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisResponseRow {
+    values: Vec<Value>,
+    cell_types: Vec<&'static str>,
+    source_rows: Vec<u32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RagExportResponse {
+    chunks: Vec<RagChunk>,
+    chunks_jsonl: String,
+    manifest: RagManifest,
+}
+
+#[wasm_bindgen]
+pub struct WorkbookSession {
+    bytes: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl WorkbookSession {
+    #[wasm_bindgen(constructor)]
+    pub fn new(bytes: &[u8]) -> Self {
+        Self { bytes: bytes.to_vec() }
+    }
+
+    #[wasm_bindgen(js_name = inspect)]
+    pub fn inspect_workbook(&self, options_json: &str) -> Result<String, JsValue> {
+        inspect_xlsx(&self.bytes, options_json)
+    }
+
+    #[wasm_bindgen(js_name = analyze)]
+    pub fn analyze_workbook(&self, options_json: &str, plan_json: &str) -> Result<String, JsValue> {
+        analyze_xlsx(&self.bytes, options_json, plan_json)
+    }
+
+    #[wasm_bindgen(js_name = exportRag)]
+    pub fn export_rag_workbook(
+        &self,
+        options_json: &str,
+        export_options_json: &str,
+    ) -> Result<String, JsValue> {
+        export_rag_xlsx(&self.bytes, options_json, export_options_json)
+    }
+}
+
 #[wasm_bindgen(start)]
 pub fn initialize() {
     console_error_panic_hook::set_once();
@@ -60,6 +119,28 @@ pub fn inspect_xlsx(bytes: &[u8], options_json: &str) -> Result<String, JsValue>
 }
 
 #[wasm_bindgen]
+pub fn analyze_xlsx(bytes: &[u8], options_json: &str, plan_json: &str) -> Result<String, JsValue> {
+    let options: PreviewOptions = serde_json::from_str(options_json)
+        .map_err(|error| js_error(format!("Invalid analysis options: {error}")))?;
+    let plan: QueryPlan = serde_json::from_str(plan_json)
+        .map_err(|error| js_error(format!("Invalid query plan: {error}")))?;
+    analyze(bytes, options, &plan).map_err(|error| js_error(error.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn export_rag_xlsx(
+    bytes: &[u8],
+    options_json: &str,
+    export_options_json: &str,
+) -> Result<String, JsValue> {
+    let options: PreviewOptions = serde_json::from_str(options_json)
+        .map_err(|error| js_error(format!("Invalid RAG read options: {error}")))?;
+    let export_options: RagExportOptions = serde_json::from_str(export_options_json)
+        .map_err(|error| js_error(format!("Invalid RAG export options: {error}")))?;
+    export_rag(bytes, options, &export_options).map_err(|error| js_error(error.to_string()))
+}
+
+#[wasm_bindgen]
 pub fn create_demo_xlsx() -> Result<Vec<u8>, JsValue> {
     create_demo().map_err(|error| js_error(error.to_string()))
 }
@@ -70,10 +151,101 @@ pub fn version() -> String {
 }
 
 fn inspect(bytes: &[u8], options: PreviewOptions) -> miniexcel::Result<String> {
-    let sheet_info = MiniExcel::get_sheet_info_from_bytes(bytes)?;
+    let (sheet_info, selected_sheet, read_options) = prepare_read(bytes, &options)?;
     let sheet_names = sheet_info.iter().map(|sheet| sheet.name().to_owned()).collect::<Vec<_>>();
-    let selected_sheet =
-        options.sheet_name.clone().or_else(|| sheet_names.first().cloned()).unwrap_or_default();
+    let limit = options.limit.unwrap_or(DEFAULT_ROW_LIMIT);
+    let mut source_rows = Vec::with_capacity(limit.min(DEFAULT_ROW_LIMIT));
+    let summary = MiniExcel::visit_rows_from_bytes(bytes, &read_options, |_, row| {
+        if limit == 0 || source_rows.len() < limit {
+            source_rows.push(row.clone());
+        }
+        Ok(true)
+    })?;
+    let total_rows = summary.visited_rows();
+    let columns = summary.columns().to_vec();
+    let rows = source_rows
+        .iter()
+        .map(|row| columns.iter().map(|column| cell_json(row.get(column))).collect())
+        .collect::<Vec<_>>();
+    let cell_types = source_rows
+        .iter()
+        .map(|row| columns.iter().map(|column| cell_type(row.get(column))).collect())
+        .collect::<Vec<_>>();
+    let displayed_rows = rows.len();
+    let response = PreviewResponse {
+        sheet_names,
+        sheet_info: sheet_summaries(sheet_info),
+        selected_sheet,
+        columns,
+        rows,
+        cell_types,
+        total_rows,
+        displayed_rows,
+        truncated: displayed_rows < total_rows,
+    };
+    Ok(serde_json::to_string(&response).expect("serializable preview response"))
+}
+
+fn analyze(bytes: &[u8], options: PreviewOptions, plan: &QueryPlan) -> miniexcel::Result<String> {
+    let (_, selected_sheet, read_options) = prepare_read(bytes, &options)?;
+    let result = MiniExcel::analyze_bytes(bytes, &read_options, plan)?;
+    let columns = plan
+        .group_by()
+        .iter()
+        .cloned()
+        .chain(plan.aggregates().iter().map(|aggregate| aggregate.alias().to_owned()))
+        .collect::<Vec<_>>();
+    let rows = result
+        .rows()
+        .iter()
+        .map(|row| AnalysisResponseRow {
+            values: columns.iter().map(|column| cell_json(row.values().get(column))).collect(),
+            cell_types: columns.iter().map(|column| cell_type(row.values().get(column))).collect(),
+            source_rows: row.source_rows().to_vec(),
+        })
+        .collect();
+    let response = AnalysisResponse {
+        selected_sheet,
+        columns,
+        rows,
+        stats: serde_json::to_value(result.stats()).expect("serializable analysis stats"),
+        plan: serde_json::to_value(plan).expect("serializable query plan"),
+    };
+    Ok(serde_json::to_string(&response).expect("serializable analysis response"))
+}
+
+fn export_rag(
+    bytes: &[u8],
+    options: PreviewOptions,
+    export_options: &RagExportOptions,
+) -> miniexcel::Result<String> {
+    let (_, _, read_options) = prepare_read(bytes, &options)?;
+    let mut chunks = Vec::new();
+    let mut chunks_jsonl = String::new();
+    let manifest =
+        MiniExcel::visit_rag_chunks_from_bytes(bytes, &read_options, export_options, |chunk| {
+            chunks_jsonl.push_str(
+                &serde_json::to_string(chunk)
+                    .map_err(|error| miniexcel::Error::from(std::io::Error::other(error)))?,
+            );
+            chunks_jsonl.push('\n');
+            chunks.push(chunk.clone());
+            Ok(())
+        })?;
+    let response = RagExportResponse { chunks, chunks_jsonl, manifest };
+    Ok(serde_json::to_string(&response).expect("serializable RAG export response"))
+}
+
+fn prepare_read(
+    bytes: &[u8],
+    options: &PreviewOptions,
+) -> miniexcel::Result<(Vec<SheetInfo>, String, ReadOptions)> {
+    let sheet_info = MiniExcel::get_sheet_info_from_bytes(bytes)?;
+    let selected_sheet = options
+        .sheet_name
+        .clone()
+        .or_else(|| sheet_info.first().map(|sheet| sheet.name().to_owned()))
+        .unwrap_or_default();
     let start_cell = options
         .start_cell
         .as_deref()
@@ -90,42 +262,18 @@ fn inspect(bytes: &[u8], options: PreviewOptions) -> miniexcel::Result<String> {
     if let Some(end_cell) = options.end_cell.as_deref() {
         read_options = read_options.with_end_cell(CellReference::from_str(end_cell)?);
     }
+    Ok((sheet_info, selected_sheet, read_options))
+}
 
-    let mut source_rows = MiniExcel::query_bytes(bytes, &read_options)?;
-    let total_rows = source_rows.len();
-    let limit = options.limit.unwrap_or(DEFAULT_ROW_LIMIT);
-    if limit != 0 {
-        source_rows.truncate(limit);
-    }
-    let columns = source_rows.first().map_or_else(Vec::new, |row| row.keys().cloned().collect());
-    let rows = source_rows
-        .iter()
-        .map(|row| columns.iter().map(|column| cell_json(row.get(column))).collect())
-        .collect::<Vec<_>>();
-    let cell_types = source_rows
-        .iter()
-        .map(|row| columns.iter().map(|column| cell_type(row.get(column))).collect())
-        .collect::<Vec<_>>();
-    let displayed_rows = rows.len();
-    let response = PreviewResponse {
-        sheet_names,
-        sheet_info: sheet_info
-            .into_iter()
-            .map(|sheet| SheetSummary {
-                name: sheet.name().to_owned(),
-                sheet_type: sheet_type_name(sheet.sheet_type()),
-                visibility: sheet_visibility_name(sheet.visibility()),
-            })
-            .collect(),
-        selected_sheet,
-        columns,
-        rows,
-        cell_types,
-        total_rows,
-        displayed_rows,
-        truncated: displayed_rows < total_rows,
-    };
-    Ok(serde_json::to_string(&response).expect("serializable preview response"))
+fn sheet_summaries(sheet_info: Vec<SheetInfo>) -> Vec<SheetSummary> {
+    sheet_info
+        .into_iter()
+        .map(|sheet| SheetSummary {
+            name: sheet.name().to_owned(),
+            sheet_type: sheet_type_name(sheet.sheet_type()),
+            visibility: sheet_visibility_name(sheet.visibility()),
+        })
+        .collect()
 }
 
 fn sheet_type_name(sheet_type: SheetType) -> &'static str {
@@ -147,24 +295,45 @@ fn sheet_visibility_name(visibility: SheetVisibility) -> &'static str {
 }
 
 fn create_demo() -> miniexcel::Result<Vec<u8>> {
-    let mut first = DynamicRow::new();
-    first.insert("Name".to_owned(), CellValue::String("MiniExcel".to_owned()));
-    first.insert("Version".to_owned(), CellValue::Int(2));
-    first.insert("Active".to_owned(), CellValue::Bool(true));
-    first.insert("Score".to_owned(), CellValue::Float(98.5));
-    first.insert(
+    let rows = [
+        demo_row("MiniExcel", "Core", "East", "Ready", 1_200, true, 98.5, true),
+        demo_row("Browser WASM", "Browser", "West", "Ready", 850, true, 91.25, false),
+        demo_row("Streaming Query", "Core", "East", "Review", 650, true, 93.0, false),
+        demo_row("RAG Export", "AI", "North", "Ready", 1_100, true, 96.0, false),
+        demo_row("Parity", "Core", "West", "Held", 400, false, 88.0, false),
+        demo_row("CLI", "Tools", "South", "Ready", 730, true, 90.0, false),
+    ];
+    MiniExcel::save_as_bytes(&rows, &WriteOptions::new().with_sheet_name("BrowserDemo"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn demo_row(
+    name: &str,
+    category: &str,
+    region: &str,
+    status: &str,
+    amount: i64,
+    active: bool,
+    score: f64,
+    has_release_date: bool,
+) -> DynamicRow {
+    let mut row = DynamicRow::new();
+    row.insert("Name".to_owned(), CellValue::String(name.to_owned()));
+    row.insert("Category".to_owned(), CellValue::String(category.to_owned()));
+    row.insert("Region".to_owned(), CellValue::String(region.to_owned()));
+    row.insert("Status".to_owned(), CellValue::String(status.to_owned()));
+    row.insert("Amount".to_owned(), CellValue::Int(amount));
+    row.insert("Active".to_owned(), CellValue::Bool(active));
+    row.insert("Score".to_owned(), CellValue::Float(score));
+    row.insert(
         "ReleasedOn".to_owned(),
-        CellValue::Date(NaiveDate::from_ymd_opt(2026, 8, 14).expect("valid demo date")),
+        if has_release_date {
+            CellValue::Date(NaiveDate::from_ymd_opt(2026, 8, 14).expect("valid demo date"))
+        } else {
+            CellValue::Empty
+        },
     );
-
-    let mut second = DynamicRow::new();
-    second.insert("Name".to_owned(), CellValue::String("Browser WASM".to_owned()));
-    second.insert("Version".to_owned(), CellValue::Int(1));
-    second.insert("Active".to_owned(), CellValue::Bool(true));
-    second.insert("Score".to_owned(), CellValue::Float(91.25));
-    second.insert("ReleasedOn".to_owned(), CellValue::Empty);
-
-    MiniExcel::save_as_bytes(&[first, second], &WriteOptions::new().with_sheet_name("BrowserDemo"))
+    row
 }
 
 fn cell_json(value: Option<&CellValue>) -> Value {
@@ -211,7 +380,11 @@ fn js_error(message: impl AsRef<str>) -> JsValue {
 
 #[cfg(test)]
 mod tests {
-    use super::{PreviewOptions, create_demo, inspect};
+    use super::{PreviewOptions, analyze, create_demo, export_rag, inspect};
+    use miniexcel::{
+        AggregateOp, AggregateSpec, ComparisonOp, FilterExpr, QueryLiteral, QueryPlan,
+        RagExportOptions,
+    };
     use serde_json::Value;
 
     #[test]
@@ -240,8 +413,61 @@ mod tests {
         .expect("inspect bounded demo range");
         let response: Value = serde_json::from_str(&response).expect("parse preview response");
 
-        assert_eq!(response["columns"], serde_json::json!(["Name", "Version"]));
+        assert_eq!(response["columns"], serde_json::json!(["Name", "Category"]));
         assert_eq!(response["totalRows"], 1);
-        assert_eq!(response["rows"][0], serde_json::json!(["MiniExcel", 2]));
+        assert_eq!(response["rows"][0], serde_json::json!(["MiniExcel", "Core"]));
+    }
+
+    #[test]
+    fn preview_counts_all_rows_but_retains_only_the_limit() {
+        let bytes = create_demo().expect("create demo workbook");
+        let response = inspect(
+            &bytes,
+            PreviewOptions { has_header: true, limit: Some(2), ..PreviewOptions::default() },
+        )
+        .expect("inspect bounded demo preview");
+        let response: Value = serde_json::from_str(&response).expect("parse preview response");
+
+        assert_eq!(response["totalRows"], 6);
+        assert_eq!(response["displayedRows"], 2);
+        assert_eq!(response["rows"].as_array().expect("preview rows").len(), 2);
+        assert_eq!(response["truncated"], true);
+    }
+
+    #[test]
+    fn analysis_and_rag_exports_use_core_streaming_contracts() {
+        let bytes = create_demo().expect("create demo workbook");
+        let plan = QueryPlan::new([
+            AggregateSpec::count_all("rows"),
+            AggregateSpec::column(AggregateOp::Sum, "Amount", "totalAmount"),
+        ])
+        .with_filter(FilterExpr::compare(
+            "Status",
+            ComparisonOp::Eq,
+            QueryLiteral::String("Ready".to_owned()),
+        ))
+        .with_group_by(["Category"]);
+        let response = analyze(
+            &bytes,
+            PreviewOptions { has_header: true, ..PreviewOptions::default() },
+            &plan,
+        )
+        .expect("analyze demo workbook");
+        let response: Value = serde_json::from_str(&response).expect("parse analysis response");
+        assert_eq!(response["stats"]["seenRows"], 6);
+        assert_eq!(response["stats"]["matchedRows"], 4);
+        assert_eq!(response["rows"].as_array().expect("analysis rows").len(), 4);
+
+        let response = export_rag(
+            &bytes,
+            PreviewOptions { has_header: true, ..PreviewOptions::default() },
+            &RagExportOptions::new().with_chunk_rows(2).with_source_name("demo.xlsx"),
+        )
+        .expect("export demo RAG chunks");
+        let response: Value = serde_json::from_str(&response).expect("parse RAG response");
+        assert_eq!(response["manifest"]["emittedRows"], 6);
+        assert_eq!(response["manifest"]["emittedChunks"], 3);
+        assert_eq!(response["chunks"].as_array().expect("RAG chunks").len(), 3);
+        assert_eq!(response["chunksJsonl"].as_str().expect("JSONL").lines().count(), 3);
     }
 }

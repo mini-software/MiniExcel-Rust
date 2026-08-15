@@ -15,7 +15,8 @@ The Rust MVP implements the smallest useful MiniExcel-style XLSX read/write surf
 | `chrono` | 0.4 | Timezone-free Excel date/time values | MIT OR Apache-2.0 | Resolved by the workspace lockfile |
 | `indexmap` | 2.x | Stable dynamic column ordering | MIT OR Apache-2.0 | Resolved by the workspace lockfile |
 | `quick-xml` | 0.39 | Incremental OOXML parsing | MIT | Locked and checked with Rust 1.85 |
-| `serde_json` | 1.x | Shared parity contracts and CLI JSON output | MIT OR Apache-2.0 | Checked with Rust 1.85 |
+| `serde_json` | 1.x | Query plans, analytics/RAG output, parity contracts, and CLI JSON | MIT OR Apache-2.0 | Checked with Rust 1.85 |
+| `sha2` | 0.10 | Streaming SHA-256 source identity for RAG manifests | MIT OR Apache-2.0 | Checked with Rust 1.85 |
 | `thiserror` | 2.x | Public error composition | MIT OR Apache-2.0 | Resolved by the workspace lockfile |
 | `zip` | 7.2 | Incremental worksheet entry decompression | MIT | Locked and checked with Rust 1.85 |
 
@@ -29,6 +30,8 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Dynamic `Query` | `MiniExcel::query()` | Streams owned `IndexMap<String, CellValue>` rows with bounded buffering |
 | Typed `Query<T>` | `MiniExcel::query_as<T>()` | Streams rows and applies Serde mapping one row at a time |
 | Structure-preserving query | `MiniExcel::query_structured()` | Streams sparse rows with one-based coordinates, formulas, style IDs, and number formats |
+| Group/filter analytics | `MiniExcel::analyze_with_options()` | Versioned Rust extension; streams rows and retains only bounded group/evidence state |
+| RAG evidence export | `MiniExcel::export_rag()` | Versioned Rust extension; streams addressed JSONL-ready chunks and a source manifest |
 | `QueryRange` | `ReadOptions::with_start_cell()` / `with_end_cell()` | Inclusive A1 range for dynamic and typed reads |
 | `GetSheetNames` | `MiniExcel::get_sheet_names()` | Workbook order is preserved |
 | `GetSheetInformations` | `MiniExcel::get_sheet_info()` | Includes OOXML ID, order, name, type, visibility, and active state |
@@ -80,6 +83,10 @@ For typed writing, chrono values must use the matching MiniExcel helper (`serial
 
 `MiniExcel::query_structured()` uses the same bounded pipeline and additionally retains metadata for explicit cells in the current row and channel. Sheet names are shared per row, and number-format strings are shared by style. Missing cells are not expanded into structured cell objects. Formula expressions are preserved exactly as stored, but shared formulas are not expanded and cached values can be stale.
 
+Grouped analytics consume the dynamic row stream without retaining source rows. Memory additionally contains one aggregate state and bounded source-row evidence list per distinct group. `QueryPlan::max_groups` rejects the group that would exceed the configured limit. Result limits do not reduce group-state memory. Version 1 does not implement disk spill, sorted-input aggregation, or constant-memory high-cardinality grouping.
+
+Path RAG exports retain parser state, repeated header context, and one output chunk. Their manifest hashes the source file through a separate bounded read. Byte/WASM workflows avoid collecting source rows, but browser uploads inherently retain compressed XLSX bytes in WebAssembly memory; generated JSONL/Blob downloads also consume output-sized memory. Browser Lab runs these operations in a Web Worker for responsiveness, not as a claim of path-equivalent memory.
+
 The backend makes two sequential, bounded-memory passes over the selected worksheet entry. The first records only the maximum used column and final explicitly declared row. This is required for MiniExcel-compatible stable dynamic schemas when legal files omit `<dimension>`, and to preserve style-only row elements like the .NET reader. The second pass emits rows. Worksheet XML and prior rows are never retained; memory consists primarily of shared strings, styles, parser buffers, the current row, and the bounded channel.
 
 The internal writer assembles a new ZIP package. The public facade writes to paths and cannot patch or insert sheets into an existing workbook.
@@ -130,6 +137,8 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | `GetSheetDimensions` | Implemented | Rust tests against .NET fixtures |
 | New-workbook `SaveAs` | Implemented and roundtrip-tested | Not yet |
 | Byte-array query/write for WASM | Implemented | Rust/browser tests |
+| Versioned grouped analytics | Rust research extension | No |
+| Addressed JSONL/manifest RAG export | Rust research extension | No |
 | Async APIs, DataReader, stream ownership | Deferred | No |
 | Insert/edit existing workbooks | Deferred | No |
 | CSV and legacy formats | Deferred | No |
@@ -139,4 +148,4 @@ This matrix is the coverage claim: Rust does not yet provide complete API parity
 
 ## Deferred Work
 
-CSV providers, old Excel formats, templates, images, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, modifying existing workbooks, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.
+SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, templates, images, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, modifying existing workbooks, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.

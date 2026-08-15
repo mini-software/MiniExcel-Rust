@@ -3,18 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      name="description"
-      content="Inspect XLSX workbooks locally in the browser with MiniExcel Rust and WebAssembly."
-    />
+    <meta name="description" content="Analyze XLSX workbooks locally with streaming Rust, WebAssembly, and provenance-ready RAG exports." />
     <title>MiniExcel Browser Lab</title>
     <link rel="icon" href="data:," />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css" />
     <script type="module" src="./app.js"></script>
   </head>
@@ -22,182 +16,123 @@
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-lockup">
-          <span class="workbook-mark" aria-hidden="true">
-            <i></i><i></i><i></i><i></i><i></i><i></i>
-          </span>
-          <span class="brand-copy">
-            <strong>MiniExcel</strong>
-            <span>Browser Lab</span>
-          </span>
+          <span class="workbook-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="brand-copy"><strong>MiniExcel</strong><span>Browser Lab</span></span>
         </div>
         <div class="topbar-actions">
-          <span class="runtime-badge" data-testid="runtime-status" id="runtimeStatus">
-            Loading WASM
-          </span>
-          <a
-            class="source-link"
-            href="https://github.com/mini-software/MiniExcel-Rust"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Source ↗
-          </a>
+          <span class="runtime-badge" data-testid="runtime-status" id="runtimeStatus">Loading WASM</span>
+          <a class="source-link" href="https://github.com/mini-software/MiniExcel-Rust" target="_blank" rel="noreferrer">Source ↗</a>
         </div>
       </header>
 
       <main class="workspace">
         <aside class="control-rail" aria-label="Workbook controls">
           <section class="control-section source-section">
-            <div class="section-heading">
-              <span>Workbook</span>
-              <span class="local-pill">Local only</span>
-            </div>
-
+            <div class="section-heading"><span>Workbook</span><span class="local-pill">Local only</span></div>
             <div id="dropZone" class="drop-zone" role="button" tabindex="0">
               <input id="fileInput" type="file" accept=".xlsx" hidden />
               <span class="drop-icon" aria-hidden="true">↑</span>
               <strong>Open an XLSX file</strong>
               <small>Drop or select a workbook</small>
             </div>
-
             <div class="command-row">
-              <button id="openFileButton" class="button button-primary" type="button">
-                Open file
-              </button>
-              <button id="loadDemoButton" class="button button-secondary" type="button">
-                Reset demo
-              </button>
+              <button id="openFileButton" class="button button-primary" type="button">Open file</button>
+              <button id="loadDemoButton" class="button button-secondary" type="button">Reset demo</button>
             </div>
-
             <dl class="file-facts">
-              <div>
-                <dt>File</dt>
-                <dd id="fileName" data-testid="file-name">—</dd>
-              </div>
-              <div>
-                <dt>Size</dt>
-                <dd id="fileSize">—</dd>
-              </div>
-              <div>
-                <dt>Sheets</dt>
-                <dd id="sheetCount">—</dd>
-              </div>
+              <div><dt>File</dt><dd id="fileName" data-testid="file-name">—</dd></div>
+              <div><dt>Size</dt><dd id="fileSize">—</dd></div>
+              <div><dt>Sheets</dt><dd id="sheetCount">—</dd></div>
             </dl>
+          </section>
+
+          <section class="control-section mode-section">
+            <div class="segmented-control" role="tablist" aria-label="Workflow mode">
+              <button id="rowsModeButton" class="segment is-active" type="button" role="tab" aria-selected="true">Rows</button>
+              <button id="analyzeModeButton" class="segment" type="button" role="tab" aria-selected="false">Analyze</button>
+              <button id="ragModeButton" class="segment" type="button" role="tab" aria-selected="false">RAG</button>
+            </div>
           </section>
 
           <section class="control-section query-section">
             <div class="section-heading">
-              <span>Query</span>
-              <button id="refreshButton" class="icon-button" type="button" title="Refresh preview">
-                ↻
-                <span class="sr-only">Refresh preview</span>
-              </button>
+              <span>Selection</span>
+              <button id="refreshButton" class="icon-button" type="button" title="Refresh preview">↻<span class="sr-only">Refresh preview</span></button>
             </div>
-
-            <label class="field">
-              <span>Worksheet</span>
-              <select id="sheetSelect" disabled>
-                <option value="">First worksheet</option>
-              </select>
-            </label>
-
+            <label class="field"><span>Worksheet</span><select id="sheetSelect" disabled><option value="">First worksheet</option></select></label>
             <div class="field-pair">
-              <label class="field">
-                <span>Start cell</span>
-                <input id="startCellInput" value="A1" inputmode="text" spellcheck="false" />
-              </label>
-              <label class="field">
-                <span>End cell</span>
-                <input id="endCellInput" placeholder="Worksheet end" inputmode="text" spellcheck="false" />
-              </label>
+              <label class="field"><span>Start cell</span><input id="startCellInput" value="A1" inputmode="text" spellcheck="false" /></label>
+              <label class="field"><span>End cell</span><input id="endCellInput" placeholder="Worksheet end" inputmode="text" spellcheck="false" /></label>
             </div>
+            <label class="toggle-row"><span><strong>Header row</strong><small>Use first selected row as columns</small></span><input id="headerToggle" type="checkbox" checked aria-label="Header row" /></label>
+            <label class="toggle-row"><span><strong>Ignore empty rows</strong><small>Skip rows without values</small></span><input id="emptyRowsToggle" type="checkbox" aria-label="Ignore empty rows" /></label>
+          </section>
 
-            <label class="field">
-              <span>Row limit</span>
-              <input id="rowLimitInput" type="number" min="1" max="2000" value="100" />
-            </label>
+          <section id="rowsControls" class="control-section workflow-section">
+            <div class="section-heading"><span>Rows</span></div>
+            <label class="field"><span>Preview limit</span><input id="rowLimitInput" type="number" min="1" max="2000" value="100" /></label>
+          </section>
 
-            <label class="toggle-row">
-              <span>
-                <strong>Header row</strong>
-                <small>Use first selected row as columns</small>
-              </span>
-              <input id="headerToggle" type="checkbox" checked aria-label="Header row" />
-            </label>
+          <section id="analyzeControls" class="control-section workflow-section" hidden>
+            <div class="section-heading"><span>Conditions</span><button id="addConditionButton" class="small-command" type="button">+ Add</button></div>
+            <label class="field"><span>Combine with</span><select id="conditionJoin"><option value="and">AND</option><option value="or">OR</option></select></label>
+            <div id="conditionsList" class="builder-list"></div>
+            <div class="section-heading subsection-heading"><span>Group by</span></div>
+            <label class="field"><span>Columns</span><select id="groupBySelect" multiple size="4" aria-label="Group by columns"></select></label>
+            <div class="section-heading subsection-heading"><span>Aggregates</span><button id="addAggregateButton" class="small-command" type="button">+ Add</button></div>
+            <div id="aggregatesList" class="builder-list"></div>
+            <div class="field-pair">
+              <label class="field"><span>Max groups</span><input id="maxGroupsInput" type="number" min="1" value="10000" /></label>
+              <label class="field"><span>Result limit</span><input id="analysisLimitInput" type="number" min="1" value="200" /></label>
+            </div>
+            <button id="runAnalysisButton" class="button button-primary full-button" type="button">Run analysis</button>
+          </section>
 
-            <label class="toggle-row">
-              <span>
-                <strong>Ignore empty rows</strong>
-                <small>Hide rows without cell values</small>
-              </span>
-              <input id="emptyRowsToggle" type="checkbox" aria-label="Ignore empty rows" />
-            </label>
+          <section id="ragControls" class="control-section workflow-section" hidden>
+            <div class="section-heading"><span>RAG chunks</span></div>
+            <div class="field-pair">
+              <label class="field"><span>Rows / chunk</span><input id="chunkRowsInput" type="number" min="1" max="500" value="25" /></label>
+              <label class="field"><span>Max rows</span><input id="ragMaxRowsInput" type="number" min="1" value="500" /></label>
+            </div>
+            <label id="hiddenSheetOptIn" class="toggle-row warning-toggle" hidden><span><strong>Include hidden sheet</strong><small>Explicit privacy opt-in</small></span><input id="allowHiddenToggle" type="checkbox" aria-label="Include hidden sheet" /></label>
+            <button id="runRagButton" class="button button-primary full-button" type="button">Build RAG export</button>
           </section>
 
           <section class="control-section export-section">
             <div class="section-heading"><span>Export</span></div>
             <div class="command-row command-row-stack">
-              <button id="downloadDemoButton" class="button button-secondary" type="button">
-                ↓ Demo XLSX
-              </button>
-              <button id="downloadJsonButton" class="button button-secondary" type="button" disabled>
-                ↓ Preview JSON
-              </button>
+              <button id="downloadDemoButton" class="button button-secondary" type="button">↓ Demo XLSX</button>
+              <button id="downloadJsonButton" class="button button-secondary" type="button" disabled>↓ Result JSON</button>
+              <button id="downloadChunksButton" class="button button-secondary" type="button" hidden disabled>↓ Chunks JSONL</button>
+              <button id="downloadManifestButton" class="button button-secondary" type="button" hidden disabled>↓ Manifest JSON</button>
             </div>
-            <div class="memory-strip">
-              <span class="memory-dot" aria-hidden="true"></span>
-              Browser memory mode
-            </div>
+            <div class="memory-strip"><span class="memory-dot" aria-hidden="true"></span><span id="memoryModeText">Worker · bounded row preview</span></div>
           </section>
         </aside>
 
-        <section class="preview-panel" aria-label="Workbook preview">
+        <section class="preview-panel" aria-label="Workbook results">
           <div class="preview-toolbar">
-            <div class="preview-title">
-              <span class="eyebrow">Selected data</span>
-              <h1 id="previewTitle">Workbook preview</h1>
-            </div>
-            <div class="metrics" aria-label="Preview metrics">
-              <div><strong id="metricRows">0</strong><span>rows</span></div>
-              <div><strong id="metricColumns">0</strong><span>columns</span></div>
-              <div><strong id="metricTime">—</strong><span>parse</span></div>
+            <div class="preview-title"><span id="resultEyebrow" class="eyebrow">Selected data</span><h1 id="previewTitle">Workbook preview</h1></div>
+            <div class="metrics" aria-label="Result metrics">
+              <div><strong id="metricRows">0</strong><span id="metricRowsLabel">rows</span></div>
+              <div><strong id="metricColumns">0</strong><span id="metricColumnsLabel">columns</span></div>
+              <div><strong id="metricTime">—</strong><span>worker</span></div>
             </div>
           </div>
-
           <div class="preview-subbar">
-            <div class="tabs" role="tablist" aria-label="Preview format">
-              <button class="tab is-active" id="previewTab" type="button" role="tab" aria-selected="true">
-                Grid
-              </button>
-              <button class="tab" id="jsonTab" type="button" role="tab" aria-selected="false">
-                JSON
-              </button>
+            <div class="tabs" role="tablist" aria-label="Result format">
+              <button class="tab is-active" id="previewTab" type="button" role="tab" aria-selected="true">Grid</button>
+              <button class="tab" id="jsonTab" type="button" role="tab" aria-selected="false">JSON</button>
             </div>
             <span id="resultNotice" class="result-notice">Waiting for workbook</span>
           </div>
-
-          <div id="loadingState" class="loading-state" aria-live="polite">
-            <span class="loader" aria-hidden="true"></span>
-            <span>Starting WebAssembly…</span>
-          </div>
-
-          <div id="emptyState" class="empty-state" hidden>
-            <span class="empty-grid" aria-hidden="true"></span>
-            <strong>No rows in this selection</strong>
-          </div>
-
-          <div id="gridView" class="table-scroll" hidden>
-            <table id="previewTable">
-              <thead></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-
-          <pre id="jsonView" class="json-view" hidden aria-label="JSON preview"></pre>
+          <div id="loadingState" class="loading-state" aria-live="polite"><span class="loader" aria-hidden="true"></span><span>Starting WebAssembly…</span></div>
+          <div id="emptyState" class="empty-state" hidden><span class="empty-grid" aria-hidden="true"></span><strong>No results</strong></div>
+          <div id="gridView" class="table-scroll" hidden><table id="previewTable"><thead></thead><tbody></tbody></table></div>
+          <pre id="jsonView" class="json-view" hidden aria-label="JSON result"></pre>
         </section>
       </main>
     </div>
-
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   </body>
 </html>

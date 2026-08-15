@@ -13,6 +13,8 @@ The MVP currently supports:
 - Reading `.xlsx` files from paths.
 - Bounded-memory worksheet streaming through `MiniExcel::query()` and `MiniExcel::query_as()`.
 - Sparse structure-preserving streaming through `MiniExcel::query_structured()`.
+- Versioned filter/group/aggregate plans with memory bounded by an explicit maximum group count.
+- Addressed JSONL chunks and SHA-256 manifests for LLM/RAG ingestion and source grounding.
 - Listing worksheets with index, type, and visibility metadata, and selecting a worksheet by name.
 - Listing selected column names with header and A1 start-cell semantics.
 - Dynamic rows with stable column order and optional header rows.
@@ -21,7 +23,7 @@ The MVP currently supports:
 - Creating new `.xlsx` workbooks from dynamic rows or Serde structs.
 - Worksheet selection for reads and path-based workbook output.
 - Strings, booleans, integers, floating-point values, empty cells, Excel errors, dates, times, datetimes, and durations.
-- An in-browser WebAssembly adapter and Browser Lab for local XLSX inspection and generation.
+- A Web Worker-based Browser Lab for local row inspection, grouped analysis, and RAG export.
 
 The implementation uses Rust 2024 with an MSRV of Rust 1.85.0.
 
@@ -87,9 +89,19 @@ cargo +1.85.0 run -- query ../tests/data/xlsx/TestDynamicQueryBasic.xlsx --heade
 
 `query` supports `--sheet`, `--header`, `--start-cell`, `--end-cell`, `--ignore-empty-rows`, and `--format table|json|jsonl`. It prints at most 20 rows by default. Use `--limit 0 --format jsonl` for unbounded streaming output; JSON and table output collect the selected rows before rendering.
 
+Run a versioned analysis plan or export RAG evidence files:
+
+```bash
+cargo +1.85.0 run -p miniexcel-cli -- analyze book.xlsx --header --plan plan.json --format json
+
+cargo +1.85.0 run -p miniexcel-cli -- rag-export book.xlsx --header --chunk-rows 25 --output-prefix ./out/book
+```
+
+See [Streaming Analytics and RAG Export](docs/analytics-and-rag.md) for the JSON contracts, supported operators, and output guarantees.
+
 ## Browser WebAssembly
 
-The [Browser Lab](https://mini-software.github.io/MiniExcel-Rust/) uses `miniexcel-wasm` to inspect uploaded XLSX bytes and generate a demo workbook entirely in the browser. Build and test it from `web-demo`:
+The [Browser Lab](https://mini-software.github.io/MiniExcel-Rust/) uses a Web Worker and a reusable `miniexcel-wasm` workbook session. It previews bounded rows, runs grouped plans, and builds addressed JSONL/manifest downloads entirely in the browser. Uploaded workbooks never leave the device. Build and test it from `web-demo`:
 
 ```bash
 npm ci
@@ -130,7 +142,7 @@ Both commands must pass for a behavior to be considered equivalent. See [Compati
 
 ## Public API
 
-`MiniExcel` is the only public behavior entry point. Reader, writer, ZIP/XML parser, and iterator implementation types are internal. The remaining root exports are data and configuration contracts: `CellValue`, `DynamicRow`, `StructuredCell`, `StructuredRow`, `CellReference`, `ExcelRange`, `ReadOptions`, `WriteOptions`, `HeaderMode`, `SheetInfo`, `SheetType`, `SheetVisibility`, `Error`, and `Result`. Date/time Serde adapters are available under `serde_helpers`.
+`MiniExcel` is the main public behavior entry point. Reader, writer, and ZIP/XML parser types are internal. Root exports contain row/configuration contracts plus versioned analytics and RAG support types. Date/time Serde adapters are available under `serde_helpers`.
 
 Worksheet metadata is available from paths or in-memory XLSX data:
 
@@ -214,6 +226,49 @@ for row in MiniExcel::query_structured("book.xlsx")? {
 Structured rows contain only cells explicitly represented in worksheet XML. Row and column indices are one-based, and `address()` returns the corresponding A1 reference. The sheet name is stored once per row rather than repeated on every cell. `HeaderMode` does not consume the first row for structured reads because source rows are returned as stored.
 
 Formula text and its cached value are preserved separately. MiniExcel does not calculate formulas, expand shared-formula definitions, or guarantee that a producer refreshed cached values. Raw custom and standard built-in number formats are exposed when their style is known.
+
+## Streaming Analytics
+
+Analytics applies strict, serializable predicates and grouped aggregates while source rows stream past:
+
+```rust
+use miniexcel::{AggregateOp, AggregateSpec, HeaderMode, MiniExcel, QueryPlan, ReadOptions};
+
+let options = ReadOptions::new().with_header_mode(HeaderMode::FirstRow);
+let plan = QueryPlan::new([
+    AggregateSpec::count_all("rows"),
+    AggregateSpec::column(AggregateOp::Sum, "Amount", "totalAmount"),
+])
+.with_group_by(["Category", "Region"])
+.with_max_groups(10_000);
+
+let result = MiniExcel::analyze_with_options("book.xlsx", &options, &plan)?;
+# Ok::<(), miniexcel::Error>(())
+```
+
+Path analytics do not retain source rows. Memory grows with shared strings, styles, parser buffers, and distinct group state. `max_groups` turns high-cardinality grouping into a deterministic error; it is not constant-memory grouping and does not spill to disk.
+
+## RAG Evidence Export
+
+`MiniExcel::export_rag()` streams sparse, source-addressed chunks. Each cell preserves its A1 address, typed cached value, formula text, style ID, and number format. The manifest records the workbook SHA-256, sheet visibility, selected range, chunk policy, output counts, truncation, and formula-cache limitation.
+
+```rust
+use miniexcel::{HeaderMode, MiniExcel, RagExportOptions, ReadOptions};
+
+let options = ReadOptions::new().with_header_mode(HeaderMode::FirstRow);
+let mut export = MiniExcel::export_rag(
+    "book.xlsx",
+    &options,
+    &RagExportOptions::new().with_chunk_rows(25),
+)?;
+for chunk in export.by_ref() {
+    println!("{}", chunk?.data_range());
+}
+println!("{}", export.manifest().source_sha256());
+# Ok::<(), miniexcel::Error>(())
+```
+
+Hidden and very-hidden sheets require explicit opt-in. JSONL chunks are the canonical evidence format; the manifest is the canonical extraction/provenance record. See [the full analytics and RAG contract](docs/analytics-and-rag.md).
 
 ## Dynamic Reading
 
@@ -314,6 +369,8 @@ The column-format key is the final Serde field/header name. Typed Serde writing 
 - Excel serial dates cannot always distinguish date-only, time-only, and datetime intent. Dynamic serial values are normalized to `CellValue::DateTime`; ISO values retain the more specific variant when possible.
 - Formula expressions are not returned. Reading uses their cached values.
 - `MiniExcel::query()` and `query_as()` strictly stream worksheet XML from paths.
+- Grouped analytics retain state proportional to distinct groups and stop at `max_groups`.
+- RAG exports never recalculate formulas and reject hidden sheets unless explicitly allowed.
 - Streaming is synchronous and uses one worker thread per active query. Async I/O is not part of the MVP.
 - Writing creates new workbooks and overwrites target paths. It cannot modify an existing workbook.
 

@@ -5,7 +5,10 @@ use serde::de::DeserializeOwned;
 
 use crate::streaming::{StreamingRows, StreamingStructuredRows, StreamingTypedRows};
 use crate::writer::XlsxWriter;
-use crate::{DynamicRow, ExcelRange, ReadOptions, Result, SheetInfo, StructuredRow, WriteOptions};
+use crate::{
+    AnalysisResult, ByteQuerySummary, DynamicRow, ExcelRange, QueryPlan, RagChunk, RagExport,
+    RagExportOptions, RagManifest, ReadOptions, Result, SheetInfo, StructuredRow, WriteOptions,
+};
 
 /// Convenience entry points for the common path-based MiniExcel workflow.
 pub struct MiniExcel;
@@ -86,6 +89,63 @@ impl MiniExcel {
     /// browser uploads and other environments without filesystem access.
     pub fn query_bytes(bytes: &[u8], options: &ReadOptions) -> Result<Vec<DynamicRow>> {
         crate::streaming::query_bytes(bytes, options)
+    }
+
+    /// Visits in-memory worksheet rows without materializing the complete selection.
+    pub fn visit_rows_from_bytes<F>(
+        bytes: &[u8],
+        options: &ReadOptions,
+        mut visitor: F,
+    ) -> Result<ByteQuerySummary>
+    where
+        F: FnMut(usize, &DynamicRow) -> Result<bool>,
+    {
+        crate::streaming::visit_dynamic_rows(bytes, options, |_, excel_row, row| {
+            visitor(excel_row, &row)
+        })
+    }
+
+    /// Streams worksheet rows into a grouped analytical query.
+    ///
+    /// Source rows are not retained. Memory used by grouping is limited by
+    /// [`QueryPlan::with_max_groups`].
+    pub fn analyze_with_options(
+        path: impl AsRef<Path>,
+        options: &ReadOptions,
+        plan: &QueryPlan,
+    ) -> Result<AnalysisResult> {
+        crate::analytics::analyze_path(path, options, plan)
+    }
+
+    /// Analyzes an in-memory XLSX workbook without materializing its source rows.
+    pub fn analyze_bytes(
+        bytes: &[u8],
+        options: &ReadOptions,
+        plan: &QueryPlan,
+    ) -> Result<AnalysisResult> {
+        crate::analytics::analyze_bytes(bytes, options, plan)
+    }
+
+    /// Streams provenance-preserving JSON-ready chunks from a path-based workbook.
+    pub fn export_rag(
+        path: impl AsRef<Path>,
+        options: &ReadOptions,
+        export_options: &RagExportOptions,
+    ) -> Result<RagExport> {
+        crate::rag::export_path(path, options, export_options)
+    }
+
+    /// Visits RAG chunks from in-memory XLSX data without retaining all chunks.
+    pub fn visit_rag_chunks_from_bytes<F>(
+        bytes: &[u8],
+        options: &ReadOptions,
+        export_options: &RagExportOptions,
+        visitor: F,
+    ) -> Result<RagManifest>
+    where
+        F: FnMut(&RagChunk) -> Result<()>,
+    {
+        crate::rag::export_bytes(bytes, options, export_options, visitor)
     }
 
     /// Streams and deserializes rows from the first worksheet through Serde.

@@ -12,6 +12,7 @@ The MVP currently supports:
 
 - Reading `.xlsx` files from paths.
 - Bounded-memory worksheet streaming through `MiniExcel::query()` and `MiniExcel::query_as()`.
+- Sparse structure-preserving streaming through `MiniExcel::query_structured()`.
 - Listing worksheets with index, type, and visibility metadata, and selecting a worksheet by name.
 - Listing selected column names with header and A1 start-cell semantics.
 - Dynamic rows with stable column order and optional header rows.
@@ -129,7 +130,7 @@ Both commands must pass for a behavior to be considered equivalent. See [Compati
 
 ## Public API
 
-`MiniExcel` is the only public behavior entry point. Reader, writer, ZIP/XML parser, and iterator implementation types are internal. The remaining root exports are data and configuration contracts: `CellValue`, `DynamicRow`, `CellReference`, `ExcelRange`, `ReadOptions`, `WriteOptions`, `HeaderMode`, `SheetInfo`, `SheetType`, `SheetVisibility`, `Error`, and `Result`. Date/time Serde adapters are available under `serde_helpers`.
+`MiniExcel` is the only public behavior entry point. Reader, writer, ZIP/XML parser, and iterator implementation types are internal. The remaining root exports are data and configuration contracts: `CellValue`, `DynamicRow`, `StructuredCell`, `StructuredRow`, `CellReference`, `ExcelRange`, `ReadOptions`, `WriteOptions`, `HeaderMode`, `SheetInfo`, `SheetType`, `SheetVisibility`, `Error`, and `Result`. Date/time Serde adapters are available under `serde_helpers`.
 
 Worksheet metadata is available from paths or in-memory XLSX data:
 
@@ -188,6 +189,31 @@ for record in MiniExcel::query_as::<Record>("book.xlsx")? {
 `MiniExcel::query()` and `query_as()` accept paths because a worker owns the ZIP archive while the iterator is alive. Their concrete iterator types are intentionally hidden.
 
 > **Memory boundary:** the streaming path keeps workbook metadata, styles, and the shared-string table in memory, plus a small row channel and parser buffers. It does not retain worksheet XML or all worksheet rows. It performs one bounded-memory metadata pass before the streaming pass so every dynamic row has a stable global column schema and explicitly declared style-only rows are preserved even when `<dimension>` is missing or stale. Peak memory can still grow with the shared-string table or a single exceptionally large row, but not with the full worksheet row count.
+
+## Structured Streaming Query
+
+Use the structured stream when a consumer needs source coordinates, formulas, or number formats:
+
+```rust
+use miniexcel::MiniExcel;
+
+for row in MiniExcel::query_structured("book.xlsx")? {
+    for cell in row?.cells() {
+        println!(
+            "{} value={:?} formula={:?} format={:?}",
+            cell.address(),
+            cell.value(),
+            cell.formula(),
+            cell.number_format()
+        );
+    }
+}
+# Ok::<(), miniexcel::Error>(())
+```
+
+Structured rows contain only cells explicitly represented in worksheet XML. Row and column indices are one-based, and `address()` returns the corresponding A1 reference. The sheet name is stored once per row rather than repeated on every cell. `HeaderMode` does not consume the first row for structured reads because source rows are returned as stored.
+
+Formula text and its cached value are preserved separately. MiniExcel does not calculate formulas, expand shared-formula definitions, or guarantee that a producer refreshed cached values. Raw custom and standard built-in number formats are exposed when their style is known.
 
 ## Dynamic Reading
 

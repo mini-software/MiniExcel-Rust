@@ -17,7 +17,7 @@ use zip::ZipArchive;
 use zip::result::ZipError;
 
 use crate::cell::MAX_EXCEL_COLUMN;
-use crate::reader::SelectedRow;
+use crate::reader::{SelectedCellMetadata, SelectedRow};
 use crate::{
     CellReference, Error, ExcelRange, ReadOptions, Result, SheetInfo as PublicSheetInfo, SheetType,
     SheetVisibility,
@@ -40,7 +40,7 @@ pub(super) fn collect_raw_rows(bytes: &[u8], options: &ReadOptions) -> Result<Co
     validate_range(options)?;
     let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|error| stream_error("cannot open in-memory XLSX data:", error))?;
-    let context = prepare_workbook(&mut archive, options)?;
+    let context = prepare_workbook(&mut archive, options, false)?;
     let cancelled = AtomicBool::new(false);
     let extent = scan_worksheet_extent(&mut archive, &context.sheet_path, &cancelled)?;
     let mut rows = Vec::new();
@@ -153,7 +153,11 @@ where
 }
 
 impl StreamingRawRows {
-    pub(super) fn open(path: impl AsRef<Path>, options: &ReadOptions) -> Result<Self> {
+    pub(super) fn open(
+        path: impl AsRef<Path>,
+        options: &ReadOptions,
+        preserve_structure: bool,
+    ) -> Result<Self> {
         validate_range(options)?;
         let path = path.as_ref().to_owned();
         let file = File::open(&path)?;
@@ -168,6 +172,7 @@ impl StreamingRawRows {
                     path,
                     BufReader::new(file),
                     options,
+                    preserve_structure,
                     worker_cancelled,
                     ready_sender,
                     row_sender,
@@ -222,8 +227,9 @@ struct WorkbookContext {
     sheet_name: String,
     sheet_path: String,
     shared_strings: Vec<String>,
-    styles: Vec<CellFormat>,
+    styles: Vec<CellStyle>,
     is_1904: bool,
+    preserve_structure: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -232,6 +238,11 @@ enum CellFormat {
     Other,
     DateTime,
     TimeDelta,
+}
+
+struct CellStyle {
+    format: CellFormat,
+    number_format: Option<Arc<str>>,
 }
 
 #[derive(Default)]
@@ -257,6 +268,7 @@ fn worker_main<R>(
     path: PathBuf,
     reader: R,
     options: ReadOptions,
+    preserve_structure: bool,
     cancelled: Arc<AtomicBool>,
     ready_sender: SyncSender<Result<String>>,
     row_sender: SyncSender<Result<SelectedRow>>,
@@ -271,7 +283,7 @@ fn worker_main<R>(
             return;
         }
     };
-    let context = match prepare_workbook(&mut archive, &options) {
+    let context = match prepare_workbook(&mut archive, &options, preserve_structure) {
         Ok(context) => context,
         Err(error) => {
             let _ = ready_sender.send(Err(error));
@@ -302,6 +314,7 @@ fn worker_main<R>(
 fn prepare_workbook<R>(
     archive: &mut ZipArchive<R>,
     options: &ReadOptions,
+    preserve_structure: bool,
 ) -> Result<WorkbookContext>
 where
     R: Read + Seek,
@@ -317,13 +330,14 @@ where
     };
     let sheet_path = read_relationship_target(archive, &sheet.relationship_id)?;
     let shared_strings = read_shared_strings(archive)?;
-    let styles = read_styles(archive)?;
+    let styles = read_styles(archive, preserve_structure)?;
     Ok(WorkbookContext {
         sheet_name: sheet.name.clone(),
         sheet_path,
         shared_strings,
         styles,
         is_1904: workbook.is_1904,
+        preserve_structure,
     })
 }
 
@@ -532,7 +546,7 @@ where
     Ok(strings)
 }
 
-fn read_styles<R>(archive: &mut ZipArchive<R>) -> Result<Vec<CellFormat>>
+fn read_styles<R>(archive: &mut ZipArchive<R>, preserve_structure: bool) -> Result<Vec<CellStyle>>
 where
     R: Read + Seek,
 {
@@ -564,7 +578,13 @@ where
                     .and_then(|value| value.parse::<u32>().ok());
                 let format = attribute(&event, xml.decoder(), b"formatCode")?;
                 if let (Some(id), Some(format)) = (id, format) {
-                    custom_formats.insert(id, classify_custom_format(&format));
+                    custom_formats.insert(
+                        id,
+                        (
+                            classify_custom_format(&format),
+                            preserve_structure.then(|| Arc::from(format)),
+                        ),
+                    );
                 }
             }
             Event::Start(event) | Event::Empty(event)
@@ -573,7 +593,18 @@ where
                 let id = attribute(&event, xml.decoder(), b"numFmtId")?
                     .and_then(|value| value.parse::<u32>().ok())
                     .unwrap_or(0);
-                styles.push(custom_formats.get(&id).copied().unwrap_or_else(|| builtin_format(id)));
+                let (format, number_format) = custom_formats.get(&id).map_or_else(
+                    || {
+                        (
+                            builtin_format(id),
+                            preserve_structure
+                                .then(|| builtin_number_format(id).map(Arc::from))
+                                .flatten(),
+                        )
+                    },
+                    |(format, number_format)| (*format, number_format.clone()),
+                );
+                styles.push(CellStyle { format, number_format });
             }
             Event::Eof => break,
             _ => {}
@@ -599,21 +630,35 @@ enum CellKind {
 enum Capture {
     Value,
     InlineText,
+    Formula,
 }
 
 struct CellState {
     column: usize,
-    style: usize,
+    style: u32,
     kind: CellKind,
     value: String,
     inline_text: String,
+    formula: Option<String>,
     capture: Option<Capture>,
 }
 
 struct RowState {
     excel_row: usize,
-    cells: Vec<(usize, Data)>,
+    cells: Vec<ParsedCell>,
     next_column: usize,
+}
+
+struct ParsedCell {
+    column: usize,
+    value: Data,
+    metadata: Option<ParsedCellMetadata>,
+}
+
+struct ParsedCellMetadata {
+    formula: Option<String>,
+    style_id: u32,
+    number_format: Option<Arc<str>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -822,6 +867,23 @@ where
                 current_cell.as_mut().expect("cell checked above").capture =
                     Some(Capture::InlineText);
             }
+            Event::Start(event)
+                if current_cell.is_some() && is_name(event.name().as_ref(), b"f") =>
+            {
+                if context.preserve_structure {
+                    let cell = current_cell.as_mut().expect("cell checked above");
+                    cell.formula = Some(String::new());
+                    cell.capture = Some(Capture::Formula);
+                }
+            }
+            Event::Empty(event)
+                if current_cell.is_some() && is_name(event.name().as_ref(), b"f") =>
+            {
+                if context.preserve_structure {
+                    current_cell.as_mut().expect("cell checked above").formula =
+                        Some(String::new());
+                }
+            }
             Event::Text(text) if current_cell.is_some() => {
                 append_cell_text(&text, current_cell.as_mut().expect("cell checked above"))?;
             }
@@ -834,7 +896,8 @@ where
             Event::End(event)
                 if current_cell.is_some()
                     && (is_name(event.name().as_ref(), b"v")
-                        || is_name(event.name().as_ref(), b"t")) =>
+                        || is_name(event.name().as_ref(), b"t")
+                        || is_name(event.name().as_ref(), b"f")) =>
             {
                 current_cell.as_mut().expect("cell checked above").capture = None;
             }
@@ -864,7 +927,7 @@ fn start_cell(event: &BytesStart<'_>, decoder: Decoder, row: &mut RowState) -> R
         .unwrap_or(row.next_column);
     row.next_column = column.saturating_add(1);
     let style =
-        attribute(event, decoder, b"s")?.and_then(|value| value.parse::<usize>().ok()).unwrap_or(0);
+        attribute(event, decoder, b"s")?.and_then(|value| value.parse::<u32>().ok()).unwrap_or(0);
     let kind = match attribute(event, decoder, b"t")?.as_deref() {
         Some("s") => CellKind::SharedString,
         Some("inlineStr") => CellKind::InlineString,
@@ -880,18 +943,22 @@ fn start_cell(event: &BytesStart<'_>, decoder: Decoder, row: &mut RowState) -> R
         kind,
         value: String::new(),
         inline_text: String::new(),
+        formula: None,
         capture: None,
     })
 }
 
 fn finish_cell(cell: CellState, row: &mut RowState, context: &WorkbookContext) -> Result<()> {
-    let data = match cell.kind {
+    let CellState { column, style, kind, value, inline_text, formula, capture: _ } = cell;
+    let cell_style = context.styles.get(style as usize);
+    let format = cell_style.map_or(CellFormat::Other, |style| style.format);
+    let number_format = cell_style.and_then(|style| style.number_format.clone());
+    let data = match kind {
         CellKind::SharedString => {
-            if cell.value.is_empty() {
+            if value.is_empty() {
                 Data::Empty
             } else {
-                let index = cell
-                    .value
+                let index = value
                     .parse::<usize>()
                     .map_err(|error| stream_error("invalid shared string index:", error))?;
                 Data::String(context.shared_strings.get(index).cloned().ok_or_else(|| {
@@ -899,20 +966,17 @@ fn finish_cell(cell: CellState, row: &mut RowState, context: &WorkbookContext) -
                 })?)
             }
         }
-        CellKind::InlineString => Data::String(decode_excel_escapes(&cell.inline_text)),
-        CellKind::Boolean => {
-            Data::Bool(cell.value == "1" || cell.value.eq_ignore_ascii_case("true"))
-        }
-        CellKind::Error => Data::Error(parse_cell_error(&cell.value)?),
-        CellKind::String => Data::String(decode_excel_escapes(&cell.value)),
-        CellKind::IsoDate => Data::DateTimeIso(cell.value),
-        CellKind::Number if cell.value.is_empty() => Data::Empty,
+        CellKind::InlineString => Data::String(decode_excel_escapes(&inline_text)),
+        CellKind::Boolean => Data::Bool(value == "1" || value.eq_ignore_ascii_case("true")),
+        CellKind::Error => Data::Error(parse_cell_error(&value)?),
+        CellKind::String => Data::String(decode_excel_escapes(&value)),
+        CellKind::IsoDate => Data::DateTimeIso(value),
+        CellKind::Number if value.is_empty() => Data::Empty,
         CellKind::Number => {
-            let value = cell
-                .value
+            let value = value
                 .parse::<f64>()
                 .map_err(|error| stream_error("invalid numeric cell value:", error))?;
-            match context.styles.get(cell.style).copied().unwrap_or_default() {
+            match format {
                 CellFormat::DateTime => Data::DateTime(ExcelDateTime::new(
                     value,
                     ExcelDateTimeType::DateTime,
@@ -927,7 +991,12 @@ fn finish_cell(cell: CellState, row: &mut RowState, context: &WorkbookContext) -
             }
         }
     };
-    row.cells.push((cell.column, data));
+    let metadata = context.preserve_structure.then_some(ParsedCellMetadata {
+        formula,
+        style_id: style,
+        number_format,
+    });
+    row.cells.push(ParsedCell { column, value: data, metadata });
     Ok(())
 }
 
@@ -969,15 +1038,24 @@ where
         .filter(|column| *column >= start_column)
         .map_or(0, |column| column - start_column + 1);
     let mut values = vec![Data::Empty; width];
-    for (column, value) in row.cells {
-        if column >= start_column && end_column.is_some_and(|end| column <= end) {
-            values[column - start_column] = value;
+    let mut cells = Vec::new();
+    for cell in row.cells {
+        if cell.column >= start_column && end_column.is_some_and(|end| cell.column <= end) {
+            values[cell.column - start_column] = cell.value;
+            if let Some(metadata) = cell.metadata {
+                cells.push(SelectedCellMetadata {
+                    excel_column: cell.column,
+                    formula: metadata.formula,
+                    style_id: metadata.style_id,
+                    number_format: metadata.number_format,
+                });
+            }
         }
     }
     if options.ignore_empty_rows() && values.iter().all(DataType::is_empty) {
         return true;
     }
-    emit(SelectedRow { excel_row: row.excel_row, values })
+    emit(SelectedRow { excel_row: row.excel_row, start_column, values, cells })
 }
 
 fn validate_range(options: &ReadOptions) -> Result<()> {
@@ -1002,6 +1080,9 @@ fn append_cell_text(text: &quick_xml::events::BytesText<'_>, cell: &mut CellStat
     match cell.capture {
         Some(Capture::Value) => append_text(text, &mut cell.value),
         Some(Capture::InlineText) => append_text(text, &mut cell.inline_text),
+        Some(Capture::Formula) => {
+            append_text(text, cell.formula.as_mut().expect("formula capture initializes storage"))
+        }
         None => Ok(()),
     }
 }
@@ -1010,6 +1091,10 @@ fn append_cell_reference(reference: &BytesRef<'_>, cell: &mut CellState) -> Resu
     match cell.capture {
         Some(Capture::Value) => append_reference(reference, &mut cell.value),
         Some(Capture::InlineText) => append_reference(reference, &mut cell.inline_text),
+        Some(Capture::Formula) => append_reference(
+            reference,
+            cell.formula.as_mut().expect("formula capture initializes storage"),
+        ),
         None => Ok(()),
     }
 }
@@ -1119,6 +1204,40 @@ fn builtin_format(id: u32) -> CellFormat {
         14..=22 | 45 | 47 => CellFormat::DateTime,
         46 => CellFormat::TimeDelta,
         _ => CellFormat::Other,
+    }
+}
+
+fn builtin_number_format(id: u32) -> Option<&'static str> {
+    match id {
+        0 => Some("General"),
+        1 => Some("0"),
+        2 => Some("0.00"),
+        3 => Some("#,##0"),
+        4 => Some("#,##0.00"),
+        9 => Some("0%"),
+        10 => Some("0.00%"),
+        11 => Some("0.00E+00"),
+        12 => Some("# ?/?"),
+        13 => Some("# ??/??"),
+        14 => Some("mm-dd-yy"),
+        15 => Some("d-mmm-yy"),
+        16 => Some("d-mmm"),
+        17 => Some("mmm-yy"),
+        18 => Some("h:mm AM/PM"),
+        19 => Some("h:mm:ss AM/PM"),
+        20 => Some("h:mm"),
+        21 => Some("h:mm:ss"),
+        22 => Some("m/d/yy h:mm"),
+        37 => Some("#,##0 ;(#,##0)"),
+        38 => Some("#,##0 ;[Red](#,##0)"),
+        39 => Some("#,##0.00;(#,##0.00)"),
+        40 => Some("#,##0.00;[Red](#,##0.00)"),
+        45 => Some("mm:ss"),
+        46 => Some("[h]:mm:ss"),
+        47 => Some("mmss.0"),
+        48 => Some("##0.0E+0"),
+        49 => Some("@"),
+        _ => None,
     }
 }
 

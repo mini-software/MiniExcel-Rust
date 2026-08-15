@@ -12,7 +12,7 @@ mod sheet;
 mod streaming;
 mod writer;
 
-pub use cell::{CellReference, CellValue, DynamicRow, ExcelRange};
+pub use cell::{CellReference, CellValue, DynamicRow, ExcelRange, StructuredCell, StructuredRow};
 pub use error::{Error, Result};
 pub use facade::MiniExcel;
 pub use options::{HeaderMode, ReadOptions, WriteOptions};

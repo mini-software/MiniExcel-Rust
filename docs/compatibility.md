@@ -28,6 +28,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | OpenXML importer | `MiniExcel` | Concrete reader/parser types are internal |
 | Dynamic `Query` | `MiniExcel::query()` | Streams owned `IndexMap<String, CellValue>` rows with bounded buffering |
 | Typed `Query<T>` | `MiniExcel::query_as<T>()` | Streams rows and applies Serde mapping one row at a time |
+| Structure-preserving query | `MiniExcel::query_structured()` | Streams sparse rows with one-based coordinates, formulas, style IDs, and number formats |
 | `QueryRange` | `ReadOptions::with_start_cell()` / `with_end_cell()` | Inclusive A1 range for dynamic and typed reads |
 | `GetSheetNames` | `MiniExcel::get_sheet_names()` | Workbook order is preserved |
 | `GetSheetInformations` | `MiniExcel::get_sheet_info()` | Includes OOXML ID, order, name, type, visibility, and active state |
@@ -39,12 +40,13 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Dynamic export | `save_as()` / `save_as_with_schema()` | Map serialization is implemented internally |
 | Typed export | `save_as_serialized<T>()` | Uses Serde mapping internally |
 
-`MiniExcel` is the only public behavior entry point. Reader, writer, parser, and concrete iterator types are crate-internal. Public supporting types are limited to row/cell values, options, errors/results, and Serde date/time helpers.
+`MiniExcel` is the only public behavior entry point. Reader, writer, parser, and concrete iterator types are crate-internal. Public supporting types are limited to row/cell values, structured provenance rows, options, errors/results, and Serde date/time helpers.
 
 ## Compatibility Defaults
 
 - `MiniExcel::query()` with `HeaderMode::Auto` uses column letters and treats the first row as data.
 - `MiniExcel::query_as()` with `HeaderMode::Auto` consumes the first selected row as headers.
+- `MiniExcel::query_structured()` never consumes a header row and emits only cells explicitly represented in worksheet XML.
 - The first worksheet in workbook order is selected when no name is supplied.
 - Empty rows between the selected start and last used cell are retained by default.
 - Typed header strings are trimmed by default. Dynamic headers follow the .NET behavior and retain non-blank text as stored.
@@ -65,7 +67,8 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Excel duration | `CellValue::Duration` |
 | ISO date/time | `Date`, `Time`, or `DateTime` when parseable |
 | Cell error | `CellValue::Error` |
-| Formula | Cached result value only |
+| Formula through dynamic/typed query | Cached result value only |
+| Formula through structured query | Raw formula text and cached result value; no calculation |
 
 Typed conversions are delegated to calamine's Serde deserializer. The public `serde_helpers` module adds strict chrono helpers that convert an invalid value into the library's contextual `Error::Deserialize` path.
 
@@ -74,6 +77,8 @@ For typed writing, chrono values must use the matching MiniExcel helper (`serial
 ## Memory And I/O Model
 
 `MiniExcel::query()` and `query_as()` use a dedicated path-streaming backend. A worker owns the ZIP archive, reads workbook relationships, styles, and shared strings, then processes worksheet XML with quick-xml. A bounded channel holds at most eight parsed rows. Dropping the public iterator disconnects the channel and joins the worker, so an early `take` or `find` stops further work.
+
+`MiniExcel::query_structured()` uses the same bounded pipeline and additionally retains metadata for explicit cells in the current row and channel. Sheet names are shared per row, and number-format strings are shared by style. Missing cells are not expanded into structured cell objects. Formula expressions are preserved exactly as stored, but shared formulas are not expanded and cached values can be stale.
 
 The backend makes two sequential, bounded-memory passes over the selected worksheet entry. The first records only the maximum used column and final explicitly declared row. This is required for MiniExcel-compatible stable dynamic schemas when legal files omit `<dimension>`, and to preserve style-only row elements like the .NET reader. The second pass emits rows. Worksheet XML and prior rows are never retained; memory consists primarily of shared strings, styles, parser buffers, the current row, and the bounded channel.
 
@@ -90,6 +95,7 @@ Rust integration tests reuse the repository's existing files under `tests/data/x
 - Cells without explicit `r` attributes.
 - A typed conversion failure with a verified Excel row number.
 - Strict streaming A1 starts, empty-row filtering, dates, trimmed headers, and early typed errors.
+- Structured formula text, cached values, A1 addresses, style IDs, built-in/custom number formats, ranges, and early iterator drop.
 
 Writer tests generate temporary workbooks through `MiniExcel::save_as*()` and read them back through `MiniExcel::query*()`, covering dynamic and typed values, dates, empty schemas, path overwrite behavior, and worksheet-name validation. The WASM adapter has native unit tests, while Browser Lab Playwright tests cover generated-workbook rendering, query controls, inclusive end ranges, and desktop/mobile viewports.
 
@@ -111,7 +117,7 @@ dotnet test ../MiniExcel/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.c
 
 The Rust workflow runs the Rust contract on Linux and Windows. Its .NET parity job checks out the MiniExcel repository, copies this revision's contract into that checkout, and runs the .NET adapter on Linux. A compatibility change is complete only when the shared contract is updated deliberately and both adapters pass it.
 
-The contract covers only the current common surface: dynamic/typed path queries, inclusive range queries, column-name discovery, header behavior, sheet selection/order, A1 starts, empty/style-only rows, inferred cell references, scalar/date/duration mapping, trimmed typed headers, and conversion-error row/value context. Async APIs, DataReader, templates, and writing parity remain outside version 1 and must not be described as equivalent yet.
+The contract covers only the current common surface: dynamic/typed path queries, inclusive range queries, column-name discovery, header behavior, sheet selection/order, A1 starts, empty/style-only rows, inferred cell references, scalar/date/duration mapping, trimmed typed headers, and conversion-error row/value context. Structured provenance is a Rust research extension and is not a .NET parity claim. Async APIs, DataReader, templates, and writing parity remain outside version 1 and must not be described as equivalent yet.
 
 ## .NET Coverage Boundary
 
@@ -133,4 +139,4 @@ This matrix is the coverage claim: Rust does not yet provide complete API parity
 
 ## Deferred Work
 
-CSV providers, old Excel formats, templates, images, merged-cell APIs, formula authoring, general styling, modifying existing workbooks, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.
+CSV providers, old Excel formats, templates, images, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, modifying existing workbooks, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.

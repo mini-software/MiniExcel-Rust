@@ -1,10 +1,20 @@
 use calamine::{Data, DataType, Range};
+use std::sync::Arc;
 
 use crate::CellValue;
 
 pub(crate) struct SelectedRow {
     pub(crate) excel_row: usize,
+    pub(crate) start_column: usize,
     pub(crate) values: Vec<Data>,
+    pub(crate) cells: Vec<SelectedCellMetadata>,
+}
+
+pub(crate) struct SelectedCellMetadata {
+    pub(crate) excel_column: usize,
+    pub(crate) formula: Option<String>,
+    pub(crate) style_id: u32,
+    pub(crate) number_format: Option<Arc<str>>,
 }
 
 pub(crate) fn header_names(values: &[Data]) -> Vec<Option<String>> {

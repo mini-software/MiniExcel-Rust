@@ -1,5 +1,6 @@
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use indexmap::IndexMap;
@@ -32,6 +33,113 @@ impl CellValue {
 }
 
 pub type DynamicRow = IndexMap<String, CellValue>;
+
+/// A cell emitted by the structure-preserving XLSX stream.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StructuredCell {
+    row: u32,
+    column: u32,
+    value: CellValue,
+    formula: Option<String>,
+    style_id: u32,
+    number_format: Option<Arc<str>>,
+}
+
+impl StructuredCell {
+    pub(crate) fn new(
+        row: usize,
+        column: usize,
+        value: CellValue,
+        formula: Option<String>,
+        style_id: u32,
+        number_format: Option<Arc<str>>,
+    ) -> Self {
+        Self {
+            row: (row + 1) as u32,
+            column: (column + 1) as u32,
+            value,
+            formula,
+            style_id,
+            number_format,
+        }
+    }
+
+    /// Returns the one-based Excel row index.
+    #[must_use]
+    pub const fn row_index(&self) -> u32 {
+        self.row
+    }
+
+    /// Returns the one-based Excel column index.
+    #[must_use]
+    pub const fn column_index(&self) -> u32 {
+        self.column
+    }
+
+    /// Returns the A1 cell address.
+    #[must_use]
+    pub fn address(&self) -> String {
+        CellReference { row: self.row as usize - 1, column: self.column as usize - 1 }.to_string()
+    }
+
+    #[must_use]
+    pub const fn value(&self) -> &CellValue {
+        &self.value
+    }
+
+    /// Returns the raw OOXML formula text without evaluating it.
+    #[must_use]
+    pub fn formula(&self) -> Option<&str> {
+        self.formula.as_deref()
+    }
+
+    #[must_use]
+    pub const fn style_id(&self) -> u32 {
+        self.style_id
+    }
+
+    /// Returns the OOXML number format associated with the cell style when known.
+    #[must_use]
+    pub fn number_format(&self) -> Option<&str> {
+        self.number_format.as_deref()
+    }
+}
+
+/// A sparse, structure-preserving row from an XLSX worksheet.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StructuredRow {
+    sheet_name: Arc<str>,
+    row: u32,
+    cells: Vec<StructuredCell>,
+}
+
+impl StructuredRow {
+    pub(crate) fn new(sheet_name: Arc<str>, row: usize, cells: Vec<StructuredCell>) -> Self {
+        Self { sheet_name, row: (row + 1) as u32, cells }
+    }
+
+    #[must_use]
+    pub fn sheet_name(&self) -> &str {
+        &self.sheet_name
+    }
+
+    /// Returns the one-based Excel row index.
+    #[must_use]
+    pub const fn row_index(&self) -> u32 {
+        self.row
+    }
+
+    /// Returns only cells explicitly represented in the worksheet XML.
+    #[must_use]
+    pub fn cells(&self) -> &[StructuredCell] {
+        &self.cells
+    }
+
+    #[must_use]
+    pub fn into_cells(self) -> Vec<StructuredCell> {
+        self.cells
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CellReference {

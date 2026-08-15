@@ -3,12 +3,13 @@ mod ooxml;
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
 use std::path::Path;
+use std::sync::Arc;
 
 use calamine::{Data, RangeDeserializerBuilder};
 use serde::de::DeserializeOwned;
 
 use crate::reader::{column_names, header_names, row_to_range, to_cell_value, trim_header_row};
-use crate::{DynamicRow, Error, ReadOptions, Result};
+use crate::{DynamicRow, Error, ReadOptions, Result, StructuredCell, StructuredRow};
 
 use self::ooxml::StreamingRawRows;
 
@@ -36,7 +37,7 @@ pub(crate) struct StreamingRows {
 
 impl StreamingRows {
     pub(crate) fn open(path: impl AsRef<Path>, options: &ReadOptions) -> Result<Self> {
-        let mut rows = StreamingRawRows::open(path, options)?;
+        let mut rows = StreamingRawRows::open(path, options, false)?;
         let headers = if options.uses_headers(false) {
             let headers =
                 rows.next().transpose()?.map_or_else(Vec::new, |row| header_names(&row.values));
@@ -61,6 +62,54 @@ impl Iterator for StreamingRows {
 }
 
 impl FusedIterator for StreamingRows {}
+
+/// A bounded-memory iterator over sparse structure-preserving XLSX rows.
+pub(crate) struct StreamingStructuredRows {
+    rows: StreamingRawRows,
+    sheet_name: Arc<str>,
+}
+
+impl StreamingStructuredRows {
+    pub(crate) fn open(path: impl AsRef<Path>, options: &ReadOptions) -> Result<Self> {
+        let rows = StreamingRawRows::open(path, options, true)?;
+        let sheet_name = Arc::from(rows.sheet_name());
+        Ok(Self { rows, sheet_name })
+    }
+}
+
+impl Iterator for StreamingStructuredRows {
+    type Item = Result<StructuredRow>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let selected_row = match self.rows.next()? {
+            Ok(row) => row,
+            Err(error) => return Some(Err(error)),
+        };
+        let cells = selected_row
+            .cells
+            .into_iter()
+            .map(|metadata| {
+                let offset = metadata
+                    .excel_column
+                    .checked_sub(selected_row.start_column)
+                    .expect("selected cell is within the selected range");
+                let value =
+                    selected_row.values.get(offset).expect("selected cell has an aligned value");
+                StructuredCell::new(
+                    selected_row.excel_row,
+                    metadata.excel_column,
+                    to_cell_value(value),
+                    metadata.formula,
+                    metadata.style_id,
+                    metadata.number_format,
+                )
+            })
+            .collect();
+        Some(Ok(StructuredRow::new(Arc::clone(&self.sheet_name), selected_row.excel_row, cells)))
+    }
+}
+
+impl FusedIterator for StreamingStructuredRows {}
 
 pub(crate) fn query_bytes(bytes: &[u8], options: &ReadOptions) -> Result<Vec<DynamicRow>> {
     let collected = ooxml::collect_raw_rows(bytes, options)?;
@@ -125,7 +174,7 @@ where
     T: DeserializeOwned,
 {
     pub(crate) fn open(path: impl AsRef<Path>, options: &ReadOptions) -> Result<Self> {
-        let mut rows = StreamingRawRows::open(path, options)?;
+        let mut rows = StreamingRawRows::open(path, options, false)?;
         let sheet_name = rows.sheet_name().to_owned();
         let headers = if options.uses_headers(true) {
             rows.next().transpose()?.map(|mut row| {

@@ -3,9 +3,9 @@ use std::path::Path;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::streaming::{StreamingRows, StreamingTypedRows};
+use crate::streaming::{StreamingRows, StreamingStructuredRows, StreamingTypedRows};
 use crate::writer::XlsxWriter;
-use crate::{DynamicRow, ExcelRange, ReadOptions, Result, SheetInfo, WriteOptions};
+use crate::{DynamicRow, ExcelRange, ReadOptions, Result, SheetInfo, StructuredRow, WriteOptions};
 
 /// Convenience entry points for the common path-based MiniExcel workflow.
 pub struct MiniExcel;
@@ -54,6 +54,24 @@ impl MiniExcel {
         options: &ReadOptions,
     ) -> Result<Box<dyn Iterator<Item = Result<DynamicRow>> + Send>> {
         Ok(Box::new(StreamingRows::open(path, options)?))
+    }
+
+    /// Streams sparse rows while preserving cell coordinates, formulas, and number formats.
+    ///
+    /// Header mode does not consume the first row because structured reads expose source rows
+    /// exactly as represented in the worksheet.
+    pub fn query_structured(
+        path: impl AsRef<Path>,
+    ) -> Result<Box<dyn Iterator<Item = Result<StructuredRow>> + Send>> {
+        Self::query_structured_with_options(path, &ReadOptions::default())
+    }
+
+    /// Streams sparse structure-preserving rows using worksheet and range options.
+    pub fn query_structured_with_options(
+        path: impl AsRef<Path>,
+        options: &ReadOptions,
+    ) -> Result<Box<dyn Iterator<Item = Result<StructuredRow>> + Send>> {
+        Ok(Box::new(StreamingStructuredRows::open(path, options)?))
     }
 
     /// Returns the selected dynamic column names, or an empty vector when no data rows exist.

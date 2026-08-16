@@ -30,7 +30,8 @@ const elements = Object.fromEntries(
     "chunkRowsInput", "ragMaxRowsInput", "hiddenSheetOptIn", "allowHiddenToggle", "runRagButton",
     "memoryModeText", "resultEyebrow", "previewTitle", "metricRows", "metricRowsLabel",
     "metricColumns", "metricColumnsLabel", "metricTime", "resultNotice", "loadingState",
-    "emptyState", "gridView", "jsonView", "previewTable", "previewTab", "jsonTab", "toast",
+    "emptyState", "gridView", "jsonView", "markdownView", "previewTable", "previewTab",
+    "jsonTab", "markdownTab", "toast",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
@@ -118,6 +119,7 @@ function bindEvents() {
   elements.addAggregateButton.addEventListener("click", () => addAggregate());
   elements.previewTab.addEventListener("click", () => setTab("grid"));
   elements.jsonTab.addEventListener("click", () => setTab("json"));
+  elements.markdownTab.addEventListener("click", () => setTab("markdown"));
 }
 
 async function loadFile(file) {
@@ -390,6 +392,7 @@ function setMode(mode, refresh = true) {
   elements.rowsControls.hidden = mode !== "rows";
   elements.analyzeControls.hidden = mode !== "analyze";
   elements.ragControls.hidden = mode !== "rag";
+  elements.markdownTab.hidden = mode !== "rag";
   elements.downloadChunksButton.hidden = mode !== "rag";
   elements.downloadMarkdownChunksButton.hidden = mode !== "rag";
   elements.downloadManifestButton.hidden = mode !== "rag";
@@ -520,6 +523,7 @@ function renderResult(table, raw, elapsed, metadata) {
   elements.resultNotice.textContent = metadata.notice;
   renderTable(table);
   elements.jsonView.textContent = JSON.stringify(raw, null, 2);
+  elements.markdownView.textContent = state.mode === "rag" ? raw.chunksMarkdown : "";
   elements.loadingState.hidden = true;
   elements.emptyState.hidden = table.rows.length !== 0;
   setTab(state.activeTab);
@@ -547,15 +551,20 @@ function renderTable(result) {
 }
 
 function setTab(tab) {
-  state.activeTab = tab;
+  state.activeTab = tab === "markdown" && state.mode !== "rag" ? "grid" : tab;
   const hasRows = Boolean(state.result?.table.rows.length);
-  const isGrid = tab === "grid";
+  const isGrid = state.activeTab === "grid";
+  const isJson = state.activeTab === "json";
+  const isMarkdown = state.activeTab === "markdown";
   elements.previewTab.classList.toggle("is-active", isGrid);
   elements.previewTab.setAttribute("aria-selected", String(isGrid));
-  elements.jsonTab.classList.toggle("is-active", !isGrid);
-  elements.jsonTab.setAttribute("aria-selected", String(!isGrid));
+  elements.jsonTab.classList.toggle("is-active", isJson);
+  elements.jsonTab.setAttribute("aria-selected", String(isJson));
+  elements.markdownTab.classList.toggle("is-active", isMarkdown);
+  elements.markdownTab.setAttribute("aria-selected", String(isMarkdown));
   elements.gridView.hidden = !hasRows || !isGrid;
-  elements.jsonView.hidden = !hasRows || isGrid;
+  elements.jsonView.hidden = !hasRows || !isJson;
+  elements.markdownView.hidden = !hasRows || !isMarkdown;
   elements.emptyState.hidden = hasRows || !state.result;
 }
 

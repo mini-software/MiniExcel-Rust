@@ -83,6 +83,11 @@ test("RAG mode downloads valid JSONL, Markdown chunks, and manifest", async ({ p
   expect(chunks[0].rows).toHaveLength(6);
   expect(chunks[0].header.cells[0].address).toBe("A1");
 
+  await page.getByRole("tab", { name: "Markdown", exact: true }).click();
+  await expect(page.locator("#markdownView")).toContainText("<!-- miniexcel:chunk-start");
+  await expect(page.locator("#markdownView")).toContainText("| _row | Name | Category | Region |");
+  await expect(page.locator("#markdownView")).toContainText("<!-- miniexcel:stream-end");
+
   const markdownPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Chunks Markdown" }).click();
   const markdownDownload = await markdownPromise;

@@ -124,6 +124,7 @@
             <div class="tabs" role="tablist" aria-label="Result format">
               <button class="tab is-active" id="previewTab" type="button" role="tab" aria-selected="true">Grid</button>
               <button class="tab" id="jsonTab" type="button" role="tab" aria-selected="false">JSON</button>
+              <button class="tab" id="markdownTab" type="button" role="tab" aria-selected="false" hidden>Markdown</button>
             </div>
             <span id="resultNotice" class="result-notice">Waiting for workbook</span>
           </div>
@@ -131,6 +132,7 @@
           <div id="emptyState" class="empty-state" hidden><span class="empty-grid" aria-hidden="true"></span><strong>No results</strong></div>
           <div id="gridView" class="table-scroll" hidden><table id="previewTable"><thead></thead><tbody></tbody></table></div>
           <pre id="jsonView" class="json-view" hidden aria-label="JSON result"></pre>
+          <pre id="markdownView" class="json-view" hidden aria-label="Markdown result"></pre>
         </section>
       </main>
     </div>

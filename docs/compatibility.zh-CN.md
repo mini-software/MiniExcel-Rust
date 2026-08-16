@@ -1,0 +1,153 @@
+# Rust XLSX 兼容性说明
+
+[English](compatibility.md)
+
+## 目标
+
+Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel 风格 XLSX 读写接口。它使用聚焦的 OOXML pull parser 完成有界内存路径 query，内部使用 calamine 处理数据和 Serde 转换，并使用 rust_xlsxwriter 生成 workbook。
+
+## 依赖基线
+
+| 依赖 | 锁定 API 版本线 | 用途 | 许可证 | MSRV 说明 |
+| --- | --- | --- | --- | --- |
+| `calamine` | 0.35 | XLSX 解析和 Serde row 反序列化 | MIT | 0.35 声明 Rust 1.83 |
+| `clap` | 4.6 | 本地 CLI 参数解析 | MIT OR Apache-2.0 | 4.6 声明 Rust 1.85 |
+| `rust_xlsxwriter` | 0.96 | 新 XLSX workbook 生成和 Serde 序列化 | MIT OR Apache-2.0 | 0.96 声明 Rust 1.83 |
+| `serde` | 1.x | 类型化映射 | MIT OR Apache-2.0 | 由 workspace lockfile 解析 |
+| `chrono` | 0.4 | 无时区 Excel date/time 值 | MIT OR Apache-2.0 | 由 workspace lockfile 解析 |
+| `indexmap` | 2.x | 稳定的动态 column 顺序 | MIT OR Apache-2.0 | 由 workspace lockfile 解析 |
+| `quick-xml` | 0.39 | 增量 OOXML 解析 | MIT | 已锁定并使用 Rust 1.85 检查 |
+| `serde_json` | 1.x | Query plan、分析/RAG 输出、等价契约和 CLI JSON | MIT OR Apache-2.0 | 已使用 Rust 1.85 检查 |
+| `sha2` | 0.10 | 为 RAG manifest 流式计算 SHA-256 源身份 | MIT OR Apache-2.0 | 已使用 Rust 1.85 检查 |
+| `thiserror` | 2.x | 公共 error 组合 | MIT OR Apache-2.0 | 由 workspace lockfile 解析 |
+| `zip` | 7.2 | 增量 worksheet entry 解压 | MIT | 已锁定并使用 Rust 1.85 检查 |
+
+最新的 `calamine 0.36` 和 `rust_xlsxwriter 0.97` 需要 Rust 1.88。MVP 固定使用前一条 API 版本线，使声明的 Rust 1.85 MSRV 可实际执行，而不只是目标。
+
+## API 映射
+
+| MiniExcel V2 概念 | Rust MVP | 说明 |
+| --- | --- | --- |
+| OpenXML importer | `MiniExcel` | 具体 reader/parser 类型保持内部可见 |
+| 动态 `Query` | `MiniExcel::query()` | 以有界缓冲流式输出拥有所有权的 `IndexMap<String, CellValue>` row |
+| 类型化 `Query<T>` | `MiniExcel::query_as<T>()` | 流式处理 row，并逐行应用 Serde 映射 |
+| 保留结构的 query | `MiniExcel::query_structured()` | 流式输出稀疏 row，包含从 1 开始的坐标、公式、style ID 和 number format |
+| 分组/过滤分析 | `MiniExcel::analyze_with_options()` | 版本化 Rust 扩展；流式处理 row，只保留有界 group/evidence 状态 |
+| RAG 证据导出 | `MiniExcel::export_rag()` | 版本化 Rust 扩展；流式输出可转为带地址 JSONL 的 chunk 和源 manifest |
+| `QueryRange` | `ReadOptions::with_start_cell()` / `with_end_cell()` | 动态和类型化读取使用包含端点的 A1 range |
+| `GetSheetNames` | `MiniExcel::get_sheet_names()` | 保持 workbook 顺序 |
+| `GetSheetInformations` | `MiniExcel::get_sheet_info()` | 包含 OOXML ID、顺序、名称、类型、visibility 和 active 状态 |
+| `GetSheetDimensions` | `MiniExcel::get_sheet_dimensions()` | 按 workbook 顺序返回使用范围，index 从 1 开始 |
+| `GetColumns` | `MiniExcel::get_columns()` | 返回选中的动态 key，或空 vector |
+| `startCell` | `ReadOptions::with_start_cell()` | A1 起始坐标 |
+| `IgnoreEmptyRows` | `ReadOptions::with_ignore_empty_rows()` | 为兼容 MiniExcel，默认值为 `false` |
+| OpenXML exporter | `MiniExcel::save_as*()` | 具体 writer 类型保持内部可见；只创建新 workbook |
+| 动态导出 | `save_as()` / `save_as_with_schema()` | map 序列化在内部实现 |
+| 类型化导出 | `save_as_serialized<T>()` | 内部使用 Serde 映射 |
+
+`MiniExcel` 是唯一公共行为入口。Reader、writer、parser 和具体迭代器类型均为 crate 内部实现。公共支持类型仅限 row/cell value、结构化 provenance row、option、error/result 和 Serde date/time helper。
+
+## 兼容性默认值
+
+- 使用 `HeaderMode::Auto` 的 `MiniExcel::query()` 以 column letter 作为 key，并将第一行视为数据。
+- 使用 `HeaderMode::Auto` 的 `MiniExcel::query_as()` 将第一个选中 row 用作 header。
+- `MiniExcel::query_structured()` 不会消费 header row，并且只输出 worksheet XML 中明确表示的 cell。
+- 未指定名称时，选择 workbook 顺序中的第一个 worksheet。
+- 默认保留所选起点和最后一个已使用 cell 之间的空 row。
+- 类型化 header string 默认会 trim。动态 header 遵循 .NET 行为，按存储内容保留非空白文本。
+- 空白动态 header 会被省略。重复动态 header 保留首次出现的 key 位置，后续 column 会覆盖 value。
+- 已知 schema 中缺失的动态 cell 表示为 `CellValue::Empty`，而不是省略。
+- Writer row count 不包含 header row。
+
+## 类型映射
+
+| XLSX 值 | 动态 Rust 值 |
+| --- | --- |
+| Empty | `CellValue::Empty` |
+| Boolean | `CellValue::Bool` |
+| `i64` 范围内的精确整数 | `CellValue::Int` |
+| 其他 number | `CellValue::Float` |
+| Shared/inline string | `CellValue::String` |
+| Excel serial date/time | `CellValue::DateTime` |
+| Excel duration | `CellValue::Duration` |
+| ISO date/time | 可解析时为 `Date`、`Time` 或 `DateTime` |
+| Cell error | `CellValue::Error` |
+| 通过动态/类型化 query 读取的公式 | 仅缓存结果值 |
+| 通过 structured query 读取的公式 | 原始公式文本和缓存结果值；不执行计算 |
+
+类型化转换委托给 calamine 的 Serde deserializer。公共 `serde_helpers` module 提供严格的 chrono helper，将无效值转换为库中带上下文的 `Error::Deserialize` 路径。
+
+类型化写入 chrono 值时，必须使用匹配的 MiniExcel helper（`serialize_date_to_excel`、`serialize_datetime_to_excel` 或 `serialize_time_to_excel`），并设置对应的 `WriteOptions::with_column_format()`。否则，标准 chrono Serde 行为会写入文本，而不是 Excel serial value。
+
+## 内存与 I/O 模型
+
+`MiniExcel::query()` 和 `query_as()` 使用专用的路径流式 backend。worker 拥有 ZIP archive，读取 workbook relationship、style 和 shared string，然后使用 quick-xml 处理 worksheet XML。有界 channel 最多保留 8 个已解析 row。丢弃公共迭代器会断开 channel 并 join worker，因此提前执行 `take` 或 `find` 会停止后续工作。
+
+`MiniExcel::query_structured()` 使用相同的有界 pipeline，并额外保留当前 row 与 channel 中明确 cell 的 metadata。sheet name 在每个 row 内共享，number-format string 按 style 共享。缺失 cell 不会扩展成 structured cell object。公式表达式按存储内容原样保留，但 shared formula 不会被展开，缓存值也可能过期。
+
+分组分析消费动态 row stream，而不保留源数据行。内存还会为每个不同 group 保存一个聚合状态和有界源 row evidence list。`QueryPlan::max_groups` 会拒绝超出配置 limit 的 group。结果 limit 不会减少 group-state 内存。版本 1 不实现磁盘 spill、已排序输入聚合或高基数分组的常量内存处理。
+
+路径 RAG 导出保留 parser 状态、重复 header 上下文和一个输出 chunk。manifest 通过单独的有界读取计算源文件 hash。Byte/WASM 工作流不会收集源数据行，但浏览器上传必然在 WebAssembly 内存中保留压缩后的 XLSX 字节；生成的 JSONL/Blob 下载也会消耗与输出大小相当的内存。Browser Lab 在 Web Worker 中运行这些操作是为了保持响应，而不是声称其内存与路径模式等价。
+
+backend 对所选 worksheet entry 执行两次顺序、有界内存扫描。第一次只记录最大已使用 column 和最后一个明确声明的 row。这是为了在合法文件省略 `<dimension>` 时保持 MiniExcel 兼容的稳定动态 schema，并像 .NET reader 一样保留仅含 style 的 row element。第二次扫描输出 row。Worksheet XML 和先前 row 永远不会保留；内存主要由 shared string、style、parser buffer、当前 row 和有界 channel 构成。
+
+内部 writer 组装新的 ZIP package。公共 facade 写入 path，不能 patch 现有 workbook，也不能向其中插入 sheet。
+
+## 测试来源
+
+Rust integration test 复用仓库 `tests/data/xlsx` 下的现有文件，包括：
+
+- 动态 header 和无 header 文件。
+- 中间空 row 和 self-closing 空 row。
+- 类型化 value 和 trim header 映射。
+- 多个 worksheet。
+- 没有显式 `r` attribute 的 cell。
+- 已验证 Excel row number 的类型化转换失败。
+- 严格流式 A1 起点、空 row 过滤、date、trim header 和提前出现的类型化 error。
+- structured formula text、缓存值、A1 地址、style ID、内置/自定义 number format、range 和提前丢弃迭代器。
+
+Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、空 schema、path 覆盖行为和 worksheet name 验证。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range，以及桌面/移动 viewport。
+
+## .NET 等价契约
+
+.NET 与 Rust 共享的行为由 `tests/data/contracts/xlsx-parity-v1.json` 定义。此文件是以下适配器唯一的预期数据来源：
+
+- [`MiniExcel.OpenXml.Tests/Compatibility/RustParityContractTests.cs`](https://github.com/mini-software/MiniExcel/blob/master/tests/MiniExcel.OpenXml.Tests/Compatibility/RustParityContractTests.cs)
+- `miniexcel/tests/parity_contract.rs`
+
+两个适配器都通过公共 API 查询相同 XLSX fixture，规范化各语言的表示，再比较 sheet 顺序、row count、column 顺序、选中 value 和共同转换 error 上下文。规范化会将 null/empty cell、boolean、number、GUID、datetime、duration 和 string 映射为稳定的带 tag 文本。特别是，整数形式的 .NET `double` 与 Rust `CellValue::Int` 会被视为同一个 number，ISO date string 也会与 chrono date/time value 比较。
+
+从仓库根目录运行两端：
+
+```bash
+cargo +1.85.0 test -p miniexcel --test parity_contract --locked
+dotnet test ../MiniExcel/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.csproj --framework net10.0 --filter "FullyQualifiedName~RustParityContractTests"
+```
+
+Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity job 会 checkout MiniExcel 仓库，将当前 revision 的契约复制到该 checkout，并在 Linux 上运行 .NET adapter。只有在共享契约被有意识地更新且两个适配器都通过后，兼容性修改才算完成。
+
+契约只覆盖当前公共交集：动态/类型化路径 query、包含端点的 range query、column name 发现、header 行为、sheet 选择/顺序、A1 起点、空 row/仅 style row、推断 cell reference、scalar/date/duration 映射、trim 后的类型化 header，以及转换 error 的 row/value 上下文。Structured provenance 是 Rust 研究扩展，不构成 .NET 等价声明。Async API、DataReader、template 和写入等价行为仍不属于版本 1，当前不得描述为等价。
+
+## .NET 覆盖边界
+
+| .NET 接口 | Rust 状态 | 共享契约 |
+| --- | --- | --- |
+| 动态和类型化 XLSX query | 已实现 | 是 |
+| 使用 A1 坐标的 `QueryRange` | 已实现 | 是 |
+| `GetSheetNames` 和 `GetColumns` | 已实现 | 是 |
+| `GetSheetInformations` ID/index/name/type/visibility/active | 已实现 | Rust 使用 .NET fixture 测试 |
+| `GetSheetDimensions` | 已实现 | Rust 使用 .NET fixture 测试 |
+| 新 workbook `SaveAs` | 已实现并完成 roundtrip 测试 | 尚未 |
+| 用于 WASM 的字节数组 query/write | 已实现 | Rust/browser 测试 |
+| 版本化分组分析 | Rust 研究扩展 | 否 |
+| 带地址 JSONL/manifest RAG 导出 | Rust 研究扩展 | 否 |
+| Async API、DataReader、stream ownership | 延后 | 否 |
+| 插入/编辑现有 workbook | 延后 | 否 |
+| CSV 和旧格式 | 延后 | 否 |
+| Template、picture、merge、comment | 延后 | 否 |
+
+此矩阵就是覆盖声明：Rust 目前尚未提供与当前 .NET package 完整的 API 等价性。
+
+## 延后工作
+
+SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、CSV provider、旧 Excel 格式、template、image、merged-cell API、公式计算/依赖展开、公式编写、通用 style、修改现有 workbook、async I/O，以及从调用方拥有的 reader 流式读取，都需要独立的设计与验收里程碑。

@@ -1,5 +1,7 @@
 # Streaming Analytics and RAG Export
 
+[简体中文](analytics-and-rag.zh-CN.md)
+
 MiniExcel Rust provides two related but deliberately separate workflows:
 
 - **Analytics** evaluates a versioned query plan while XLSX rows stream past. It retains aggregate state, not source rows.
@@ -124,6 +126,8 @@ The `miniexcel.rag-manifest/v1` JSON file records:
 
 Path exports implement `Iterator<Item = Result<RagChunk>>`; only one result chunk, repeated header context, and parser state need to be resident. `visit_rag_chunks_from_bytes` provides the equivalent callback form for browser and in-memory callers.
 
+`RagChunk::write_markdown` writes an independent GFM table directly to an I/O sink. `RagManifest::write_markdown_stream_end` can append an optional completion marker after the iterator is exhausted. Markdown is appendable and LLM-readable; JSONL remains canonical for exact typed metadata. See [Streaming Markdown and anydoc comparison](markdown-streaming.md) for the format, memory boundary, and benchmark harness.
+
 Hidden and very-hidden sheets are rejected by default. Call `with_allow_hidden_sheets(true)` only after an explicit privacy decision. Browser Lab exposes the same opt-in and performs all work locally in a Web Worker. It never sends workbook content to an external model.
 
 ## CLI
@@ -138,15 +142,19 @@ cat plan.json | cargo +1.85.0 run -p miniexcel-cli -- \
   analyze book.xlsx --header --plan - --format jsonl
 ```
 
-Write JSONL chunks and a manifest incrementally:
+Write JSONL chunks and a manifest incrementally, or write Markdown and JSONL during the same pass:
 
 ```bash
 cargo +1.85.0 run -p miniexcel-cli -- \
   rag-export book.xlsx --header --chunk-rows 25 --max-rows 500 \
   --output-prefix ./out/book
+
+cargo +1.85.0 run -p miniexcel-cli -- \
+  rag-export book.xlsx --header --chunk-rows 25 --format both \
+  --output-prefix ./out/book
 ```
 
-The command publishes `book.chunks.jsonl` and `book.manifest.json` only after the stream and serialization complete. Use `--allow-hidden-sheets` for explicit hidden-sheet export.
+`--format` accepts `jsonl`, `markdown`, or `both` and defaults to `jsonl`. The command publishes selected chunk files and `book.manifest.json` only after the stream and serialization complete. Use `--allow-hidden-sheets` for explicit hidden-sheet export.
 
 ## Scope limits
 

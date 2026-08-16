@@ -20,7 +20,8 @@ const state = {
 const elements = Object.fromEntries(
   [
     "runtimeStatus", "fileInput", "openFileButton", "loadDemoButton", "downloadDemoButton",
-    "downloadJsonButton", "downloadChunksButton", "downloadManifestButton", "dropZone",
+    "downloadJsonButton", "downloadChunksButton", "downloadMarkdownChunksButton",
+    "downloadManifestButton", "dropZone",
     "fileName", "fileSize", "sheetCount", "sheetSelect", "startCellInput", "endCellInput",
     "rowLimitInput", "headerToggle", "emptyRowsToggle", "refreshButton", "rowsModeButton",
     "analyzeModeButton", "ragModeButton", "rowsControls", "analyzeControls", "ragControls",
@@ -94,6 +95,7 @@ function bindEvents() {
   elements.downloadDemoButton.addEventListener("click", downloadDemo);
   elements.downloadJsonButton.addEventListener("click", downloadResultJson);
   elements.downloadChunksButton.addEventListener("click", downloadChunks);
+  elements.downloadMarkdownChunksButton.addEventListener("click", downloadMarkdownChunks);
   elements.downloadManifestButton.addEventListener("click", downloadManifest);
   elements.refreshButton.addEventListener("click", runCurrentWorkflow);
   elements.runAnalysisButton.addEventListener("click", runAnalysis);
@@ -389,11 +391,12 @@ function setMode(mode, refresh = true) {
   elements.analyzeControls.hidden = mode !== "analyze";
   elements.ragControls.hidden = mode !== "rag";
   elements.downloadChunksButton.hidden = mode !== "rag";
+  elements.downloadMarkdownChunksButton.hidden = mode !== "rag";
   elements.downloadManifestButton.hidden = mode !== "rag";
   elements.memoryModeText.textContent = {
     rows: "Worker · bounded row preview",
     analyze: "Worker · memory capped by max groups",
-    rag: "Worker · addressed JSONL chunks",
+    rag: "Worker · addressed JSONL + Markdown chunks",
   }[mode];
   updateHiddenSheetControl();
   updateExportButtons();
@@ -571,6 +574,7 @@ function updateExportButtons() {
   elements.downloadJsonButton.disabled = !state.result;
   const hasRag = state.mode === "rag" && state.ragResult;
   elements.downloadChunksButton.disabled = !hasRag;
+  elements.downloadMarkdownChunksButton.disabled = !hasRag;
   elements.downloadManifestButton.disabled = !hasRag;
 }
 
@@ -591,6 +595,11 @@ function downloadResultJson() {
 function downloadChunks() {
   if (!state.ragResult) return;
   downloadBlob(new Blob([state.ragResult.chunksJsonl], { type: "application/x-ndjson" }), `${baseFileName()}.chunks.jsonl`);
+}
+
+function downloadMarkdownChunks() {
+  if (!state.ragResult) return;
+  downloadBlob(new Blob([state.ragResult.chunksMarkdown], { type: "text/markdown;charset=utf-8" }), `${baseFileName()}.chunks.md`);
 }
 
 function downloadManifest() {

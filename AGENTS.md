@@ -1,5 +1,7 @@
 # Repository Guidelines
 
+[简体中文](AGENTS.zh-CN.md)
+
 ## Mission
 
 - Build an idiomatic Rust implementation of MiniExcel behavior, using the .NET MiniExcel project as the compatibility reference.
@@ -31,6 +33,7 @@
 - Keep changes focused. Do not rewrite unrelated code or overwrite existing working-tree changes.
 - Add regression tests from existing fixtures when possible. Put shared .NET/Rust expectations in the parity contract only when both adapters cover the behavior.
 - Update the compatibility matrix and public documentation when support boundaries or APIs change.
+- Keep a complete `.zh-CN.md` counterpart for every English Markdown document, with reciprocal language links, and update both versions together.
 
 ## Pure Frontend Browser Lab
 

@@ -12,7 +12,7 @@
 - 通过 `MiniExcel::query()` 和 `MiniExcel::query_as()` 以有界内存流式读取 worksheet。
 - 通过 `MiniExcel::query_structured()` 流式保留稀疏坐标、公式和 number format。
 - 使用版本化条件/分组/聚合 plan，并通过最大分组数显式限制内存。
-- 为 LLM/RAG 输出带 A1 地址的 JSONL chunks 和 SHA-256 manifest。
+- 为 LLM/RAG 输出带 A1 地址的 JSONL、可流式追加的 Markdown chunks 和 SHA-256 manifest。
 - 枚举工作表的索引、类型和可见性元数据，并按名称选择工作表。
 - 按表头和 A1 起点语义列出选中列名。
 - 使用稳定列顺序的动态行，可选首行表头。
@@ -93,13 +93,15 @@ cargo +1.85.0 run -- query ../tests/data/xlsx/TestDynamicQueryBasic.xlsx --heade
 cargo +1.85.0 run -p miniexcel-cli -- analyze book.xlsx --header --plan plan.json --format json
 
 cargo +1.85.0 run -p miniexcel-cli -- rag-export book.xlsx --header --chunk-rows 25 --output-prefix ./out/book
+
+cargo +1.85.0 run -p miniexcel-cli -- rag-export book.xlsx --header --format both --output-prefix ./out/book
 ```
 
-JSON 契约、操作符及输出保证见[流式分析与 RAG 导出](docs/analytics-and-rag.md)。
+JSON 契约、操作符及输出保证见[流式分析与 RAG 导出](docs/analytics-and-rag.zh-CN.md)；Markdown 追加格式、内存边界及 anydoc 对比基准见[流式 Markdown 与 anydoc 对比](docs/markdown-streaming.zh-CN.md)。
 
 ## 浏览器 WebAssembly
 
-[Browser Lab](https://mini-software.github.io/MiniExcel-Rust/) 使用 Web Worker 和可复用的 `miniexcel-wasm` workbook session，在浏览器本地执行有界行预览、分组 plan 及 JSONL/manifest 下载。上传的工作簿不会离开设备。在 `web-demo` 运行：
+[Browser Lab](https://mini-software.github.io/MiniExcel-Rust/) 使用 Web Worker 和可复用的 `miniexcel-wasm` workbook session，在浏览器本地执行有界行预览、分组 plan 及 JSONL、Markdown、manifest 下载。上传的工作簿不会离开设备。在 `web-demo` 运行：
 
 ```bash
 npm ci
@@ -136,7 +138,7 @@ cargo +1.85.0 test -p miniexcel --test parity_contract --locked
 dotnet test ../MiniExcel/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.csproj --framework net10.0 --filter "FullyQualifiedName~RustParityContractTests"
 ```
 
-只有两条命令都通过，相关行为才视为等价。规范化规则和 v1 明确范围请查看[兼容性研究记录](docs/compatibility.md#net-parity-contract)。
+只有两条命令都通过，相关行为才视为等价。规范化规则和 v1 明确范围请查看[兼容性研究记录](docs/compatibility.zh-CN.md#net-等价契约)。
 
 ## 公开 API
 
@@ -200,6 +202,31 @@ for record in MiniExcel::query_as::<Record>("book.xlsx")? {
 
 > **内存边界：** 流式路径会在内存中保留工作簿元数据、样式、shared-string table、少量行 channel 和 parser buffer，但不会保留完整 worksheet XML 或所有行。为了在 `<dimension>` 缺失/过期时仍提供稳定的全局列 schema，并保留 XML 中明确声明的仅样式空行，它会先做一次有界内存元数据扫描，再进行流式输出。峰值内存仍可能随 shared-string table 或单个超大行增长，但不会随 worksheet 总行数增长。
 
+## 保留结构的流式 Query
+
+当使用方需要源坐标、公式或 number format 时，应使用 structured stream：
+
+```rust
+use miniexcel::MiniExcel;
+
+for row in MiniExcel::query_structured("book.xlsx")? {
+    for cell in row?.cells() {
+        println!(
+            "{} value={:?} formula={:?} format={:?}",
+            cell.address(),
+            cell.value(),
+            cell.formula(),
+            cell.number_format()
+        );
+    }
+}
+# Ok::<(), miniexcel::Error>(())
+```
+
+structured row 只包含 worksheet XML 中明确表示的 cell。Row 和 column index 从 1 开始，`address()` 返回对应的 A1 reference。sheet name 在每个 row 中只存储一次，而不会在每个 cell 上重复。`HeaderMode` 不会为 structured read 消费第一行，因为源 row 会按存储内容原样返回。
+
+公式文本与其缓存值会分别保留。MiniExcel 不计算公式、不展开 shared-formula 定义，也不保证文件生成方刷新过缓存值。style 已知时，会公开原始自定义和标准内置 number format。
+
 ## 流式分组分析
 
 analytics 会在源行流过时执行严格、可序列化的条件与聚合：
@@ -225,7 +252,23 @@ let result = MiniExcel::analyze_with_options("book.xlsx", &options, &plan)?;
 
 `MiniExcel::export_rag()` 会流式产生稀疏、带来源地址的 chunks。每个 cell 保留 A1、显式类型、公式缓存值、公式文本、style ID 和 number format；manifest 则记录工作簿 SHA-256、工作表可见性、选区、chunk 策略、输出计数、截断和公式缓存限制。
 
-hidden 与 very-hidden 工作表默认拒绝导出，必须显式 opt-in。JSONL chunks 是规范证据格式，manifest 是规范 extraction/provenance 记录。完整语义见[分析与 RAG 契约](docs/analytics-and-rag.md)。
+```rust
+use miniexcel::{HeaderMode, MiniExcel, RagExportOptions, ReadOptions};
+
+let options = ReadOptions::new().with_header_mode(HeaderMode::FirstRow);
+let mut export = MiniExcel::export_rag(
+    "book.xlsx",
+    &options,
+    &RagExportOptions::new().with_chunk_rows(25),
+)?;
+for chunk in export.by_ref() {
+    println!("{}", chunk?.data_range());
+}
+println!("{}", export.manifest().source_sha256());
+# Ok::<(), miniexcel::Error>(())
+```
+
+hidden 与 very-hidden 工作表默认拒绝导出，必须显式 opt-in。JSONL chunks 是规范证据格式，manifest 是规范 extraction/provenance 记录。完整语义见[分析与 RAG 契约](docs/analytics-and-rag.zh-CN.md)。
 
 ## 动态读取
 
@@ -335,4 +378,4 @@ MiniExcel::save_as_serialized_with_options("releases.xlsx", &values, &options)?;
 
 CSV、`.xls`、`.xlsb`、`.ods`、模板、宏、图片、合并单元格操作、公式写入、通用样式系统和修改已有工作簿均延后实现。
 
-依赖选择和行为对照请查看[兼容性研究记录](docs/compatibility.md)。
+依赖选择和行为对照请查看[兼容性研究记录](docs/compatibility.zh-CN.md)。

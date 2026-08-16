@@ -1,6 +1,7 @@
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Write};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -218,6 +219,63 @@ impl RagChunk {
     pub fn rows(&self) -> &[RagRow] {
         &self.rows
     }
+
+    /// Writes this chunk as an independent GitHub-Flavored Markdown table.
+    ///
+    /// The writer receives output incrementally; no workbook-sized Markdown
+    /// string is retained. Exact types and cell metadata remain available in
+    /// the canonical JSONL representation.
+    pub fn write_markdown(&self, mut writer: impl Write) -> Result<()> {
+        writeln!(writer, "<!-- miniexcel:chunk-start id=\"{}\" -->", self.chunk_id)?;
+        writeln!(
+            writer,
+            "## {} - {}\n",
+            escape_markdown_heading(&self.sheet_name),
+            self.data_range
+        )?;
+
+        let columns = self
+            .header
+            .iter()
+            .chain(&self.rows)
+            .flat_map(|row| row.cells.iter().map(|cell| cell.column))
+            .collect::<BTreeSet<_>>();
+        write!(writer, "| _row |")?;
+        for column in &columns {
+            let label = self
+                .header
+                .as_ref()
+                .and_then(|row| row.cells.iter().find(|cell| cell.column == *column))
+                .map_or_else(|| excel_column_name(*column), markdown_cell_text);
+            write!(writer, " {} |", escape_markdown_cell(&label))?;
+        }
+        write!(writer, "\n| ---: |")?;
+        for _ in &columns {
+            write!(writer, " --- |")?;
+        }
+        writer.write_all(b"\n")?;
+
+        for row in &self.rows {
+            write!(writer, "| {} |", row.row)?;
+            let mut cells = row.cells.iter().collect::<Vec<_>>();
+            cells.sort_unstable_by_key(|cell| cell.column);
+            let mut cells = cells.into_iter().peekable();
+            for column in &columns {
+                while cells.peek().is_some_and(|cell| cell.column < *column) {
+                    cells.next();
+                }
+                let text = if cells.peek().is_some_and(|cell| cell.column == *column) {
+                    markdown_cell_text(cells.next().expect("peeked cell exists"))
+                } else {
+                    String::new()
+                };
+                write!(writer, " {} |", escape_markdown_cell(&text))?;
+            }
+            writer.write_all(b"\n")?;
+        }
+        writer.write_all(b"<!-- miniexcel:chunk-end -->\n\n")?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -262,6 +320,17 @@ impl RagManifest {
     #[must_use]
     pub const fn truncated(&self) -> bool {
         self.truncated
+    }
+
+    /// Writes an optional marker proving that a Markdown chunk stream ended
+    /// normally. A missing marker does not invalidate preceding chunks.
+    pub fn write_markdown_stream_end(&self, mut writer: impl Write) -> Result<()> {
+        writeln!(
+            writer,
+            "<!-- miniexcel:stream-end chunks=\"{}\" rows=\"{}\" truncated=\"{}\" -->",
+            self.emitted_chunks, self.emitted_rows, self.truncated
+        )?;
+        Ok(())
     }
 }
 
@@ -511,6 +580,79 @@ fn record_chunk(manifest: &mut RagManifest, chunk: &RagChunk) -> Result<()> {
     Ok(())
 }
 
+fn markdown_cell_text(cell: &RagCell) -> String {
+    let mut text = match &cell.value {
+        RagValue::Empty => String::new(),
+        RagValue::Bool(value) => value.to_string(),
+        RagValue::Int(value) => value.to_string(),
+        RagValue::Float(value)
+        | RagValue::String(value)
+        | RagValue::Date(value)
+        | RagValue::Time(value)
+        | RagValue::DateTime(value)
+        | RagValue::Error(value) => value.clone(),
+        RagValue::DurationMilliseconds(value) => format!("{value} ms"),
+    };
+    if let Some(formula) = &cell.formula {
+        write!(&mut text, " [formula: ={formula}; cached]")
+            .expect("writing to a string cannot fail");
+    }
+    text
+}
+
+fn excel_column_name(mut column: u32) -> String {
+    let mut reversed = Vec::new();
+    while column > 0 {
+        column -= 1;
+        reversed.push((b'A' + (column % 26) as u8) as char);
+        column /= 26;
+    }
+    reversed.into_iter().rev().collect()
+}
+
+fn escape_markdown_heading(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\n' | '\r' | '\t' => output.push(' '),
+            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '#' => {
+                output.push('\\');
+                output.push(character);
+            }
+            character if character.is_control() => output.push(' '),
+            character => output.push(character),
+        }
+    }
+    output
+}
+
+fn escape_markdown_cell(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '\r' => {
+                if characters.peek() == Some(&'\n') {
+                    characters.next();
+                }
+                output.push_str("<br>");
+            }
+            '\n' => output.push_str("<br>"),
+            '&' => output.push_str("&amp;"),
+            '<' => output.push_str("&lt;"),
+            '>' => output.push_str("&gt;"),
+            '\\' | '|' | '`' | '*' | '_' | '[' | ']' | '~' => {
+                output.push('\\');
+                output.push(character);
+            }
+            '\t' => output.push(' '),
+            character if character.is_control() => output.push(' '),
+            character => output.push(character),
+        }
+    }
+    output
+}
+
 fn hash_reader(mut reader: impl Read) -> Result<String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -531,4 +673,54 @@ fn format_hash(hash: impl AsRef<[u8]>) -> String {
         write!(&mut output, "{byte:02x}").expect("writing to a string cannot fail");
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FormulaCalculationStatus, RagCell, RagChunk, RagRow, RagValue};
+
+    #[test]
+    fn markdown_chunk_is_independent_and_escapes_source_text() {
+        let chunk = RagChunk {
+            version: "miniexcel.rag-chunk/v1".to_owned(),
+            chunk_id: "0123456789ab:0:A2:B2".to_owned(),
+            sheet_name: "Data\n# injected".to_owned(),
+            sheet_index: 0,
+            data_range: "A2:B2".to_owned(),
+            header: Some(RagRow {
+                row: 1,
+                cells: vec![cell(1, 1, "A1", RagValue::String("Name|key".to_owned()))],
+            }),
+            rows: vec![RagRow {
+                row: 2,
+                cells: vec![
+                    cell(2, 2, "B2", RagValue::Int(42)),
+                    cell(2, 1, "A2", RagValue::String("A\\B\r\n<raw>".to_owned())),
+                ],
+            }],
+        };
+
+        let mut markdown = Vec::new();
+        chunk.write_markdown(&mut markdown).expect("write Markdown chunk");
+        let markdown = String::from_utf8(markdown).expect("UTF-8 Markdown");
+
+        assert!(markdown.starts_with("<!-- miniexcel:chunk-start"));
+        assert!(markdown.contains("## Data \\# injected - A2:B2"));
+        assert!(markdown.contains("| _row | Name\\|key | B |"));
+        assert!(markdown.contains("| 2 | A\\\\B<br>&lt;raw&gt; | 42 |"));
+        assert!(markdown.ends_with("<!-- miniexcel:chunk-end -->\n\n"));
+    }
+
+    fn cell(row: u32, column: u32, address: &str, value: RagValue) -> RagCell {
+        RagCell {
+            row,
+            column,
+            address: address.to_owned(),
+            value,
+            formula: None,
+            calculation_status: FormulaCalculationStatus::NotApplicable,
+            style_id: 0,
+            number_format: None,
+        }
+    }
 }

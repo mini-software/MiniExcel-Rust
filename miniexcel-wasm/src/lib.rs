@@ -71,6 +71,7 @@ struct AnalysisResponseRow {
 struct RagExportResponse {
     chunks: Vec<RagChunk>,
     chunks_jsonl: String,
+    chunks_markdown: String,
     manifest: RagManifest,
 }
 
@@ -222,6 +223,7 @@ fn export_rag(
     let (_, _, read_options) = prepare_read(bytes, &options)?;
     let mut chunks = Vec::new();
     let mut chunks_jsonl = String::new();
+    let mut chunks_markdown = Vec::new();
     let manifest =
         MiniExcel::visit_rag_chunks_from_bytes(bytes, &read_options, export_options, |chunk| {
             chunks_jsonl.push_str(
@@ -229,10 +231,14 @@ fn export_rag(
                     .map_err(|error| miniexcel::Error::from(std::io::Error::other(error)))?,
             );
             chunks_jsonl.push('\n');
+            chunk.write_markdown(&mut chunks_markdown)?;
             chunks.push(chunk.clone());
             Ok(())
         })?;
-    let response = RagExportResponse { chunks, chunks_jsonl, manifest };
+    manifest.write_markdown_stream_end(&mut chunks_markdown)?;
+    let chunks_markdown =
+        String::from_utf8(chunks_markdown).expect("Markdown serializer emits UTF-8");
+    let response = RagExportResponse { chunks, chunks_jsonl, chunks_markdown, manifest };
     Ok(serde_json::to_string(&response).expect("serializable RAG export response"))
 }
 
@@ -469,5 +475,9 @@ mod tests {
         assert_eq!(response["manifest"]["emittedChunks"], 3);
         assert_eq!(response["chunks"].as_array().expect("RAG chunks").len(), 3);
         assert_eq!(response["chunksJsonl"].as_str().expect("JSONL").lines().count(), 3);
+        let markdown = response["chunksMarkdown"].as_str().expect("Markdown");
+        assert_eq!(markdown.matches("miniexcel:chunk-start").count(), 3);
+        assert!(markdown.contains("| _row |"));
+        assert!(markdown.contains("miniexcel:stream-end"));
     }
 }

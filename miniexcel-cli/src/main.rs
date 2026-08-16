@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, ExitCode};
 
@@ -118,9 +118,13 @@ struct RagExportArgs {
     /// Path to an XLSX workbook.
     file: PathBuf,
 
-    /// Prefix for .chunks.jsonl and .manifest.json output files.
+    /// Prefix for chunk output and the .manifest.json file.
     #[arg(long)]
     output_prefix: PathBuf,
+
+    /// Chunk output representation.
+    #[arg(long, value_enum, default_value = "jsonl")]
+    format: RagOutputFormat,
 
     /// Worksheet name. The first worksheet is used when omitted.
     #[arg(long)]
@@ -142,7 +146,7 @@ struct RagExportArgs {
     #[arg(long)]
     ignore_empty_rows: bool,
 
-    /// Data rows per JSONL chunk.
+    /// Data rows per output chunk.
     #[arg(long, default_value_t = 25)]
     chunk_rows: usize,
 
@@ -160,6 +164,13 @@ enum OutputFormat {
     Table,
     Json,
     Jsonl,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum RagOutputFormat {
+    Jsonl,
+    Markdown,
+    Both,
 }
 
 #[derive(Debug, Args)]
@@ -258,32 +269,77 @@ fn rag_export(arguments: RagExportArgs) -> CliResult<()> {
         export_options = export_options.with_max_rows(max_rows);
     }
 
-    let chunks_path = append_path_suffix(&arguments.output_prefix, ".chunks.jsonl");
+    let jsonl_path = append_path_suffix(&arguments.output_prefix, ".chunks.jsonl");
+    let markdown_path = append_path_suffix(&arguments.output_prefix, ".chunks.md");
     let manifest_path = append_path_suffix(&arguments.output_prefix, ".manifest.json");
-    let parent = chunks_path
+    let parent = manifest_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
-    let mut chunks_file = tempfile::NamedTempFile::new_in(parent)?;
+    let mut jsonl_file = matches!(arguments.format, RagOutputFormat::Jsonl | RagOutputFormat::Both)
+        .then(|| tempfile::NamedTempFile::new_in(parent))
+        .transpose()?;
+    let mut markdown_file =
+        matches!(arguments.format, RagOutputFormat::Markdown | RagOutputFormat::Both)
+            .then(|| tempfile::NamedTempFile::new_in(parent))
+            .transpose()?;
     let mut manifest_file = tempfile::NamedTempFile::new_in(parent)?;
+    let mut jsonl_output = jsonl_file.as_mut().map(|file| BufWriter::new(file.as_file_mut()));
+    let mut markdown_output = markdown_file.as_mut().map(|file| BufWriter::new(file.as_file_mut()));
 
     let mut export = MiniExcel::export_rag(&arguments.file, &options, &export_options)?;
     for chunk in export.by_ref() {
-        serde_json::to_writer(chunks_file.as_file_mut(), &chunk?)?;
-        chunks_file.as_file_mut().write_all(b"\n")?;
+        let chunk = chunk?;
+        if let Some(output) = &mut jsonl_output {
+            serde_json::to_writer(&mut *output, &chunk)?;
+            output.write_all(b"\n")?;
+        }
+        if let Some(output) = &mut markdown_output {
+            chunk.write_markdown(&mut *output)?;
+        }
     }
-    chunks_file.as_file_mut().flush()?;
+    if let Some(output) = &mut markdown_output {
+        export.manifest().write_markdown_stream_end(&mut *output)?;
+    }
+    if let Some(output) = &mut jsonl_output {
+        output.flush()?;
+    }
+    if let Some(output) = &mut markdown_output {
+        output.flush()?;
+    }
+    drop(jsonl_output);
+    drop(markdown_output);
     serde_json::to_writer_pretty(manifest_file.as_file_mut(), export.manifest())?;
     manifest_file.as_file_mut().write_all(b"\n")?;
     manifest_file.as_file_mut().flush()?;
 
-    chunks_file.persist(&chunks_path)?;
-    if let Err(error) = manifest_file.persist(&manifest_path) {
-        let _ = fs::remove_file(&chunks_path);
-        return Err(error.into());
+    let mut published = Vec::new();
+    let publish_result = (|| -> CliResult<()> {
+        if let Some(file) = jsonl_file {
+            file.persist(&jsonl_path)?;
+            published.push(jsonl_path.clone());
+        }
+        if let Some(file) = markdown_file {
+            file.persist(&markdown_path)?;
+            published.push(markdown_path.clone());
+        }
+        manifest_file.persist(&manifest_path)?;
+        published.push(manifest_path.clone());
+        Ok(())
+    })();
+    if let Err(error) = publish_result {
+        for path in published {
+            let _ = fs::remove_file(path);
+        }
+        return Err(error);
     }
-    println!("Chunks: {}", chunks_path.display());
+    if matches!(arguments.format, RagOutputFormat::Jsonl | RagOutputFormat::Both) {
+        println!("JSONL chunks: {}", jsonl_path.display());
+    }
+    if matches!(arguments.format, RagOutputFormat::Markdown | RagOutputFormat::Both) {
+        println!("Markdown chunks: {}", markdown_path.display());
+    }
     println!("Manifest: {}", manifest_path.display());
     Ok(())
 }
@@ -594,7 +650,7 @@ mod tests {
 
     use miniexcel::DynamicRow;
 
-    use super::{Cli, CliCommand, OutputFormat, collect_rows};
+    use super::{Cli, CliCommand, OutputFormat, RagOutputFormat, collect_rows};
     use clap::Parser;
 
     #[test]
@@ -623,6 +679,25 @@ mod tests {
         assert_eq!(arguments.start_cell.to_string(), "B2");
         assert_eq!(arguments.limit, 5);
         assert!(matches!(arguments.format, OutputFormat::Jsonl));
+    }
+
+    #[test]
+    fn parses_rag_markdown_output() {
+        let cli = Cli::try_parse_from([
+            "miniexcel",
+            "rag-export",
+            "book.xlsx",
+            "--output-prefix",
+            "book",
+            "--format",
+            "both",
+        ])
+        .expect("parse RAG export arguments");
+
+        let CliCommand::RagExport(arguments) = cli.command else {
+            panic!("expected RAG export command");
+        };
+        assert!(matches!(arguments.format, RagOutputFormat::Both));
     }
 
     #[test]

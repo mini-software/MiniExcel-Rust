@@ -63,7 +63,7 @@ test("grouped analysis runs from the visual query plan", async ({ page }) => {
   await expect(page.locator("#jsonView")).toContainText("miniexcel.query-plan/v1");
 });
 
-test("RAG mode downloads valid JSONL chunks and manifest", async ({ page }) => {
+test("RAG mode downloads valid JSONL, Markdown chunks, and manifest", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
 
@@ -82,6 +82,15 @@ test("RAG mode downloads valid JSONL chunks and manifest", async ({ page }) => {
   expect(chunks[0].version).toBe("miniexcel.rag-chunk/v1");
   expect(chunks[0].rows).toHaveLength(6);
   expect(chunks[0].header.cells[0].address).toBe("A1");
+
+  const markdownPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Chunks Markdown" }).click();
+  const markdownDownload = await markdownPromise;
+  expect(markdownDownload.suggestedFilename()).toBe("miniexcel-browser-demo.chunks.md");
+  const markdown = await readFile(await markdownDownload.path(), "utf8");
+  expect(markdown).toContain("<!-- miniexcel:chunk-start");
+  expect(markdown).toContain("| _row | Name | Category | Region |");
+  expect(markdown).toContain("<!-- miniexcel:stream-end");
 
   const manifestPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Manifest JSON" }).click();

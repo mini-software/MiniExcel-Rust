@@ -14,7 +14,7 @@ The MVP currently supports:
 - Bounded-memory worksheet streaming through `MiniExcel::query()` and `MiniExcel::query_as()`.
 - Sparse structure-preserving streaming through `MiniExcel::query_structured()`.
 - Versioned filter/group/aggregate plans with memory bounded by an explicit maximum group count.
-- Addressed JSONL chunks and SHA-256 manifests for LLM/RAG ingestion and source grounding.
+- Addressed JSONL and streamable Markdown chunks with SHA-256 manifests for LLM/RAG ingestion and source grounding.
 - Listing worksheets with index, type, and visibility metadata, and selecting a worksheet by name.
 - Listing selected column names with header and A1 start-cell semantics.
 - Dynamic rows with stable column order and optional header rows.
@@ -95,13 +95,15 @@ Run a versioned analysis plan or export RAG evidence files:
 cargo +1.85.0 run -p miniexcel-cli -- analyze book.xlsx --header --plan plan.json --format json
 
 cargo +1.85.0 run -p miniexcel-cli -- rag-export book.xlsx --header --chunk-rows 25 --output-prefix ./out/book
+
+cargo +1.85.0 run -p miniexcel-cli -- rag-export book.xlsx --header --format both --output-prefix ./out/book
 ```
 
-See [Streaming Analytics and RAG Export](docs/analytics-and-rag.md) for the JSON contracts, supported operators, and output guarantees.
+See [Streaming Analytics and RAG Export](docs/analytics-and-rag.md) for the query contracts and [Streaming Markdown and anydoc comparison](docs/markdown-streaming.md) for appendable output, memory boundaries, and the comparison harness.
 
 ## Browser WebAssembly
 
-The [Browser Lab](https://mini-software.github.io/MiniExcel-Rust/) uses a Web Worker and a reusable `miniexcel-wasm` workbook session. It previews bounded rows, runs grouped plans, and builds addressed JSONL/manifest downloads entirely in the browser. Uploaded workbooks never leave the device. Build and test it from `web-demo`:
+The [Browser Lab](https://mini-software.github.io/MiniExcel-Rust/) uses a Web Worker and a reusable `miniexcel-wasm` workbook session. It previews bounded rows, runs grouped plans, and builds addressed JSONL, Markdown, and manifest downloads entirely in the browser. Uploaded workbooks never leave the device. Build and test it from `web-demo`:
 
 ```bash
 npm ci

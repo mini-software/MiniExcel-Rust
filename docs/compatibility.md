@@ -1,5 +1,7 @@
 # Rust XLSX Compatibility Notes
 
+[简体中文](compatibility.zh-CN.md)
+
 ## Goal
 
 The Rust MVP implements the smallest useful MiniExcel-style XLSX read/write surface behind one `MiniExcel` facade. It uses a focused OOXML pull parser for bounded-memory path queries, calamine data and Serde conversion internally, and rust_xlsxwriter for workbook generation.

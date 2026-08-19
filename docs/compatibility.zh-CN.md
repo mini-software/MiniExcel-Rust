@@ -33,7 +33,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | 类型化 `Query<T>` | `MiniExcel::query_as<T>()` | 流式处理 row，并逐行应用 Serde 映射 |
 | 保留结构的 query | `MiniExcel::query_structured()` | 流式输出稀疏 row，包含从 1 开始的坐标、公式、style ID 和 number format |
 | 分组/过滤分析 | `MiniExcel::analyze_with_options()` | 版本化 Rust 扩展；流式处理 row，只保留有界 group/evidence 状态 |
-| RAG 证据导出 | `MiniExcel::export_rag()` | 版本化 Rust 扩展；流式输出可转为带地址 JSONL 的 chunk 和源 manifest |
+| RAG 证据导出 | `MiniExcel::export_rag()` | 版本化 Rust 扩展；流式输出可转为带地址 JSONL 的 chunk、增强 GFM Markdown 和源 manifest |
 | `QueryRange` | `ReadOptions::with_start_cell()` / `with_end_cell()` | 动态和类型化读取使用包含端点的 A1 range |
 | `GetSheetNames` | `MiniExcel::get_sheet_names()` | 保持 workbook 顺序 |
 | `GetSheetInformations` | `MiniExcel::get_sheet_info()` | 包含 OOXML ID、顺序、名称、类型、visibility 和 active 状态 |
@@ -87,7 +87,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 
 分组分析消费动态 row stream，而不保留源数据行。内存还会为每个不同 group 保存一个聚合状态和有界源 row evidence list。`QueryPlan::max_groups` 会拒绝超出配置 limit 的 group。结果 limit 不会减少 group-state 内存。版本 1 不实现磁盘 spill、已排序输入聚合或高基数分组的常量内存处理。
 
-路径 RAG 导出保留 parser 状态、重复 header 上下文和一个输出 chunk。manifest 通过单独的有界读取计算源文件 hash。Byte/WASM 工作流不会收集源数据行，但浏览器上传必然在 WebAssembly 内存中保留压缩后的 XLSX 字节；生成的 JSONL/Blob 下载也会消耗与输出大小相当的内存。Browser Lab 在 Web Worker 中运行这些操作是为了保持响应，而不是声称其内存与路径模式等价。
+路径 RAG 导出保留 parser 状态、重复 header 上下文和一个输出 chunk。manifest 通过单独的有界读取计算源文件 hash。Markdown 包含 stream 级 source/sheet provenance 以及 chunk 内 formula/style/number-format metadata，无需保留先前 chunk。Byte/WASM 工作流不会收集源数据行，但浏览器上传必然在 WebAssembly 内存中保留压缩后的 XLSX 字节；生成的 JSONL、Markdown 和 Blob 下载也会消耗与输出大小相当的内存。Browser Lab 在 Web Worker 中运行这些操作是为了保持响应，而不是声称其内存与路径模式等价。
 
 backend 对所选 worksheet entry 执行两次顺序、有界内存扫描。第一次只记录最大已使用 column 和最后一个明确声明的 row。这是为了在合法文件省略 `<dimension>` 时保持 MiniExcel 兼容的稳定动态 schema，并像 .NET reader 一样保留仅含 style 的 row element。第二次扫描输出 row。Worksheet XML 和先前 row 永远不会保留；内存主要由 shared string、style、parser buffer、当前 row 和有界 channel 构成。
 
@@ -140,7 +140,7 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | 新 workbook `SaveAs` | 已实现并完成 roundtrip 测试 | 尚未 |
 | 用于 WASM 的字节数组 query/write | 已实现 | Rust/browser 测试 |
 | 版本化分组分析 | Rust 研究扩展 | 否 |
-| 带地址 JSONL/manifest RAG 导出 | Rust 研究扩展 | 否 |
+| 带地址 JSONL/Markdown/manifest RAG 导出 | Rust 研究扩展 | 否 |
 | Async API、DataReader、stream ownership | 延后 | 否 |
 | 插入/编辑现有 workbook | 延后 | 否 |
 | CSV 和旧格式 | 延后 | 否 |

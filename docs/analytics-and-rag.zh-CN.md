@@ -126,7 +126,7 @@ println!("{}", export.manifest().source_sha256());
 
 路径导出实现 `Iterator<Item = Result<RagChunk>>`；内存中只需保留一个结果 chunk、重复的 header 上下文和 parser 状态。`visit_rag_chunks_from_bytes` 为浏览器和内存调用方提供等价的 callback 形式。
 
-`RagChunk::write_markdown` 将独立 GFM 表格直接写入 I/O sink。迭代器耗尽后，`RagManifest::write_markdown_stream_end` 可以附加可选完成标记。Markdown 可追加且便于 LLM 阅读；JSONL 仍是精确类型化 metadata 的规范表示。格式、内存边界和基准 harness 见[流式 Markdown 与 anydoc 对比](markdown-streaming.zh-CN.md)。
+`RagManifest::write_markdown_stream_start` 会在迭代前写入 source、worksheet、range 和 export provenance。随后，`RagChunk::write_markdown` 将独立 GFM 表格以及有界的 formula/style/number-format metadata 直接写入 I/O sink。迭代器耗尽后，`RagManifest::write_markdown_stream_end` 可以附加可选完成标记。Markdown 可追加且便于 LLM 阅读；JSONL 仍是精确类型化 metadata 的规范表示。格式、内存边界和基准 harness 见[流式 Markdown 与 anydoc 对比](markdown-streaming.zh-CN.md)。
 
 hidden 和 very-hidden sheet 默认会被拒绝。只有在作出明确隐私决定后，才调用 `with_allow_hidden_sheets(true)`。Browser Lab 提供相同的 opt-in，并在 Web Worker 中本地完成所有工作。它绝不会将 workbook 内容发送给外部模型。
 

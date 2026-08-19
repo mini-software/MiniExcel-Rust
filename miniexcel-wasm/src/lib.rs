@@ -235,6 +235,12 @@ fn export_rag(
             chunks.push(chunk.clone());
             Ok(())
         })?;
+    let mut markdown_start = Vec::new();
+    manifest.write_markdown_stream_start(&mut markdown_start)?;
+    let markdown_start_len = markdown_start.len();
+    chunks_markdown.reserve(markdown_start_len);
+    chunks_markdown.extend_from_slice(&markdown_start);
+    chunks_markdown.rotate_right(markdown_start_len);
     manifest.write_markdown_stream_end(&mut chunks_markdown)?;
     let chunks_markdown =
         String::from_utf8(chunks_markdown).expect("Markdown serializer emits UTF-8");

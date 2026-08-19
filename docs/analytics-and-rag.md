@@ -126,7 +126,7 @@ The `miniexcel.rag-manifest/v1` JSON file records:
 
 Path exports implement `Iterator<Item = Result<RagChunk>>`; only one result chunk, repeated header context, and parser state need to be resident. `visit_rag_chunks_from_bytes` provides the equivalent callback form for browser and in-memory callers.
 
-`RagChunk::write_markdown` writes an independent GFM table directly to an I/O sink. `RagManifest::write_markdown_stream_end` can append an optional completion marker after the iterator is exhausted. Markdown is appendable and LLM-readable; JSONL remains canonical for exact typed metadata. See [Streaming Markdown and anydoc comparison](markdown-streaming.md) for the format, memory boundary, and benchmark harness.
+`RagManifest::write_markdown_stream_start` writes source, worksheet, range, and export provenance before iteration. `RagChunk::write_markdown` then writes an independent GFM table and bounded formula/style/number-format metadata directly to an I/O sink. `RagManifest::write_markdown_stream_end` can append an optional completion marker after the iterator is exhausted. Markdown is appendable and LLM-readable; JSONL remains canonical for exact typed metadata. See [Streaming Markdown and anydoc comparison](markdown-streaming.md) for the format, memory boundary, and benchmark harness.
 
 Hidden and very-hidden sheets are rejected by default. Call `with_allow_hidden_sheets(true)` only after an explicit privacy decision. Browser Lab exposes the same opt-in and performs all work locally in a Web Worker. It never sends workbook content to an external model.
 

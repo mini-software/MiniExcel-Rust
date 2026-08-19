@@ -289,6 +289,9 @@ fn rag_export(arguments: RagExportArgs) -> CliResult<()> {
     let mut markdown_output = markdown_file.as_mut().map(|file| BufWriter::new(file.as_file_mut()));
 
     let mut export = MiniExcel::export_rag(&arguments.file, &options, &export_options)?;
+    if let Some(output) = &mut markdown_output {
+        export.manifest().write_markdown_stream_start(&mut *output)?;
+    }
     for chunk in export.by_ref() {
         let chunk = chunk?;
         if let Some(output) = &mut jsonl_output {

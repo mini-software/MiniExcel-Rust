@@ -86,6 +86,23 @@ pub enum RagValue {
     Error(String),
 }
 
+impl RagValue {
+    fn type_name(&self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::Bool(_) => "bool",
+            Self::Int(_) => "int",
+            Self::Float(_) => "float",
+            Self::String(_) => "string",
+            Self::Date(_) => "date",
+            Self::Time(_) => "time",
+            Self::DateTime(_) => "dateTime",
+            Self::DurationMilliseconds(_) => "durationMilliseconds",
+            Self::Error(_) => "error",
+        }
+    }
+}
+
 impl From<&CellValue> for RagValue {
     fn from(value: &CellValue) -> Self {
         match value {
@@ -273,6 +290,42 @@ impl RagChunk {
             }
             writer.write_all(b"\n")?;
         }
+
+        let has_metadata =
+            self.header.iter().chain(&self.rows).flat_map(|row| &row.cells).any(|cell| {
+                cell.formula.is_some()
+                    || cell.style_id != 0
+                    || cell.number_format.as_deref().is_some_and(|format| format != "General")
+            });
+        if has_metadata {
+            writer.write_all(
+                b"\n### Cell metadata\n\n| Cell | Value type | Formula | Style ID | Number format |\n| --- | --- | --- | ---: | --- |\n",
+            )?;
+            for cell in
+                self.header.iter().chain(&self.rows).flat_map(|row| &row.cells).filter(|cell| {
+                    cell.formula.is_some()
+                        || cell.style_id != 0
+                        || cell.number_format.as_deref().is_some_and(|format| format != "General")
+                })
+            {
+                let formula = cell
+                    .formula
+                    .as_deref()
+                    .map_or_else(String::new, |formula| format!("={formula} (cached value)"));
+                writeln!(
+                    writer,
+                    "| {} | {} | {} | {} | {} |",
+                    escape_markdown_cell(&cell.address),
+                    cell.value.type_name(),
+                    escape_markdown_cell(&formula),
+                    cell.style_id,
+                    escape_markdown_cell(cell.number_format.as_deref().unwrap_or("")),
+                )?;
+            }
+            writer.write_all(
+                b"\n> Style IDs and number formats are preserved source metadata; fonts, fills, borders, and alignment are not expanded.\n",
+            )?;
+        }
         writer.write_all(b"<!-- miniexcel:chunk-end -->\n\n")?;
         Ok(())
     }
@@ -320,6 +373,45 @@ impl RagManifest {
     #[must_use]
     pub const fn truncated(&self) -> bool {
         self.truncated
+    }
+
+    /// Writes workbook and worksheet provenance before the first Markdown
+    /// chunk without retaining any chunk output.
+    pub fn write_markdown_stream_start(&self, mut writer: impl Write) -> Result<()> {
+        writer.write_all(b"<!-- miniexcel:stream-start -->\n")?;
+        writeln!(writer, "# {}\n", escape_markdown_heading(&self.source_name))?;
+        writer.write_all(b"| Property | Value |\n| --- | --- |\n")?;
+        for (property, value) in [
+            ("Source file", self.source_name.clone()),
+            ("Source SHA-256", self.source_sha256.clone()),
+            ("Worksheet", self.sheet_name.clone()),
+            ("Worksheet order", (self.sheet_index + 1).to_string()),
+            ("Worksheet visibility", self.sheet_visibility.clone()),
+            (
+                "Selected range",
+                format!(
+                    "{}:{}",
+                    self.start_cell,
+                    self.end_cell.as_deref().unwrap_or("worksheet end")
+                ),
+            ),
+            ("Header row", self.has_header.to_string()),
+            ("Rows per chunk", self.chunk_rows.to_string()),
+            (
+                "Maximum rows",
+                self.max_rows.map_or_else(|| "unlimited".to_owned(), |value| value.to_string()),
+            ),
+            ("Formula calculation", self.formula_calculation.clone()),
+        ] {
+            writeln!(
+                writer,
+                "| {} | {} |",
+                escape_markdown_cell(property),
+                escape_markdown_cell(&value)
+            )?;
+        }
+        writer.write_all(b"\n")?;
+        Ok(())
     }
 
     /// Writes an optional marker proving that a Markdown chunk stream ended
@@ -708,6 +800,7 @@ mod tests {
         assert!(markdown.contains("## Data \\# injected - A2:B2"));
         assert!(markdown.contains("| _row | Name\\|key | B |"));
         assert!(markdown.contains("| 2 | A\\\\B<br>&lt;raw&gt; | 42 |"));
+        assert!(!markdown.contains("### Cell metadata"));
         assert!(markdown.ends_with("<!-- miniexcel:chunk-end -->\n\n"));
     }
 

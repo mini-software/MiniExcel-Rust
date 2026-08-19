@@ -84,6 +84,9 @@ test("RAG mode downloads valid JSONL, Markdown chunks, and manifest", async ({ p
   expect(chunks[0].header.cells[0].address).toBe("A1");
 
   await page.getByRole("tab", { name: "Markdown", exact: true }).click();
+  await expect(page.locator("#markdownView")).toContainText("<!-- miniexcel:stream-start");
+  await expect(page.locator("#markdownView")).toContainText("| Source file | miniexcel-browser-demo.xlsx |");
+  await expect(page.locator("#markdownView")).toContainText("| Worksheet visibility | visible |");
   await expect(page.locator("#markdownView")).toContainText("<!-- miniexcel:chunk-start");
   await expect(page.locator("#markdownView")).toContainText("| _row | Name | Category | Region |");
   await expect(page.locator("#markdownView")).toContainText("<!-- miniexcel:stream-end");
@@ -93,6 +96,8 @@ test("RAG mode downloads valid JSONL, Markdown chunks, and manifest", async ({ p
   const markdownDownload = await markdownPromise;
   expect(markdownDownload.suggestedFilename()).toBe("miniexcel-browser-demo.chunks.md");
   const markdown = await readFile(await markdownDownload.path(), "utf8");
+  expect(markdown).toContain("<!-- miniexcel:stream-start");
+  expect(markdown).toContain("| Source SHA-256 | ");
   expect(markdown).toContain("<!-- miniexcel:chunk-start");
   expect(markdown).toContain("| _row | Name | Category | Region |");
   expect(markdown).toContain("<!-- miniexcel:stream-end");

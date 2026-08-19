@@ -11,6 +11,7 @@ let options = ReadOptions::new().with_header_mode(HeaderMode::FirstRow);
 let mut export = MiniExcel::export_rag("book.xlsx", &options, &RagExportOptions::new())?;
 let stdout = std::io::stdout();
 let mut output = stdout.lock();
+export.manifest().write_markdown_stream_start(&mut output)?;
 for chunk in export.by_ref() {
     chunk?.write_markdown(&mut output)?;
 }
@@ -18,7 +19,9 @@ export.manifest().write_markdown_stream_end(&mut output)?;
 # Ok::<(), miniexcel::Error>(())
 ```
 
-每个 chunk 包含开始标记、worksheet/range 标题、带地址的 GFM 表格和结束标记。启用 header mode 时，首个选中 row 会在每个 chunk 中作为表格上下文重复出现。来自 cell 的换行和 Markdown 控制字符会被转义，因此源文本无法创建额外 row、column、标题或 raw HTML。公式 cell 会同时显示缓存值和公式文本。
+stream 开头会输出源文件名和 SHA-256、worksheet 名称、从 1 开始的 worksheet 顺序、可见性、选定范围、header mode、chunk 限制、row 限制和公式计算策略。每个 chunk 包含开始标记、worksheet/range 标题、带地址的 GFM 表格和结束标记。启用 header mode 时，首个选中 row 会在每个 chunk 中作为表格上下文重复出现。来自 cell 的换行和 Markdown 控制字符会被转义，因此源文本无法创建额外 row、column、标题或 raw HTML。公式 cell 会同时显示缓存值和公式文本。
+
+当 chunk 包含公式、非零 style ID 或非 `General` number format 时，还会附加 `Cell metadata` 表。每一行记录 A1 cell、value type、公式、源 style ID 和 number format。这些是源 metadata，而不是视觉重建：GFM 无法还原 Excel 的字体、填充、边框、颜色或对齐方式，MiniExcel 也不会在 Markdown 中把 style table 展开成这些属性。
 
 最终的 `miniexcel:stream-end` 标记是可选的。它存在时，可以证明 stream 正常完成，并记录已发出的 row、chunk 和有意截断状态；缺少该标记不会使此前完整的 chunk 失效。JSONL 仍是精确 value type、style 和 number format 的规范机器表示；Markdown 是便于 LLM 阅读的配套格式。
 
@@ -30,7 +33,7 @@ export.manifest().write_markdown_stream_end(&mut output)?;
 
 ## anydoc 对比
 
-[firecrawl/anydoc](https://github.com/firecrawl/anydoc) 的目标更广：将多种 office 格式转换成一致、紧凑的单个 Markdown 文档。对于 Excel，anydoc 通过 calamine 读取 workbook 字节，构建完整 document/table model，再渲染为一个 `String`。MiniExcel 只支持 XLSX，但它会流式处理选中的 worksheet，并为 RAG 摄取保留 row/A1/formula provenance。
+[firecrawl/anydoc](https://github.com/firecrawl/anydoc) 的目标更广：将多种 office 格式转换成一致、紧凑的单个 Markdown 文档。对于 Excel，anydoc 通过 calamine 读取 workbook 字节，构建完整 document/table model，再渲染为一个 `String`。它会把 merged range 映射为 table span，在 GFM 中将被覆盖的位置留空，并根据有限的 body sample 启发式推断 header row。其 spreadsheet Markdown 不保留公式、Excel style ID、number format、workbook properties、comment、hyperlink 或精确视觉样式。MiniExcel 只支持 XLSX，但它会流式处理选中的 worksheet，并为 RAG 摄取保留 source/workbook/sheet、row/A1、formula、style ID 和 number format provenance。Header 通过 `HeaderMode` 明确指定；RAG Markdown 尚未表示 merged-cell span。
 
 从仓库根目录运行 Windows 对比 harness：
 

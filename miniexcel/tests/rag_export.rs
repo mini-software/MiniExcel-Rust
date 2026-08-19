@@ -56,6 +56,34 @@ fn path_and_byte_exports_have_identical_chunks_and_manifests() {
 }
 
 #[test]
+fn markdown_preserves_source_sheet_formula_and_style_metadata() {
+    let path = common::fixture("TestIssue157.xlsx");
+    let read_options = ReadOptions::new().with_header_mode(HeaderMode::FirstRow);
+    let export_options =
+        RagExportOptions::new().with_chunk_rows(2).with_source_name("formula-workbook.xlsx");
+    let mut export = MiniExcel::export_rag(path, &read_options, &export_options)
+        .expect("create path RAG export");
+    let mut markdown = Vec::new();
+    export.manifest().write_markdown_stream_start(&mut markdown).expect("write stream metadata");
+    export
+        .next()
+        .expect("first chunk")
+        .expect("read first chunk")
+        .write_markdown(&mut markdown)
+        .expect("write first chunk");
+    let markdown = String::from_utf8(markdown).expect("Markdown is UTF-8");
+
+    assert!(markdown.contains("<!-- miniexcel:stream-start -->"));
+    assert!(markdown.contains("# formula-workbook.xlsx"));
+    assert!(markdown.contains("| Source SHA-256 | "));
+    assert!(markdown.contains("| Worksheet | Sheet1 |"));
+    assert!(markdown.contains("| Worksheet visibility | visible |"));
+    assert!(markdown.contains("| Selected range | A1:worksheet end |"));
+    assert!(markdown.contains("### Cell metadata"));
+    assert!(markdown.contains("| D2 | bool | =FALSE() (cached value) | 2 | General |"));
+}
+
+#[test]
 fn max_rows_truncates_without_overfilling_a_chunk() {
     let path = common::fixture("TestTypeMapping.xlsx");
     let read_options = ReadOptions::new().with_header_mode(HeaderMode::FirstRow);

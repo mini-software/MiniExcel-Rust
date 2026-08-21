@@ -83,7 +83,7 @@ test("RAG mode downloads valid JSONL, Markdown chunks, and manifest", async ({ p
   expect(chunks[0].rows).toHaveLength(6);
   expect(chunks[0].header.cells[0].address).toBe("A1");
 
-  await page.getByRole("tab", { name: "Markdown", exact: true }).click();
+  await page.getByRole("tablist", { name: "Result format" }).getByRole("tab", { name: "Markdown" }).click();
   await expect(page.locator("#markdownView")).toContainText("<!-- miniexcel:stream-start");
   await expect(page.locator("#markdownView")).toContainText("| Source file | miniexcel-browser-demo.xlsx |");
   await expect(page.locator("#markdownView")).toContainText("| Worksheet visibility | visible |");
@@ -111,6 +111,51 @@ test("RAG mode downloads valid JSONL, Markdown chunks, and manifest", async ({ p
   expect(manifest.sourceSha256).toMatch(/^[a-f0-9]{64}$/);
 });
 
+for (const project of ["desktop", "mobile"]) {
+  test(`${project} converts the workbook to both Markdown formats`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== project);
+    await page.goto("/");
+    await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
+
+    await page.getByRole("tablist", { name: "Workflow mode" }).getByRole("tab", { name: "Markdown" }).click();
+    await expect(page.locator("#resultEyebrow")).toHaveText("Markdown conversion");
+    await expect(page.locator("#markdownView")).toContainText("| Name | Category | Region |");
+    await expect(page.locator("#markdownView")).toContainText("| MiniExcel | Core | East |");
+    await expect(page.locator("#markdownView")).not.toContainText("miniexcel:chunk-start");
+
+    const simplePromise = page.waitForEvent("download");
+    await page.locator("#downloadMarkdownButton").click();
+    const simpleDownload = await simplePromise;
+    expect(simpleDownload.suggestedFilename()).toBe("miniexcel-browser-demo.simple.md");
+    const simple = await readFile(await simpleDownload.path(), "utf8");
+    expect(simple).toContain("| Name | Category | Region |");
+    expect(simple).not.toContain("miniexcel:stream-start");
+
+    await page.getByRole("radio", { name: "LLM-friendly" }).click();
+    await expect(page.locator("#markdownView")).toContainText("<!-- miniexcel:stream-start");
+    await expect(page.locator("#markdownView")).toContainText("| Source file | miniexcel-browser-demo.xlsx |");
+    await expect(page.locator("#markdownView")).toContainText("<!-- miniexcel:chunk-start");
+    await expect(page.locator("#markdownView")).toContainText("<!-- miniexcel:stream-end");
+
+    const llmPromise = page.waitForEvent("download");
+    await page.locator("#downloadMarkdownButton").click();
+    const llmDownload = await llmPromise;
+    expect(llmDownload.suggestedFilename()).toBe("miniexcel-browser-demo.llm-friendly.md");
+    const llm = await readFile(await llmDownload.path(), "utf8");
+    expect(llm).toContain("<!-- miniexcel:stream-start");
+    expect(llm).toContain("<!-- miniexcel:stream-end");
+
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
+        ),
+      )
+      .toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`${project}-markdown.png`), fullPage: true });
+  });
+}
+
 test("uploaded workbook shows metadata and requires hidden-sheet RAG opt-in", async ({ page }) => {
   await page.goto("/");
   await page.locator("#fileInput").setInputFiles(
@@ -124,10 +169,24 @@ test("uploaded workbook shows metadata and requires hidden-sheet RAG opt-in", as
   await expect(page.locator("#previewTitle")).toContainText("HiddenSheet4");
 
   await page.getByRole("tab", { name: "RAG", exact: true }).click();
-  await expect(page.getByLabel("Include hidden sheet")).toBeVisible();
+  await expect(page.locator("#allowHiddenToggle")).toBeVisible();
   await expect(page.getByRole("button", { name: "Build RAG export" })).toBeDisabled();
-  await page.getByLabel("Include hidden sheet").check();
+  await page.locator("#allowHiddenToggle").check();
   await expect(page.getByRole("button", { name: "Build RAG export" })).toBeEnabled();
   await page.getByRole("button", { name: "Build RAG export" }).click();
   await expect(page.locator("#resultEyebrow")).toHaveText("RAG evidence");
+
+  await page.getByRole("tablist", { name: "Workflow mode" }).getByRole("tab", { name: "Markdown" }).click();
+  await expect(page.locator("#markdownAllowHiddenToggle")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Convert to Markdown" })).toBeDisabled();
+  await page.locator("#markdownAllowHiddenToggle").check();
+  await expect(page.getByRole("button", { name: "Convert to Markdown" })).toBeEnabled();
+  await page.getByRole("button", { name: "Convert to Markdown" }).click();
+  await expect(page.locator("#resultEyebrow")).toHaveText("Markdown conversion");
+
+  const visibleSheet = await page.locator("#sheetSelect option").first().getAttribute("value");
+  await page.locator("#sheetSelect").selectOption(visibleSheet);
+  await expect(page.locator("#previewTitle")).toContainText(visibleSheet);
+  await expect(page.locator("#resultEyebrow")).toHaveText("Markdown conversion");
+  await expect(page.locator("#downloadMarkdownButton")).toBeEnabled();
 });

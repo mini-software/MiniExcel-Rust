@@ -214,12 +214,17 @@ input:disabled {
 
 .segmented-control {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 3px;
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface-soft);
+}
+
+.format-control {
+  grid-template-columns: repeat(2, 1fr);
+  margin-bottom: 14px;
 }
 
 .segment {

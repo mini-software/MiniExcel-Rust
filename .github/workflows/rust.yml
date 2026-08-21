@@ -87,7 +87,9 @@ jobs:
           repository: mini-software/MiniExcel
           path: dotnet-source
       - name: Use this revision's parity contract
-        run: cp tests/data/contracts/xlsx-parity-v1.json dotnet-source/tests/data/contracts/xlsx-parity-v1.json
+        run: |
+          mkdir -p dotnet-source/tests/data/contracts
+          cp tests/data/contracts/xlsx-parity-v1.json dotnet-source/tests/data/contracts/xlsx-parity-v1.json
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:

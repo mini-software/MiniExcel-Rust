@@ -60,6 +60,9 @@ async function handle(type, payload) {
       ),
     );
   }
+  if (type === "exportSimpleMarkdown") {
+    return JSON.parse(session.exportSimpleMarkdown(JSON.stringify(payload.options)));
+  }
   throw new Error(`Unknown worker request: ${type}`);
 }
 

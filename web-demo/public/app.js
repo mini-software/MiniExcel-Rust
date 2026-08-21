@@ -9,6 +9,8 @@ const state = {
   mode: "rows",
   result: null,
   ragResult: null,
+  markdownResult: null,
+  markdownFormat: "simple",
   activeTab: "grid",
   sheetInfo: [],
   columns: [],
@@ -21,13 +23,15 @@ const elements = Object.fromEntries(
   [
     "runtimeStatus", "fileInput", "openFileButton", "loadDemoButton", "downloadDemoButton",
     "downloadJsonButton", "downloadChunksButton", "downloadMarkdownChunksButton",
-    "downloadManifestButton", "dropZone",
+    "downloadManifestButton", "downloadMarkdownButton", "dropZone",
     "fileName", "fileSize", "sheetCount", "sheetSelect", "startCellInput", "endCellInput",
     "rowLimitInput", "headerToggle", "emptyRowsToggle", "refreshButton", "rowsModeButton",
-    "analyzeModeButton", "ragModeButton", "rowsControls", "analyzeControls", "ragControls",
+    "analyzeModeButton", "ragModeButton", "markdownModeButton", "rowsControls", "analyzeControls", "ragControls", "markdownControls",
     "conditionJoin", "conditionsList", "addConditionButton", "groupBySelect", "aggregatesList",
     "addAggregateButton", "maxGroupsInput", "analysisLimitInput", "runAnalysisButton",
     "chunkRowsInput", "ragMaxRowsInput", "hiddenSheetOptIn", "allowHiddenToggle", "runRagButton",
+    "simpleMarkdownButton", "llmMarkdownButton", "llmMarkdownOptions", "markdownChunkRowsInput",
+    "markdownMaxRowsInput", "markdownHiddenSheetOptIn", "markdownAllowHiddenToggle", "runMarkdownButton",
     "memoryModeText", "resultEyebrow", "previewTitle", "metricRows", "metricRowsLabel",
     "metricColumns", "metricColumnsLabel", "metricTime", "resultNotice", "loadingState",
     "emptyState", "gridView", "jsonView", "markdownView", "previewTable", "previewTab",
@@ -98,18 +102,24 @@ function bindEvents() {
   elements.downloadChunksButton.addEventListener("click", downloadChunks);
   elements.downloadMarkdownChunksButton.addEventListener("click", downloadMarkdownChunks);
   elements.downloadManifestButton.addEventListener("click", downloadManifest);
+  elements.downloadMarkdownButton.addEventListener("click", downloadMarkdown);
   elements.refreshButton.addEventListener("click", runCurrentWorkflow);
   elements.runAnalysisButton.addEventListener("click", runAnalysis);
   elements.runRagButton.addEventListener("click", runRagExport);
+  elements.runMarkdownButton.addEventListener("click", runMarkdownExport);
   elements.rowsModeButton.addEventListener("click", () => setMode("rows"));
   elements.analyzeModeButton.addEventListener("click", () => setMode("analyze"));
   elements.ragModeButton.addEventListener("click", () => setMode("rag"));
+  elements.markdownModeButton.addEventListener("click", () => setMode("markdown"));
+  elements.simpleMarkdownButton.addEventListener("click", () => setMarkdownFormat("simple"));
+  elements.llmMarkdownButton.addEventListener("click", () => setMarkdownFormat("llmFriendly"));
   elements.sheetSelect.addEventListener("change", handleSheetChange);
   elements.headerToggle.addEventListener("change", runCurrentWorkflow);
   elements.emptyRowsToggle.addEventListener("change", runCurrentWorkflow);
   elements.allowHiddenToggle.addEventListener("change", () => {
     elements.runRagButton.disabled = isSelectedSheetHidden() && !elements.allowHiddenToggle.checked;
   });
+  elements.markdownAllowHiddenToggle.addEventListener("change", updateMarkdownButton);
   for (const input of [elements.startCellInput, elements.endCellInput, elements.rowLimitInput]) {
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") runCurrentWorkflow();
@@ -156,6 +166,7 @@ async function setWorkbook(name, size) {
   state.fileSize = size;
   state.result = null;
   state.ragResult = null;
+  state.markdownResult = null;
   state.builderInitialized = false;
   state.columns = [];
   elements.fileName.textContent = name;
@@ -170,6 +181,7 @@ async function setWorkbook(name, size) {
 async function runCurrentWorkflow() {
   if (state.mode === "analyze") return runAnalysis();
   if (state.mode === "rag") return runRagExport();
+  if (state.mode === "markdown") return runMarkdownExport();
   return refreshRows(false);
 }
 
@@ -302,6 +314,66 @@ async function runRagExport() {
   }
 }
 
+async function runMarkdownExport() {
+  let options;
+  try {
+    options = readOptions(false);
+    options.allowHiddenSheets = elements.markdownAllowHiddenToggle.checked;
+    if (isSelectedSheetHidden() && !elements.markdownAllowHiddenToggle.checked) {
+      throw new Error("Enable the hidden-sheet opt-in before converting this worksheet.");
+    }
+  } catch (error) {
+    showValidationError(error);
+    return;
+  }
+  const llmFriendly = state.markdownFormat === "llmFriendly";
+  setLoading(`Building ${llmFriendly ? "LLM-friendly" : "Simple"} Markdown in the WebAssembly worker...`);
+  const started = performance.now();
+  try {
+    let markdown;
+    let selectedSheet;
+    let emittedRows;
+    if (llmFriendly) {
+      const exportOptions = {
+        chunkRows: boundedInteger(elements.markdownChunkRowsInput, 1, 500, "Rows per chunk"),
+        maxRows: boundedInteger(elements.markdownMaxRowsInput, 1, 100000, "Markdown max rows"),
+        allowHiddenSheets: elements.markdownAllowHiddenToggle.checked,
+        sourceName: state.fileName,
+      };
+      const result = await requestWorker("exportRag", { options, exportOptions });
+      markdown = result.chunksMarkdown;
+      selectedSheet = result.manifest.sheetName;
+      emittedRows = result.manifest.emittedRows;
+    } else {
+      const result = await requestWorker("exportSimpleMarkdown", { options });
+      markdown = result.markdown;
+      selectedSheet = result.selectedSheet;
+      emittedRows = result.emittedRows;
+    }
+    state.markdownResult = { markdown, format: state.markdownFormat };
+    renderResult(
+      {
+        columns: ["Format", "Worksheet", "Rows"],
+        rows: [[llmFriendly ? "LLM-friendly" : "Simple", selectedSheet, emittedRows]],
+        cellTypes: [["string", "string", "integer"]],
+      },
+      { format: state.markdownFormat, selectedSheet, emittedRows, markdown },
+      performance.now() - started,
+      {
+        eyebrow: "Markdown conversion",
+        title: `${state.fileName} · ${selectedSheet}`,
+        rows: emittedRows,
+        columns: markdown.length,
+        columnsLabel: "characters",
+        notice: llmFriendly ? "Addressed chunks with source provenance" : "Compact GitHub-Flavored Markdown",
+      },
+    );
+    setTab("markdown");
+  } catch (error) {
+    fail(error, "Markdown conversion failed");
+  }
+}
+
 function readOptions(resetSheet) {
   const startCell = elements.startCellInput.value.trim().toUpperCase();
   const endCell = elements.endCellInput.value.trim().toUpperCase();
@@ -313,14 +385,17 @@ function readOptions(resetSheet) {
     elements.endCellInput.focus();
     throw new Error("End cell must use A1 notation, for example E20.");
   }
-  return {
+  const options = {
     sheetName: resetSheet ? null : elements.sheetSelect.value || null,
     hasHeader: elements.headerToggle.checked,
     startCell,
     endCell: endCell || null,
     ignoreEmptyRows: elements.emptyRowsToggle.checked,
-    limit: boundedInteger(elements.rowLimitInput, 1, 2000, "Preview limit"),
   };
+  if (state.mode === "rows") {
+    options.limit = boundedInteger(elements.rowLimitInput, 1, 2000, "Preview limit");
+  }
+  return options;
 }
 
 function buildPlan() {
@@ -383,7 +458,7 @@ function queryLiteral(column, op, input) {
 function setMode(mode, refresh = true) {
   state.mode = mode;
   for (const [name, button] of [
-    ["rows", elements.rowsModeButton], ["analyze", elements.analyzeModeButton], ["rag", elements.ragModeButton],
+    ["rows", elements.rowsModeButton], ["analyze", elements.analyzeModeButton], ["rag", elements.ragModeButton], ["markdown", elements.markdownModeButton],
   ]) {
     const active = mode === name;
     button.classList.toggle("is-active", active);
@@ -392,26 +467,44 @@ function setMode(mode, refresh = true) {
   elements.rowsControls.hidden = mode !== "rows";
   elements.analyzeControls.hidden = mode !== "analyze";
   elements.ragControls.hidden = mode !== "rag";
-  elements.markdownTab.hidden = mode !== "rag";
+  elements.markdownControls.hidden = mode !== "markdown";
+  elements.markdownTab.hidden = mode !== "rag" && mode !== "markdown";
   elements.downloadChunksButton.hidden = mode !== "rag";
   elements.downloadMarkdownChunksButton.hidden = mode !== "rag";
   elements.downloadManifestButton.hidden = mode !== "rag";
+  elements.downloadMarkdownButton.hidden = mode !== "markdown";
   elements.memoryModeText.textContent = {
     rows: "Worker · bounded row preview",
     analyze: "Worker · memory capped by max groups",
     rag: "Worker · addressed JSONL + Markdown chunks",
+    markdown: "Worker · local XLSX to Markdown conversion",
   }[mode];
   updateHiddenSheetControl();
   updateExportButtons();
   if (refresh && state.fileName) runCurrentWorkflow();
 }
 
+function setMarkdownFormat(format) {
+  state.markdownFormat = format;
+  const simple = format === "simple";
+  elements.simpleMarkdownButton.classList.toggle("is-active", simple);
+  elements.simpleMarkdownButton.setAttribute("aria-checked", String(simple));
+  elements.llmMarkdownButton.classList.toggle("is-active", !simple);
+  elements.llmMarkdownButton.setAttribute("aria-checked", String(!simple));
+  elements.llmMarkdownOptions.hidden = simple;
+  if (state.mode === "markdown" && state.fileName) runMarkdownExport();
+}
+
 async function handleSheetChange() {
   elements.allowHiddenToggle.checked = false;
+  elements.markdownAllowHiddenToggle.checked = false;
+  state.ragResult = null;
+  state.markdownResult = null;
   updateHiddenSheetControl();
+  updateExportButtons();
   if (state.mode === "rows") return refreshRows(false);
   await refreshRows(false);
-  setMode(state.mode, false);
+  await runCurrentWorkflow();
 }
 
 function updateSheets(sheetInfo, selectedSheet) {
@@ -523,7 +616,7 @@ function renderResult(table, raw, elapsed, metadata) {
   elements.resultNotice.textContent = metadata.notice;
   renderTable(table);
   elements.jsonView.textContent = JSON.stringify(raw, null, 2);
-  elements.markdownView.textContent = state.mode === "rag" ? raw.chunksMarkdown : "";
+  elements.markdownView.textContent = state.mode === "rag" ? raw.chunksMarkdown : state.mode === "markdown" ? raw.markdown : "";
   elements.loadingState.hidden = true;
   elements.emptyState.hidden = table.rows.length !== 0;
   setTab(state.activeTab);
@@ -551,7 +644,7 @@ function renderTable(result) {
 }
 
 function setTab(tab) {
-  state.activeTab = tab === "markdown" && state.mode !== "rag" ? "grid" : tab;
+  state.activeTab = tab === "markdown" && state.mode !== "rag" && state.mode !== "markdown" ? "grid" : tab;
   const hasRows = Boolean(state.result?.table.rows.length);
   const isGrid = state.activeTab === "grid";
   const isJson = state.activeTab === "json";
@@ -572,6 +665,12 @@ function updateHiddenSheetControl() {
   const hidden = isSelectedSheetHidden();
   elements.hiddenSheetOptIn.hidden = !hidden || state.mode !== "rag";
   elements.runRagButton.disabled = hidden && !elements.allowHiddenToggle.checked;
+  elements.markdownHiddenSheetOptIn.hidden = !hidden || state.mode !== "markdown";
+  updateMarkdownButton();
+}
+
+function updateMarkdownButton() {
+  elements.runMarkdownButton.disabled = isSelectedSheetHidden() && !elements.markdownAllowHiddenToggle.checked;
 }
 
 function isSelectedSheetHidden() {
@@ -585,6 +684,7 @@ function updateExportButtons() {
   elements.downloadChunksButton.disabled = !hasRag;
   elements.downloadMarkdownChunksButton.disabled = !hasRag;
   elements.downloadManifestButton.disabled = !hasRag;
+  elements.downloadMarkdownButton.disabled = state.mode !== "markdown" || !state.markdownResult;
 }
 
 async function downloadDemo() {
@@ -695,4 +795,10 @@ function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+}
+
+function downloadMarkdown() {
+  if (!state.markdownResult) return;
+  const suffix = state.markdownResult.format === "simple" ? "simple" : "llm-friendly";
+  downloadBlob(new Blob([state.markdownResult.markdown], { type: "text/markdown;charset=utf-8" }), `${baseFileName()}.${suffix}.md`);
 }

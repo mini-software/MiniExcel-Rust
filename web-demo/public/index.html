@@ -51,6 +51,7 @@
               <button id="rowsModeButton" class="segment is-active" type="button" role="tab" aria-selected="true">Rows</button>
               <button id="analyzeModeButton" class="segment" type="button" role="tab" aria-selected="false">Analyze</button>
               <button id="ragModeButton" class="segment" type="button" role="tab" aria-selected="false">RAG</button>
+              <button id="markdownModeButton" class="segment" type="button" role="tab" aria-selected="false">Markdown</button>
             </div>
           </section>
 
@@ -98,6 +99,20 @@
             <button id="runRagButton" class="button button-primary full-button" type="button">Build RAG export</button>
           </section>
 
+          <section id="markdownControls" class="control-section workflow-section" hidden>
+            <div class="section-heading"><span>Markdown</span></div>
+            <div class="segmented-control format-control" role="radiogroup" aria-label="Markdown format">
+              <button id="simpleMarkdownButton" class="segment is-active" type="button" role="radio" aria-checked="true">Simple</button>
+              <button id="llmMarkdownButton" class="segment" type="button" role="radio" aria-checked="false">LLM-friendly</button>
+            </div>
+            <div id="llmMarkdownOptions" class="field-pair" hidden>
+              <label class="field"><span>Rows / chunk</span><input id="markdownChunkRowsInput" type="number" min="1" max="500" value="25" /></label>
+              <label class="field"><span>Max rows</span><input id="markdownMaxRowsInput" type="number" min="1" value="500" /></label>
+            </div>
+            <label id="markdownHiddenSheetOptIn" class="toggle-row warning-toggle" hidden><span><strong>Include hidden sheet</strong><small>Explicit privacy opt-in</small></span><input id="markdownAllowHiddenToggle" type="checkbox" aria-label="Include hidden sheet in Markdown" /></label>
+            <button id="runMarkdownButton" class="button button-primary full-button" type="button">Convert to Markdown</button>
+          </section>
+
           <section class="control-section export-section">
             <div class="section-heading"><span>Export</span></div>
             <div class="command-row command-row-stack">
@@ -105,6 +120,7 @@
               <button id="downloadJsonButton" class="button button-secondary" type="button" disabled>↓ Result JSON</button>
               <button id="downloadChunksButton" class="button button-secondary" type="button" hidden disabled>↓ Chunks JSONL</button>
               <button id="downloadMarkdownChunksButton" class="button button-secondary" type="button" hidden disabled>↓ Chunks Markdown</button>
+              <button id="downloadMarkdownButton" class="button button-secondary" type="button" hidden disabled>↓ Markdown</button>
               <button id="downloadManifestButton" class="button button-secondary" type="button" hidden disabled>↓ Manifest JSON</button>
             </div>
             <div class="memory-strip"><span class="memory-dot" aria-hidden="true"></span><span id="memoryModeText">Worker · bounded row preview</span></div>

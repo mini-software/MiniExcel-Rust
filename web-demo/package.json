@@ -7,6 +7,7 @@
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs && node scripts/serve.mjs",
     "serve": "node scripts/serve.mjs",
+    "pretest:e2e": "npm run build",
     "test:e2e": "playwright test"
   },
   "devDependencies": {

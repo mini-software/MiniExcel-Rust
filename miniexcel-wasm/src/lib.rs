@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::fmt::Write as _;
 use std::str::FromStr;
 
 use chrono::NaiveDate;
@@ -23,6 +24,7 @@ struct PreviewOptions {
     start_cell: Option<String>,
     end_cell: Option<String>,
     ignore_empty_rows: bool,
+    allow_hidden_sheets: bool,
     limit: Option<usize>,
 }
 
@@ -75,6 +77,14 @@ struct RagExportResponse {
     manifest: RagManifest,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SimpleMarkdownResponse {
+    markdown: String,
+    selected_sheet: String,
+    emitted_rows: usize,
+}
+
 #[wasm_bindgen]
 pub struct WorkbookSession {
     bytes: Vec<u8>,
@@ -104,6 +114,11 @@ impl WorkbookSession {
         export_options_json: &str,
     ) -> Result<String, JsValue> {
         export_rag_xlsx(&self.bytes, options_json, export_options_json)
+    }
+
+    #[wasm_bindgen(js_name = exportSimpleMarkdown)]
+    pub fn export_simple_markdown_workbook(&self, options_json: &str) -> Result<String, JsValue> {
+        export_simple_markdown_xlsx(&self.bytes, options_json)
     }
 }
 
@@ -139,6 +154,14 @@ pub fn export_rag_xlsx(
     let export_options: RagExportOptions = serde_json::from_str(export_options_json)
         .map_err(|error| js_error(format!("Invalid RAG export options: {error}")))?;
     export_rag(bytes, options, &export_options).map_err(|error| js_error(error.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn export_simple_markdown_xlsx(bytes: &[u8], options_json: &str) -> Result<String, JsValue> {
+    let options: PreviewOptions = serde_json::from_str(options_json)
+        .map_err(|error| js_error(format!("Invalid Markdown read options: {error}")))?;
+    ensure_simple_markdown_visibility(bytes, &options).map_err(js_error)?;
+    export_simple_markdown(bytes, options).map_err(|error| js_error(error.to_string()))
 }
 
 #[wasm_bindgen]
@@ -246,6 +269,107 @@ fn export_rag(
         String::from_utf8(chunks_markdown).expect("Markdown serializer emits UTF-8");
     let response = RagExportResponse { chunks, chunks_jsonl, chunks_markdown, manifest };
     Ok(serde_json::to_string(&response).expect("serializable RAG export response"))
+}
+
+fn export_simple_markdown(bytes: &[u8], options: PreviewOptions) -> miniexcel::Result<String> {
+    let (_, selected_sheet, read_options) = prepare_read(bytes, &options)?;
+    let mut markdown = String::new();
+    let mut columns = Vec::new();
+    let summary = MiniExcel::visit_rows_from_bytes(bytes, &read_options, |_, row| {
+        if columns.is_empty() {
+            columns.extend(row.keys().cloned());
+            write_simple_table_header(&mut markdown, &columns);
+        }
+        write_simple_table_row(&mut markdown, &columns, row);
+        Ok(true)
+    })?;
+    if columns.is_empty() {
+        columns.extend(summary.columns().iter().cloned());
+        if !columns.is_empty() {
+            write_simple_table_header(&mut markdown, &columns);
+        }
+    }
+    let response =
+        SimpleMarkdownResponse { markdown, selected_sheet, emitted_rows: summary.visited_rows() };
+    Ok(serde_json::to_string(&response).expect("serializable Markdown response"))
+}
+
+fn ensure_simple_markdown_visibility(bytes: &[u8], options: &PreviewOptions) -> Result<(), String> {
+    let sheets = MiniExcel::get_sheet_info_from_bytes(bytes).map_err(|error| error.to_string())?;
+    let selected = options
+        .sheet_name
+        .as_deref()
+        .and_then(|name| sheets.iter().find(|sheet| sheet.name() == name))
+        .or_else(|| sheets.first())
+        .ok_or_else(|| "the workbook does not contain any worksheets".to_owned())?;
+    if selected.visibility() != SheetVisibility::Visible && !options.allow_hidden_sheets {
+        return Err(format!(
+            "Markdown export of {} worksheet '{}' requires explicit opt-in",
+            sheet_visibility_name(selected.visibility()),
+            selected.name(),
+        ));
+    }
+    Ok(())
+}
+
+fn write_simple_table_header(markdown: &mut String, columns: &[String]) {
+    markdown.push('|');
+    for column in columns {
+        let _ = write!(markdown, " {} |", escape_simple_markdown_cell(column));
+    }
+    markdown.push('\n');
+    markdown.push('|');
+    for _ in columns {
+        markdown.push_str(" --- |");
+    }
+    markdown.push('\n');
+}
+
+fn write_simple_table_row(markdown: &mut String, columns: &[String], row: &DynamicRow) {
+    markdown.push('|');
+    for column in columns {
+        let value = row.get(column).map_or_else(String::new, simple_cell_text);
+        let _ = write!(markdown, " {} |", escape_simple_markdown_cell(&value));
+    }
+    markdown.push('\n');
+}
+
+fn simple_cell_text(value: &CellValue) -> String {
+    match value {
+        CellValue::Empty => String::new(),
+        CellValue::Bool(value) => value.to_string(),
+        CellValue::Int(value) => value.to_string(),
+        CellValue::Float(value) => value.to_string(),
+        CellValue::String(value) | CellValue::Error(value) => value.clone(),
+        CellValue::Date(value) => value.format("%Y-%m-%d").to_string(),
+        CellValue::Time(value) => value.format("%H:%M:%S%.f").to_string(),
+        CellValue::DateTime(value) => value.format("%Y-%m-%dT%H:%M:%S%.f").to_string(),
+        CellValue::Duration(value) => format!("{} ms", value.num_milliseconds()),
+    }
+}
+
+fn escape_simple_markdown_cell(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '\r' => {
+                if characters.peek() == Some(&'\n') {
+                    characters.next();
+                }
+                output.push_str("<br>");
+            }
+            '\n' => output.push_str("<br>"),
+            '<' => output.push_str("&lt;"),
+            '>' => output.push_str("&gt;"),
+            '\\' | '|' | '`' | '*' | '_' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '!' | '~' => {
+                output.push('\\');
+                output.push(character);
+            }
+            _ => output.push(character),
+        }
+    }
+    output
 }
 
 fn prepare_read(
@@ -392,9 +516,12 @@ fn js_error(message: impl AsRef<str>) -> JsValue {
 
 #[cfg(test)]
 mod tests {
-    use super::{PreviewOptions, analyze, create_demo, export_rag, inspect};
+    use super::{
+        PreviewOptions, analyze, create_demo, ensure_simple_markdown_visibility, export_rag,
+        export_simple_markdown, inspect,
+    };
     use miniexcel::{
-        AggregateOp, AggregateSpec, ComparisonOp, FilterExpr, QueryLiteral, QueryPlan,
+        AggregateOp, AggregateSpec, ComparisonOp, FilterExpr, MiniExcel, QueryLiteral, QueryPlan,
         RagExportOptions,
     };
     use serde_json::Value;
@@ -444,6 +571,52 @@ mod tests {
         assert_eq!(response["displayedRows"], 2);
         assert_eq!(response["rows"].as_array().expect("preview rows").len(), 2);
         assert_eq!(response["truncated"], true);
+    }
+
+    #[test]
+    fn simple_markdown_exports_all_selected_rows_with_safe_gfm_cells() {
+        let mut first = miniexcel::DynamicRow::new();
+        first.insert("Name".to_owned(), miniexcel::CellValue::String("Alice | Admin".to_owned()));
+        first.insert(
+            "Note".to_owned(),
+            miniexcel::CellValue::String("<b>line 1</b>\n[link](https://example.com)".to_owned()),
+        );
+        let bytes = MiniExcel::save_as_bytes(
+            &[first],
+            &miniexcel::WriteOptions::new().with_sheet_name("Orders"),
+        )
+        .expect("create Markdown workbook");
+        let response = export_simple_markdown(
+            &bytes,
+            PreviewOptions { has_header: true, limit: Some(1), ..PreviewOptions::default() },
+        )
+        .expect("export simple Markdown");
+        let response: Value = serde_json::from_str(&response).expect("parse Markdown response");
+
+        assert_eq!(response["selectedSheet"], "Orders");
+        assert_eq!(response["emittedRows"], 1);
+        assert_eq!(
+            response["markdown"],
+            "| Name | Note |\n| --- | --- |\n| Alice \\| Admin | &lt;b&gt;line 1&lt;/b&gt;<br>\\[link\\]\\(https://example.com\\) |\n"
+        );
+    }
+
+    #[test]
+    fn simple_markdown_requires_hidden_sheet_opt_in() {
+        let bytes = include_bytes!("../../tests/data/xlsx/TestMultiSheetWithHiddenSheet.xlsx");
+        let mut options = PreviewOptions {
+            sheet_name: Some("HiddenSheet4".to_owned()),
+            has_header: true,
+            ..PreviewOptions::default()
+        };
+
+        let error = ensure_simple_markdown_visibility(bytes, &options)
+            .expect_err("hidden worksheet must require opt-in");
+        assert!(error.contains("requires explicit opt-in"));
+
+        options.allow_hidden_sheets = true;
+        ensure_simple_markdown_visibility(bytes, &options)
+            .expect("explicit opt-in permits hidden worksheet export");
     }
 
     #[test]

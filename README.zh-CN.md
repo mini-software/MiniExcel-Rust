@@ -18,6 +18,16 @@ cargo add miniexcel
 
 MiniExcel 最低支持 Rust 1.85.0。
 
+## Rust 与 .NET 压力测试
+
+将 `MiniExcel-Rust` 与 [.NET MiniExcel 仓库](https://github.com/mini-software/MiniExcel) 放在同级目录，然后从 .NET 仓库运行共用压力测试脚本：
+
+```powershell
+pwsh ./benchmarks/compare-rust-dotnet.ps1
+```
+
+本测试比较动态流式 Query 性能：Rust 使用 `MiniExcel::query`，.NET 使用 `OpenXmlImporter.Query`，不包含 Save 性能。两种实现会流式读取同一份 100,000 行 XLSX 工作簿。脚本将校验读取行数一致，并报告多轮测试的耗时和峰值工作集。测试结果受运行环境影响，应以同一台机器产生的数据进行比较。
+
 ## 功能
 
 - 以有界内存流式读取动态行和类型化行。

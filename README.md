@@ -18,6 +18,16 @@ cargo add miniexcel
 
 MiniExcel requires Rust 1.85.0 or later.
 
+## Rust and .NET Stress Test
+
+Keep `MiniExcel-Rust` and the [.NET MiniExcel repository](https://github.com/mini-software/MiniExcel) in sibling directories, then run the shared stress harness from the .NET repository:
+
+```powershell
+pwsh ./benchmarks/compare-rust-dotnet.ps1
+```
+
+This benchmark compares dynamic streaming Query performance: Rust uses `MiniExcel::query`, and .NET uses `OpenXmlImporter.Query`. Save performance is not included. Both implementations stream the same 100,000-row XLSX workbook. The harness verifies matching row counts and reports elapsed time and peak working set over repeated runs. Results vary by environment, so compare values produced on the same machine.
+
 ## Features
 
 - Bounded-memory dynamic and typed worksheet streaming.

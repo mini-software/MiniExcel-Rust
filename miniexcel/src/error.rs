@@ -18,6 +18,9 @@ enum ErrorKind {
     #[error("failed to write XLSX data: {0}")]
     Write(#[from] rust_xlsxwriter::XlsxError),
 
+    #[error("failed to fill XLSX template: {0}")]
+    Template(String),
+
     #[error("invalid A1 cell reference: {0}")]
     InvalidCellReference(String),
 
@@ -67,6 +70,10 @@ enum ErrorKind {
 }
 
 impl Error {
+    pub(crate) fn template(message: impl Into<String>) -> Self {
+        ErrorKind::Template(message.into()).into()
+    }
+
     pub(crate) fn stream(message: impl Into<String>) -> Self {
         ErrorKind::Stream(message.into()).into()
     }

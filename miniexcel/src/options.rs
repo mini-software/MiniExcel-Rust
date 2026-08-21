@@ -234,3 +234,44 @@ impl Default for WriteOptions {
         }
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TemplateOptions {
+    overwrite_file: bool,
+    ignore_missing_variables: bool,
+}
+
+impl TemplateOptions {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { overwrite_file: false, ignore_missing_variables: true }
+    }
+
+    #[must_use]
+    pub const fn with_overwrite_file(mut self, overwrite_file: bool) -> Self {
+        self.overwrite_file = overwrite_file;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_ignore_missing_variables(mut self, ignore: bool) -> Self {
+        self.ignore_missing_variables = ignore;
+        self
+    }
+
+    #[must_use]
+    pub(crate) const fn overwrite_file(&self) -> bool {
+        self.overwrite_file
+    }
+
+    #[must_use]
+    pub(crate) const fn ignore_missing_variables(&self) -> bool {
+        self.ignore_missing_variables
+    }
+}
+
+impl Default for TemplateOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}

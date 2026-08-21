@@ -261,6 +261,41 @@ MiniExcel::save_as_serialized_with_options("releases.xlsx", &values, &options)?;
 
 The column-format key is the final Serde field/header name. Typed Serde writing supports structs and vectors of structs; maps and `flatten` are handled through the dynamic API instead.
 
+## Template Writing
+
+`MiniExcel::save_as_template()` fills placeholders in an existing XLSX package while preserving worksheet styles and unrelated workbook parts:
+
+```rust
+use miniexcel::{MiniExcel, TemplateOptions};
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct Report<'a> {
+    title: &'a str,
+    items: Vec<Item<'a>>,
+}
+
+#[derive(Serialize)]
+struct Item<'a> {
+    name: &'a str,
+    score: u32,
+}
+
+MiniExcel::save_as_template(
+    "report.xlsx",
+    "template.xlsx",
+    &Report {
+        title: "Quarterly Report",
+        items: vec![Item { name: "Ada", score: 10 }],
+    },
+    &TemplateOptions::new(),
+)?;
+```
+
+Scalar placeholders use `{{title}}`. A row containing `{{items.name}}` is repeated once per array item. Exact number, boolean, and null placeholders become native cell values; mixed text becomes an inline string. Missing variables are blank by default and can be rejected with `with_ignore_missing_variables(false)`. Path output refuses existing files unless `with_overwrite_file(true)` is set. `save_as_template_bytes()` supports in-memory templates.
+
+Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` formula templates, or formula recalculation.
+
 ## Important Semantics
 
 - The default worksheet is the first workbook worksheet, not the active tab.
@@ -275,6 +310,6 @@ The column-format key is the final Serde field/header name. Typed Serde writing 
 
 ## Not Supported
 
-CSV, `.xls`, `.xlsb`, `.ods`, templates, macros, images, merged-cell operations, formula authoring, a general style system, and editing existing workbooks are not currently supported.
+CSV, `.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and editing existing workbooks are not currently supported.
 
 See the [compatibility matrix](docs/compatibility.md) for the current support scope.

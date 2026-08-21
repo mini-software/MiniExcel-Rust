@@ -46,6 +46,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Typed export | `save_as_serialized<T>()` | Uses Serde mapping internally |
 | Multi-sheet export | `save_as_sheets()` / `save_as_serialized_sheets()` | Preserves input sheet order and returns data-row counts |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | Defaults to `false`; existing paths require explicit opt-in |
+| Basic template fill | `save_as_template()` / `save_as_template_bytes()` | Scalar placeholders and single-row array expansion; preserves package parts |
 
 `MiniExcel` is the only public behavior entry point. Reader, writer, parser, and concrete iterator types are crate-internal. Public supporting types are limited to row/cell values, structured provenance rows, options, errors/results, and Serde date/time helpers.
 
@@ -93,7 +94,7 @@ Path RAG exports retain parser state, repeated header context, and one output ch
 
 The backend makes two sequential, bounded-memory passes over the selected worksheet entry. The first records only the maximum used column and final explicitly declared row. This is required for MiniExcel-compatible stable dynamic schemas when legal files omit `<dimension>`, and to preserve style-only row elements like the .NET reader. The second pass emits rows. Worksheet XML and prior rows are never retained; memory consists primarily of shared strings, styles, parser buffers, the current row, and the bounded channel.
 
-The internal writer assembles a new ZIP package with one or more worksheets. Path saves refuse existing files by default and can explicitly replace them, but cannot patch or insert sheets into an existing workbook.
+The internal writer assembles a new ZIP package with one or more worksheets. Path saves refuse existing files by default and can explicitly replace them, but cannot patch or insert sheets into an existing workbook. Template fills rewrite worksheet XML within a copied package; worksheet styles and unrelated ZIP parts are retained. Array expansion shifts row and cell addresses and updates the worksheet dimension. Formula expressions are preserved but not recalculated, and version 1 does not adjust formula references, merged ranges, tables, drawings, or defined names after inserted rows.
 
 ## Test Sources
 
@@ -108,7 +109,7 @@ Rust integration tests reuse the repository's existing files under `tests/data/x
 - Strict streaming A1 starts, empty-row filtering, dates, trimmed headers, and early typed errors.
 - Structured formula text, cached values, A1 addresses, style IDs, built-in/custom number formats, ranges, and early iterator drop.
 
-Writer tests generate temporary workbooks through `MiniExcel::save_as*()` and read them back through `MiniExcel::query*()`, covering dynamic and typed values, dates, multiple worksheets, row counts, empty schemas, explicit path overwrite behavior, and worksheet-name validation. The WASM adapter has native unit tests, while Browser Lab Playwright tests cover generated-workbook rendering, query controls, inclusive end ranges, and desktop/mobile viewports.
+Writer tests generate temporary workbooks through `MiniExcel::save_as*()` and read them back through `MiniExcel::query*()`, covering dynamic and typed values, dates, multiple worksheets, row counts, empty schemas, explicit path overwrite behavior, and worksheet-name validation. Template tests cover scalar and mixed text, native numbers and booleans, XML escaping, formula-injection protection, missing-variable policy, empty and populated arrays, multiple sheets, style retention, path overwrite, and byte workflows. The WASM adapter has native unit tests, while Browser Lab Playwright tests cover generated-workbook rendering, query controls, inclusive end ranges, and desktop/mobile viewports.
 
 ## .NET Parity Contract
 
@@ -140,16 +141,17 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | `GetSheetInformations` ID/index/name/type/visibility/active | Implemented | Rust tests against .NET fixtures |
 | `GetSheetDimensions` | Implemented | Rust tests against .NET fixtures |
 | New-workbook `SaveAs`, including multiple sheets | Implemented and roundtrip-tested | Not yet |
+| Basic `SaveAsTemplate` scalar/list fill | Implemented and roundtrip-tested | Not yet |
 | Byte-array query/write for WASM | Implemented | Rust/browser tests |
 | Versioned grouped analytics | Rust research extension | No |
 | Addressed JSONL/Markdown/manifest RAG export | Rust research extension | No |
 | Async APIs, DataReader, stream ownership | Deferred | No |
 | Insert/edit existing workbooks | Deferred | No |
 | CSV and legacy formats | Deferred | No |
-| Templates, pictures, merges, comments | Deferred | No |
+| Advanced templates, pictures, merges, comments | Deferred | No |
 
 This matrix is the coverage claim: Rust does not yet provide complete API parity with the current .NET packages.
 
 ## Deferred Work
 
-SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, templates, images, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, modifying existing workbooks, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.
+SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, advanced template directives and sheet cloning, images, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, modifying existing workbooks, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.

@@ -12,6 +12,7 @@ mod reader;
 pub mod serde_helpers;
 mod sheet;
 mod streaming;
+mod template;
 mod writer;
 
 pub use analytics::{
@@ -21,7 +22,7 @@ pub use analytics::{
 pub use cell::{CellReference, CellValue, DynamicRow, ExcelRange, StructuredCell, StructuredRow};
 pub use error::{Error, Result};
 pub use facade::MiniExcel;
-pub use options::{HeaderMode, ReadOptions, WriteOptions};
+pub use options::{HeaderMode, ReadOptions, TemplateOptions, WriteOptions};
 pub use rag::{
     FormulaCalculationStatus, RagCell, RagChunk, RagExport, RagExportOptions, RagManifest, RagRow,
     RagValue,

@@ -261,6 +261,41 @@ MiniExcel::save_as_serialized_with_options("releases.xlsx", &values, &options)?;
 
 列格式的键是经过 Serde 重命名后的最终字段/表头名称。类型化写入支持结构体及结构体集合；Map 和 `flatten` 应改用动态 API。
 
+## 模板写入
+
+`MiniExcel::save_as_template()` 会填充现有 XLSX package 中的占位符，同时保留 worksheet 样式及其他 workbook part：
+
+```rust
+use miniexcel::{MiniExcel, TemplateOptions};
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct Report<'a> {
+    title: &'a str,
+    items: Vec<Item<'a>>,
+}
+
+#[derive(Serialize)]
+struct Item<'a> {
+    name: &'a str,
+    score: u32,
+}
+
+MiniExcel::save_as_template(
+    "report.xlsx",
+    "template.xlsx",
+    &Report {
+        title: "Quarterly Report",
+        items: vec![Item { name: "Ada", score: 10 }],
+    },
+    &TemplateOptions::new(),
+)?;
+```
+
+标量占位符使用 `{{title}}`。包含 `{{items.name}}` 的 row 会按数组 item 数量重复。单独的 number、boolean 和 null 占位符会写成原生 cell value；混合文本写成 inline string。缺失变量默认留空，也可用 `with_ignore_missing_variables(false)` 拒绝。路径输出默认拒绝已有文件，设置 `with_overwrite_file(true)` 后才覆盖。内存模板可使用 `save_as_template_bytes()`。
+
+版本 1 尚不支持 `@group`、`@if`、参数化 sheet 克隆、`$=` 公式模板或公式重算。
+
 ## 重要语义
 
 - 未指定工作表时选择工作簿顺序中的第一张表，而不是 active tab。
@@ -275,6 +310,6 @@ MiniExcel::save_as_serialized_with_options("releases.xlsx", &values, &options)?;
 
 ## 暂不支持
 
-目前不支持 CSV、`.xls`、`.xlsb`、`.ods`、模板、宏、图片、合并单元格操作、公式写入、通用样式系统和修改已有工作簿。
+目前不支持 CSV、`.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统和修改已有工作簿。
 
 当前支持范围请查看[兼容性矩阵](docs/compatibility.zh-CN.md)。

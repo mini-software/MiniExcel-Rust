@@ -7,7 +7,8 @@ use crate::streaming::{StreamingRows, StreamingStructuredRows, StreamingTypedRow
 use crate::writer::XlsxWriter;
 use crate::{
     AnalysisResult, ByteQuerySummary, DynamicRow, ExcelRange, QueryPlan, RagChunk, RagExport,
-    RagExportOptions, RagManifest, ReadOptions, Result, SheetInfo, StructuredRow, WriteOptions,
+    RagExportOptions, RagManifest, ReadOptions, Result, SheetInfo, StructuredRow, TemplateOptions,
+    WriteOptions,
 };
 
 /// Convenience entry points for the common path-based MiniExcel workflow.
@@ -275,5 +276,33 @@ impl MiniExcel {
         }
         writer.save(path, options.overwrite_file())?;
         Ok(row_counts)
+    }
+
+    /// Fills an existing XLSX template and writes a new workbook.
+    ///
+    /// Supports `{{name}}` scalar placeholders and single-row expansion for array paths such as
+    /// `{{items.name}}`. Existing workbook styles and unrelated package parts are preserved.
+    pub fn save_as_template<T>(
+        path: impl AsRef<Path>,
+        template_path: impl AsRef<Path>,
+        value: &T,
+        options: &TemplateOptions,
+    ) -> Result<()>
+    where
+        T: Serialize,
+    {
+        crate::template::fill_path(path, template_path, value, options)
+    }
+
+    /// Fills an in-memory XLSX template and returns the generated workbook bytes.
+    pub fn save_as_template_bytes<T>(
+        template_bytes: &[u8],
+        value: &T,
+        options: &TemplateOptions,
+    ) -> Result<Vec<u8>>
+    where
+        T: Serialize,
+    {
+        crate::template::fill_bytes(template_bytes, value, options)
     }
 }

@@ -8,7 +8,7 @@ This report compares observable public capabilities in the local checkouts below
 
 | Project | Revision |
 | --- | --- |
-| MiniExcel-Rust | `f8f3edcdceb977f10f86b07ce3fee6789e97eb7e` plus the current Save working-tree changes (`0.1.0`) |
+| MiniExcel-Rust | `c89481ee626d2e4c1e356d82c98e2f663861cadf` plus the current SaveAsTemplate working-tree changes (`0.1.0`) |
 | MiniExcel .NET | `5beb8b6986e93213af0b7ad8f0f1f6351b505d7e` (`2.0.0-preview.4-23-g5beb8b6`) |
 
 The comparison uses the .NET public APIs, their controlling implementations, and focused tests under the sibling `../MiniExcel` checkout. Rust status is based on the public `MiniExcel` facade, options, integration tests, and [compatibility boundary](compatibility.md).
@@ -34,7 +34,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | General save inputs | Partial | Export from general objects/enumerables, dictionaries, `DataTable`, `IDataReader`, and async enumerables, with progress. Rust accepts dynamic or same-type Serde slices and reports per-sheet row counts. |
 | Multi-sheet export | Partial | Rust creates multiple named worksheets in input order, but does not yet create hidden sheets or accept heterogeneous Serde row types in one call. |
 | Existing-workbook operations | Missing | Insert or replace a sheet, copy and add a sheet, and rename, reorder, or change visibility of sheets. Rust always creates a new XLSX package. |
-| Templates | Missing | Fill templates from paths, bytes, or streams; scalar/list expansion, grouping, nested values, and calculation-chain handling. |
+| Templates | Partial | Rust fills path/byte templates with scalar values and single-row arrays while preserving package parts. Streams, grouping, conditions, parametrized sheets, `$=` formulas, formula-reference updates, and calculation-chain handling remain unsupported. |
 | Pictures and merge processing | Missing | Add anchored pictures and merge adjacent identical cells through the templater surface. Structured reads do not provide authoring parity. |
 | CSV | Missing | Dynamic/typed CSV query and save, append, columns, DataReader/DataTable, delimiter/newline/encoding/quoting configuration, and CSV/XLSX conversion. |
 | Comments and notes | Missing | Retrieve threaded comments, replies, people/authors, resolution state, timestamps, and legacy notes. |
@@ -53,7 +53,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Tables | No public table API | `OpenXmlImporter.QueryTableAsync`; `tests/MiniExcel.OpenXml.Tests/Tables/` |
 | DataReader/DataTable | No public tabular adapter | `OpenXmlImporter.GetDataReader`, `GetAsyncDataReader`, `QueryAsDataTableAsync`; `tests/MiniExcel.OpenXml.Tests/DataReader/` |
 | Multi-sheet and workbook edits | Writer creates multiple sheets in a new workbook; existing-workbook edits remain unsupported | `OpenXmlExporter.InsertSheetAsync`, `CopyAndAddSheetAsync`, `AlterSheetAsync`; `tests/MiniExcel.OpenXml.Tests/MultipleSheets/` and `AlterSheets/` |
-| Templates/pictures/merges | Listed as deferred in `docs/compatibility.md` | `src/MiniExcel.OpenXml/Api/OpenXmlTemplater.cs`; `tests/MiniExcel.OpenXml.Tests/Templates/` |
+| Templates/pictures/merges | Basic template fill implemented; advanced directives and authoring remain deferred | `src/MiniExcel.OpenXml/Api/OpenXmlTemplater.cs`; `tests/MiniExcel.OpenXml.Tests/Templates/` |
 | CSV/conversion | XLSX-only core | `src/MiniExcel.Csv/Api/`; `src/MiniExcel/MiniExcelConverter.cs`; `tests/MiniExcel.Csv.Tests/` |
 | Mapping | Serde mapping only | `src/MiniExcel.Core/Attributes/MiniExcelColumnAttribute.cs`; `src/MiniExcel.OpenXml.FluentMapping/`; mapping tests |
 | Comments | No public comment model/API | `OpenXmlImporter.RetrieveCommentsAsync`; `src/MiniExcel.OpenXml/Models/Comments.cs`; comment tests |
@@ -68,7 +68,7 @@ The .NET APIs marked with `Async` also have generated synchronous counterparts t
 3. **Caller-owned `Read`/`Write` APIs**: establish ownership and seekability contracts before adding async wrappers.
 4. **Existing-workbook sheet operations**: requires a deliberate package-rewrite design and stronger corruption/atomicity tests.
 5. **CSV provider**: should be a separate format boundary rather than conditionals inside the XLSX parser.
-6. **Templates and Fluent Mapping**: largest independent surfaces; define compatibility milestones separately.
+6. **Advanced templates and Fluent Mapping**: add grouped/conditional templates, parametrized sheets, and mapping through separate compatibility milestones.
 
 DataReader/DataTable are .NET ecosystem abstractions and should not be ported literally. A Rust-native record-batch or tabular adapter is appropriate only when a concrete integration requires it.
 

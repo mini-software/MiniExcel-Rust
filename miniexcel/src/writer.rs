@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fs::OpenOptions;
 use std::path::Path;
 
 use indexmap::IndexSet;
@@ -70,8 +71,14 @@ impl XlsxWriter {
         Ok(())
     }
 
-    pub(crate) fn save(&mut self, path: impl AsRef<Path>) -> Result<()> {
-        self.workbook.save(path)?;
+    pub(crate) fn save(&mut self, path: impl AsRef<Path>, overwrite_file: bool) -> Result<()> {
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .create_new(!overwrite_file)
+            .truncate(overwrite_file)
+            .open(path)?;
+        self.workbook.save_to_writer(file)?;
         Ok(())
     }
 

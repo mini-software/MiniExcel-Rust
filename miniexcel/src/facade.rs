@@ -180,7 +180,33 @@ impl MiniExcel {
     ) -> Result<()> {
         let mut writer = XlsxWriter::new();
         writer.add_rows(rows, options)?;
-        writer.save(path)
+        writer.save(path, options.overwrite_file())
+    }
+
+    /// Creates a new XLSX workbook containing multiple dynamic worksheets.
+    ///
+    /// Returns data-row counts in the same order as the supplied worksheets.
+    pub fn save_as_sheets<'a, I, N>(
+        path: impl AsRef<Path>,
+        sheets: I,
+        options: &WriteOptions,
+    ) -> Result<Vec<usize>>
+    where
+        I: IntoIterator<Item = (N, &'a [DynamicRow])>,
+        N: AsRef<str>,
+    {
+        let mut writer = XlsxWriter::new();
+        let mut row_counts = Vec::new();
+        for (sheet_name, rows) in sheets {
+            let sheet_options = options.clone().with_sheet_name(sheet_name.as_ref());
+            writer.add_rows(rows, &sheet_options)?;
+            row_counts.push(rows.len());
+        }
+        if row_counts.is_empty() {
+            return Err(crate::Error::no_worksheets());
+        }
+        writer.save(path, options.overwrite_file())?;
+        Ok(row_counts)
     }
 
     /// Creates an in-memory XLSX workbook from dynamic rows.
@@ -199,7 +225,7 @@ impl MiniExcel {
     ) -> Result<()> {
         let mut writer = XlsxWriter::new();
         writer.add_rows_with_schema(schema, rows, options)?;
-        writer.save(path)
+        writer.save(path, options.overwrite_file())
     }
 
     /// Creates a new XLSX workbook from Serde-serializable rows.
@@ -221,6 +247,33 @@ impl MiniExcel {
     {
         let mut writer = XlsxWriter::new();
         writer.add_serialized(rows, options)?;
-        writer.save(path)
+        writer.save(path, options.overwrite_file())
+    }
+
+    /// Creates a new XLSX workbook containing multiple Serde-serializable worksheets.
+    ///
+    /// All worksheets use the same row type. Returns data-row counts in input order.
+    pub fn save_as_serialized_sheets<'a, T, I, N>(
+        path: impl AsRef<Path>,
+        sheets: I,
+        options: &WriteOptions,
+    ) -> Result<Vec<usize>>
+    where
+        T: Serialize + 'a,
+        I: IntoIterator<Item = (N, &'a [T])>,
+        N: AsRef<str>,
+    {
+        let mut writer = XlsxWriter::new();
+        let mut row_counts = Vec::new();
+        for (sheet_name, rows) in sheets {
+            let sheet_options = options.clone().with_sheet_name(sheet_name.as_ref());
+            writer.add_serialized(rows, &sheet_options)?;
+            row_counts.push(rows.len());
+        }
+        if row_counts.is_empty() {
+            return Err(crate::Error::no_worksheets());
+        }
+        writer.save(path, options.overwrite_file())?;
+        Ok(row_counts)
     }
 }

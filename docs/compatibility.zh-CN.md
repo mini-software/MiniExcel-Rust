@@ -44,6 +44,8 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | OpenXML exporter | `MiniExcel::save_as*()` | 具体 writer 类型保持内部可见；只创建新 workbook |
 | 动态导出 | `save_as()` / `save_as_with_schema()` | map 序列化在内部实现 |
 | 类型化导出 | `save_as_serialized<T>()` | 内部使用 Serde 映射 |
+| 多工作表导出 | `save_as_sheets()` / `save_as_serialized_sheets()` | 保留输入工作表顺序并返回数据行数 |
+| `overwriteFile` | `WriteOptions::with_overwrite_file()` | 默认 `false`；已有路径需要显式允许覆盖 |
 
 `MiniExcel` 是唯一公共行为入口。Reader、writer、parser 和具体迭代器类型均为 crate 内部实现。公共支持类型仅限 row/cell value、结构化 provenance row、option、error/result 和 Serde date/time helper。
 
@@ -91,7 +93,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 
 backend 对所选 worksheet entry 执行两次顺序、有界内存扫描。第一次只记录最大已使用 column 和最后一个明确声明的 row。这是为了在合法文件省略 `<dimension>` 时保持 MiniExcel 兼容的稳定动态 schema，并像 .NET reader 一样保留仅含 style 的 row element。第二次扫描输出 row。Worksheet XML 和先前 row 永远不会保留；内存主要由 shared string、style、parser buffer、当前 row 和有界 channel 构成。
 
-内部 writer 组装新的 ZIP package。公共 facade 写入 path，不能 patch 现有 workbook，也不能向其中插入 sheet。
+内部 writer 组装包含一个或多个工作表的新 ZIP package。路径保存默认拒绝已有文件，也可显式替换，但不能 patch 现有 workbook 或向其中插入 sheet。
 
 ## 测试来源
 
@@ -106,7 +108,7 @@ Rust integration test 复用仓库 `tests/data/xlsx` 下的现有文件，包括
 - 严格流式 A1 起点、空 row 过滤、date、trim header 和提前出现的类型化 error。
 - structured formula text、缓存值、A1 地址、style ID、内置/自定义 number format、range 和提前丢弃迭代器。
 
-Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、空 schema、path 覆盖行为和 worksheet name 验证。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range，以及桌面/移动 viewport。
+Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、多工作表、行数、空 schema、显式 path 覆盖行为和 worksheet name 验证。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range，以及桌面/移动 viewport。
 
 ## .NET 等价契约
 
@@ -137,7 +139,7 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | `GetSheetNames` 和 `GetColumns` | 已实现 | 是 |
 | `GetSheetInformations` ID/index/name/type/visibility/active | 已实现 | Rust 使用 .NET fixture 测试 |
 | `GetSheetDimensions` | 已实现 | Rust 使用 .NET fixture 测试 |
-| 新 workbook `SaveAs` | 已实现并完成 roundtrip 测试 | 尚未 |
+| 新 workbook `SaveAs`（含多工作表） | 已实现并完成 roundtrip 测试 | 尚未 |
 | 用于 WASM 的字节数组 query/write | 已实现 | Rust/browser 测试 |
 | 版本化分组分析 | Rust 研究扩展 | 否 |
 | 带地址 JSONL/Markdown/manifest RAG 导出 | Rust 研究扩展 | 否 |

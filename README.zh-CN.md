@@ -223,6 +223,16 @@ MiniExcel::save_as_with_options(
 
 动态 schema 按所有行中键第一次出现的顺序合并，缺失值写为空单元格。需要显式 schema 或仅写表头时，请使用 `MiniExcel::save_as_with_schema()`。
 
+使用 `MiniExcel::save_as_sheets()` 可按输入顺序创建多个工作表；返回值是每张工作表的数据行数：
+
+```rust
+let counts = MiniExcel::save_as_sheets(
+    "report.xlsx",
+    [("Current", current.as_slice()), ("Archive", archive.as_slice())],
+    &WriteOptions::new(),
+)?;
+```
+
 ## 类型化写入
 
 ```rust
@@ -261,7 +271,7 @@ MiniExcel::save_as_serialized_with_options("releases.xlsx", &values, &options)?;
 - 分组分析保留与不同 group 数量成比例的状态，并在 `max_groups` 停止。
 - RAG 导出不会重新计算公式，hidden sheet 未显式允许时会拒绝处理。
 - 流式查询是同步接口，每个活动 query 使用一个 worker thread；暂不支持 async I/O。
-- 写入只创建新工作簿并覆盖目标路径，不能修改已有工作簿。
+- 写入会创建新工作簿，并默认拒绝已有目标路径。需要明确替换时使用 `WriteOptions::with_overwrite_file(true)`；Save 不能原地修改已有工作簿。
 
 ## 暂不支持
 

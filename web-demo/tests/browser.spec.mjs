@@ -8,6 +8,10 @@ for (const project of ["desktop", "mobile"]) {
 
     await expect(page.getByTestId("runtime-status")).toContainText("WASM");
     await expect(page.getByTestId("runtime-status")).toContainText("Worker");
+    const implementation = page.getByRole("navigation", { name: "Implementation" });
+    await expect(implementation.getByRole("link", { name: ".NET" })).toHaveAttribute("href", "/MiniExcel/");
+    await expect(implementation.getByRole("link", { name: "Rust" })).toHaveAttribute("href", "/MiniExcel-Rust/");
+    await expect(implementation.getByRole("link", { name: "Rust" })).toHaveAttribute("aria-current", "page");
     await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
     await expect(page.getByRole("cell", { name: "MiniExcel", exact: true })).toBeVisible();
     await expect(page.getByRole("cell", { name: "Browser WASM", exact: true })).toBeVisible();

@@ -112,6 +112,7 @@ impl Default for ReadOptions {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WriteOptions {
     sheet_name: String,
+    overwrite_file: bool,
     print_header: bool,
     date_format: String,
     time_format: String,
@@ -129,6 +130,12 @@ impl WriteOptions {
     #[must_use]
     pub fn with_sheet_name(mut self, sheet_name: impl Into<String>) -> Self {
         self.sheet_name = sheet_name.into();
+        self
+    }
+
+    #[must_use]
+    pub const fn with_overwrite_file(mut self, overwrite_file: bool) -> Self {
+        self.overwrite_file = overwrite_file;
         self
     }
 
@@ -178,6 +185,11 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub(crate) const fn overwrite_file(&self) -> bool {
+        self.overwrite_file
+    }
+
+    #[must_use]
     pub(crate) const fn print_header(&self) -> bool {
         self.print_header
     }
@@ -212,6 +224,7 @@ impl Default for WriteOptions {
     fn default() -> Self {
         Self {
             sheet_name: "Sheet1".to_owned(),
+            overwrite_file: false,
             print_header: true,
             date_format: "yyyy-mm-dd".to_owned(),
             time_format: "hh:mm:ss".to_owned(),

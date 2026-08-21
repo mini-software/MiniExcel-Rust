@@ -165,16 +165,29 @@ input:disabled {
   border-color: #a9d7c6;
 }
 
-.source-link {
-  padding: 7px 9px;
-  color: var(--ink);
+.implementation-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(48px, 1fr));
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.implementation-switch a {
+  padding: 6px 9px;
+  border-radius: 4px;
+  color: var(--muted);
+  text-align: center;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
-.source-link:hover {
-  color: var(--green);
+.implementation-switch a[aria-current="page"] {
+  color: #fff;
+  background: var(--ink);
 }
 
 .workspace {

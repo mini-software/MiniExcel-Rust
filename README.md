@@ -223,6 +223,16 @@ MiniExcel::save_as_with_options(
 
 Dynamic schemas are the union of row keys in first-seen order. Missing values are written as blank cells. Use `MiniExcel::save_as_with_schema()` when an explicit schema is required, including header-only exports.
 
+Create multiple worksheets in input order with `MiniExcel::save_as_sheets()`. It returns one data-row count per worksheet:
+
+```rust
+let counts = MiniExcel::save_as_sheets(
+    "report.xlsx",
+    [("Current", current.as_slice()), ("Archive", archive.as_slice())],
+    &WriteOptions::new(),
+)?;
+```
+
 ## Typed Writing
 
 ```rust
@@ -261,7 +271,7 @@ The column-format key is the final Serde field/header name. Typed Serde writing 
 - Grouped analytics retain state proportional to distinct groups and stop at `max_groups`.
 - RAG exports never recalculate formulas and reject hidden sheets unless explicitly allowed.
 - Streaming is synchronous and uses one worker thread per active query. Async I/O is not supported.
-- Writing creates new workbooks and overwrites target paths. It cannot modify an existing workbook.
+- Writing creates new workbooks and refuses existing target paths by default. Use `WriteOptions::with_overwrite_file(true)` to replace one explicitly. Save cannot modify an existing workbook in place.
 
 ## Not Supported
 

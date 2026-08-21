@@ -16,7 +16,7 @@ fn workbook() -> NamedTempFile {
     MiniExcel::save_as_with_options(
         file.path(),
         &rows,
-        &WriteOptions::new().with_sheet_name("Sales"),
+        &WriteOptions::new().with_sheet_name("Sales").with_overwrite_file(true),
     )
     .expect("write workbook");
     file

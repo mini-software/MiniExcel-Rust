@@ -1,6 +1,8 @@
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use miniexcel::{CellValue, DynamicRow, HeaderMode, MiniExcel, ReadOptions, WriteOptions};
 use serde::{Deserialize, Serialize};
+use std::io::{Cursor, Read};
+use zip::ZipArchive;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -21,6 +23,61 @@ fn dynamic_row(name: &str, value: i64) -> DynamicRow {
     row.insert("Name".to_owned(), CellValue::String(name.to_owned()));
     row.insert("Value".to_owned(), CellValue::Int(value));
     row
+}
+
+fn worksheet_xml(bytes: &[u8]) -> String {
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("open generated XLSX");
+    let mut worksheet = archive.by_name("xl/worksheets/sheet1.xml").expect("open worksheet XML");
+    let mut xml = String::new();
+    worksheet.read_to_string(&mut xml).expect("read worksheet XML");
+    xml
+}
+
+#[test]
+fn writes_default_custom_and_disabled_freeze_panes() {
+    let rows = [dynamic_row("Ada", 1)];
+
+    let default_bytes =
+        MiniExcel::save_as_bytes(&rows, &WriteOptions::new()).expect("write default panes");
+    let default_xml = worksheet_xml(&default_bytes);
+    assert!(default_xml.contains("ySplit=\"1\""));
+    assert!(default_xml.contains("topLeftCell=\"A2\""));
+
+    let custom_bytes = MiniExcel::save_as_bytes(
+        &rows,
+        &WriteOptions::new().with_freeze_row_count(1).with_freeze_column_count(2),
+    )
+    .expect("write custom panes");
+    let custom_xml = worksheet_xml(&custom_bytes);
+    assert!(custom_xml.contains("xSplit=\"2\""));
+    assert!(custom_xml.contains("ySplit=\"1\""));
+    assert!(custom_xml.contains("topLeftCell=\"C2\""));
+
+    let disabled_bytes = MiniExcel::save_as_bytes(
+        &rows,
+        &WriteOptions::new().with_freeze_row_count(0).with_freeze_column_count(0),
+    )
+    .expect("write without panes");
+    assert!(!worksheet_xml(&disabled_bytes).contains("<pane"));
+
+    let temp_dir = tempfile::tempdir().expect("create temp directory");
+    let path = temp_dir.path().join("typed-freeze.xlsx");
+    let releases = [Release {
+        name: "MiniExcel".to_owned(),
+        version: 1,
+        released_on: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+        internal: false,
+    }];
+    MiniExcel::save_as_serialized_with_options(
+        &path,
+        &releases,
+        &WriteOptions::new().with_freeze_row_count(2).with_freeze_column_count(1),
+    )
+    .expect("write typed panes");
+    let typed_xml = worksheet_xml(&std::fs::read(path).unwrap());
+    assert!(typed_xml.contains("xSplit=\"1\""));
+    assert!(typed_xml.contains("ySplit=\"2\""));
+    assert!(typed_xml.contains("topLeftCell=\"B3\""));
 }
 
 #[test]

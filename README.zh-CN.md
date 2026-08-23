@@ -225,6 +225,8 @@ MiniExcel::save_as_with_options(
 
 动态 schema 按所有行中键第一次出现的顺序合并，缺失值写为空单元格。需要显式 schema 或仅写表头时，请使用 `MiniExcel::save_as_with_schema()`。
 
+为兼容 MiniExcel v1，新 worksheet 默认冻结第一个物理 row。使用 `with_freeze_row_count()` 和 `with_freeze_column_count()` 配置物理行列数；两者都设为 `0` 可关闭冻结窗格。
+
 使用 `MiniExcel::save_as_sheets()` 可按输入顺序创建多个工作表；返回值是每张工作表的数据行数：
 
 ```rust

@@ -46,8 +46,7 @@ impl XlsxWriter {
         validate_schema(schema)?;
         validate_dimensions(rows.len(), schema.len(), options.print_header())?;
 
-        let mut worksheet = Worksheet::new();
-        worksheet.set_name(options.sheet_name())?;
+        let mut worksheet = new_worksheet(options)?;
 
         let mut output_row = 0_u32;
         if options.print_header() {
@@ -97,15 +96,13 @@ impl XlsxWriter {
                 return Err(Error::missing_schema());
             }
 
-            let mut worksheet = Worksheet::new();
-            worksheet.set_name(options.sheet_name())?;
+            let worksheet = new_worksheet(options)?;
             self.workbook.push_worksheet(worksheet);
             self.sheet_names.insert(normalized_sheet_name(options.sheet_name()));
             return Ok(());
         };
 
-        let mut worksheet = Worksheet::new();
-        worksheet.set_name(options.sheet_name())?;
+        let mut worksheet = new_worksheet(options)?;
         let custom_headers: Vec<CustomSerializeField> = options
             .column_formats()
             .iter()
@@ -133,6 +130,13 @@ impl Default for XlsxWriter {
     fn default() -> Self {
         Self { workbook: Workbook::new(), sheet_names: HashSet::new() }
     }
+}
+
+fn new_worksheet(options: &WriteOptions) -> Result<Worksheet> {
+    let mut worksheet = Worksheet::new();
+    worksheet.set_name(options.sheet_name())?;
+    worksheet.set_freeze_panes(options.freeze_row_count(), options.freeze_column_count())?;
+    Ok(worksheet)
 }
 
 struct CellFormats {

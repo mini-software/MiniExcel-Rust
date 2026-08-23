@@ -167,6 +167,8 @@ pub struct WriteOptions {
     sheet_name: String,
     overwrite_file: bool,
     print_header: bool,
+    freeze_row_count: u32,
+    freeze_column_count: u16,
     date_format: String,
     time_format: String,
     datetime_format: String,
@@ -195,6 +197,18 @@ impl WriteOptions {
     #[must_use]
     pub const fn with_print_header(mut self, print_header: bool) -> Self {
         self.print_header = print_header;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_freeze_row_count(mut self, count: u32) -> Self {
+        self.freeze_row_count = count;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_freeze_column_count(mut self, count: u16) -> Self {
+        self.freeze_column_count = count;
         self
     }
 
@@ -248,6 +262,16 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub(crate) const fn freeze_row_count(&self) -> u32 {
+        self.freeze_row_count
+    }
+
+    #[must_use]
+    pub(crate) const fn freeze_column_count(&self) -> u16 {
+        self.freeze_column_count
+    }
+
+    #[must_use]
     pub(crate) fn date_format(&self) -> &str {
         &self.date_format
     }
@@ -279,6 +303,8 @@ impl Default for WriteOptions {
             sheet_name: "Sheet1".to_owned(),
             overwrite_file: false,
             print_header: true,
+            freeze_row_count: 1,
+            freeze_column_count: 0,
             date_format: "yyyy-mm-dd".to_owned(),
             time_format: "hh:mm:ss".to_owned(),
             datetime_format: "yyyy-mm-dd hh:mm:ss".to_owned(),

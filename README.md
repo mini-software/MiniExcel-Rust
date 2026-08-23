@@ -225,6 +225,8 @@ MiniExcel::save_as_with_options(
 
 Dynamic schemas are the union of row keys in first-seen order. Missing values are written as blank cells. Use `MiniExcel::save_as_with_schema()` when an explicit schema is required, including header-only exports.
 
+New worksheets freeze the first physical row by default for MiniExcel v1 compatibility. Configure physical row and column counts with `with_freeze_row_count()` and `with_freeze_column_count()`; set both to `0` to disable frozen panes.
+
 Create multiple worksheets in input order with `MiniExcel::save_as_sheets()`. It returns one data-row count per worksheet:
 
 ```rust

@@ -136,6 +136,23 @@ fn writes_auto_filter_ranges() {
 }
 
 #[test]
+fn writes_right_to_left_worksheet_view() {
+    let rows = [dynamic_row("Ada", 1)];
+    let default_xml = worksheet_xml(
+        &MiniExcel::save_as_bytes(&rows, &WriteOptions::new()).expect("write default view"),
+    );
+    assert!(!default_xml.contains("rightToLeft=\"1\""));
+
+    let rtl_xml = worksheet_xml(
+        &MiniExcel::save_as_bytes(&rows, &WriteOptions::new().with_right_to_left(true))
+            .expect("write right-to-left view"),
+    );
+    assert!(rtl_xml.contains("rightToLeft=\"1\""));
+    assert!(rtl_xml.contains("ySplit=\"1\""));
+    assert!(rtl_xml.contains("topLeftCell=\"A2\""));
+}
+
+#[test]
 fn writes_multiple_dynamic_sheets_and_enforces_overwrite_policy() {
     let temp_dir = tempfile::tempdir().expect("create temp directory");
     let path = temp_dir.path().join("output.xlsx");

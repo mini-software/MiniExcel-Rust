@@ -146,6 +146,7 @@ impl Default for XlsxWriter {
 fn new_worksheet(options: &WriteOptions) -> Result<Worksheet> {
     let mut worksheet = Worksheet::new();
     worksheet.set_name(options.sheet_name())?;
+    worksheet.set_right_to_left(options.right_to_left());
     worksheet.set_freeze_panes(options.freeze_row_count(), options.freeze_column_count())?;
     Ok(worksheet)
 }

@@ -168,6 +168,7 @@ pub struct WriteOptions {
     overwrite_file: bool,
     print_header: bool,
     auto_filter: bool,
+    right_to_left: bool,
     freeze_row_count: u32,
     freeze_column_count: u16,
     date_format: String,
@@ -204,6 +205,12 @@ impl WriteOptions {
     #[must_use]
     pub const fn with_auto_filter(mut self, enabled: bool) -> Self {
         self.auto_filter = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_right_to_left(mut self, enabled: bool) -> Self {
+        self.right_to_left = enabled;
         self
     }
 
@@ -274,6 +281,11 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub(crate) const fn right_to_left(&self) -> bool {
+        self.right_to_left
+    }
+
+    #[must_use]
     pub(crate) const fn freeze_row_count(&self) -> u32 {
         self.freeze_row_count
     }
@@ -316,6 +328,7 @@ impl Default for WriteOptions {
             overwrite_file: false,
             print_header: true,
             auto_filter: true,
+            right_to_left: false,
             freeze_row_count: 1,
             freeze_column_count: 0,
             date_format: "yyyy-mm-dd".to_owned(),

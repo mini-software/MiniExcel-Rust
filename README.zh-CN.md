@@ -229,6 +229,8 @@ MiniExcel::save_as_with_options(
 
 AutoFilter 下拉菜单默认覆盖完整写入范围，包括只有 header 的导出。使用 `with_auto_filter(false)` 可关闭。禁用 header 时，Excel 会把第一个数据 row 当作筛选标题行。
 
+使用 `WriteOptions::with_right_to_left(true)` 可让 worksheet 从右向左显示。它只改变 worksheet view，不改变 cell 坐标或值。
+
 使用 `MiniExcel::save_as_sheets()` 可按输入顺序创建多个工作表；返回值是每张工作表的数据行数：
 
 ```rust

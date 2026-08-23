@@ -25,12 +25,16 @@ fn dynamic_row(name: &str, value: i64) -> DynamicRow {
     row
 }
 
-fn worksheet_xml(bytes: &[u8]) -> String {
+fn archive_xml(bytes: &[u8], path: &str) -> String {
     let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("open generated XLSX");
-    let mut worksheet = archive.by_name("xl/worksheets/sheet1.xml").expect("open worksheet XML");
+    let mut worksheet = archive.by_name(path).expect("open XLSX XML entry");
     let mut xml = String::new();
-    worksheet.read_to_string(&mut xml).expect("read worksheet XML");
+    worksheet.read_to_string(&mut xml).expect("read XLSX XML entry");
     xml
+}
+
+fn worksheet_xml(bytes: &[u8]) -> String {
+    archive_xml(bytes, "xl/worksheets/sheet1.xml")
 }
 
 #[test]
@@ -78,6 +82,57 @@ fn writes_default_custom_and_disabled_freeze_panes() {
     assert!(typed_xml.contains("xSplit=\"1\""));
     assert!(typed_xml.contains("ySplit=\"2\""));
     assert!(typed_xml.contains("topLeftCell=\"B3\""));
+}
+
+#[test]
+fn writes_auto_filter_ranges() {
+    let rows = [dynamic_row("Ada", 1)];
+
+    let default_bytes =
+        MiniExcel::save_as_bytes(&rows, &WriteOptions::new()).expect("write default filter");
+    let default_xml = worksheet_xml(&default_bytes);
+    assert!(default_xml.contains("<autoFilter ref=\"A1:B2\""));
+    let workbook_xml = archive_xml(&default_bytes, "xl/workbook.xml");
+    assert!(workbook_xml.contains("_xlnm._FilterDatabase"));
+    assert!(workbook_xml.contains("$A$1:$B$2"));
+
+    let no_header_xml = worksheet_xml(
+        &MiniExcel::save_as_bytes(&rows, &WriteOptions::new().with_print_header(false))
+            .expect("write headerless filter"),
+    );
+    assert!(no_header_xml.contains("<autoFilter ref=\"A1:B1\""));
+
+    let schema = vec!["Name".to_owned(), "Value".to_owned()];
+    let temp_dir = tempfile::tempdir().expect("create temp directory");
+    let schema_path = temp_dir.path().join("schema.xlsx");
+    MiniExcel::save_as_with_schema(&schema_path, &schema, &[], &WriteOptions::new())
+        .expect("write schema filter");
+    let schema_xml = worksheet_xml(&std::fs::read(schema_path).unwrap());
+    assert!(schema_xml.contains("<autoFilter ref=\"A1:B1\""));
+
+    let release = [Release {
+        name: "MiniExcel".to_owned(),
+        version: 1,
+        released_on: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+        internal: false,
+    }];
+    let typed_path = temp_dir.path().join("typed.xlsx");
+    MiniExcel::save_as_serialized_with_options(&typed_path, &release, &WriteOptions::new())
+        .expect("write typed filter");
+    let typed_xml = worksheet_xml(&std::fs::read(typed_path).unwrap());
+    assert!(typed_xml.contains("<autoFilter ref=\"A1:C2\""));
+
+    let disabled_xml = worksheet_xml(
+        &MiniExcel::save_as_bytes(&rows, &WriteOptions::new().with_auto_filter(false))
+            .expect("write disabled filter"),
+    );
+    assert!(!disabled_xml.contains("<autoFilter"));
+
+    let empty_xml = worksheet_xml(
+        &MiniExcel::save_as_bytes(&[], &WriteOptions::new().with_print_header(false))
+            .expect("write zero-column workbook"),
+    );
+    assert!(!empty_xml.contains("<autoFilter"));
 }
 
 #[test]

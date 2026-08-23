@@ -167,6 +167,7 @@ pub struct WriteOptions {
     sheet_name: String,
     overwrite_file: bool,
     print_header: bool,
+    auto_filter: bool,
     freeze_row_count: u32,
     freeze_column_count: u16,
     date_format: String,
@@ -197,6 +198,12 @@ impl WriteOptions {
     #[must_use]
     pub const fn with_print_header(mut self, print_header: bool) -> Self {
         self.print_header = print_header;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_auto_filter(mut self, enabled: bool) -> Self {
+        self.auto_filter = enabled;
         self
     }
 
@@ -262,6 +269,11 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub(crate) const fn auto_filter(&self) -> bool {
+        self.auto_filter
+    }
+
+    #[must_use]
     pub(crate) const fn freeze_row_count(&self) -> u32 {
         self.freeze_row_count
     }
@@ -303,6 +315,7 @@ impl Default for WriteOptions {
             sheet_name: "Sheet1".to_owned(),
             overwrite_file: false,
             print_header: true,
+            auto_filter: true,
             freeze_row_count: 1,
             freeze_column_count: 0,
             date_format: "yyyy-mm-dd".to_owned(),

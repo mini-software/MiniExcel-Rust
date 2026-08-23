@@ -65,6 +65,10 @@ impl XlsxWriter {
             output_row += 1;
         }
 
+        if options.auto_filter() && !schema.is_empty() {
+            worksheet.autofilter(0, 0, output_row.saturating_sub(1), schema.len() as u16 - 1)?;
+        }
+
         self.workbook.push_worksheet(worksheet);
         self.sheet_names.insert(normalized_sheet_name(options.sheet_name()));
         Ok(())
@@ -118,6 +122,13 @@ impl XlsxWriter {
         worksheet.serialize_headers_with_options(0, 0, first, &header_options)?;
         for row in rows {
             worksheet.serialize(row)?;
+        }
+
+        if options.auto_filter() {
+            let struct_name = std::any::type_name::<T>().rsplit("::").next().unwrap_or_default();
+            let (first_row, first_column, last_row, last_column) =
+                worksheet.get_serialize_dimensions(struct_name)?;
+            worksheet.autofilter(first_row, first_column, last_row, last_column)?;
         }
 
         self.workbook.push_worksheet(worksheet);

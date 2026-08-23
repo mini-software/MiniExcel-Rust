@@ -8,7 +8,7 @@
 
 | 项目 | 版本基线 |
 | --- | --- |
-| MiniExcel-Rust | `c89481ee626d2e4c1e356d82c98e2f663861cadf` 加当前 SaveAsTemplate 工作树改动（`0.1.0`） |
+| MiniExcel-Rust | `38ce3b220fb3a6ac06dec1026bacc0561d7cc94e`（`0.2.0`） |
 | MiniExcel .NET | `5beb8b6986e93213af0b7ad8f0f1f6351b505d7e`（`2.0.0-preview.4-23-g5beb8b6`） |
 
 比对依据包括同级目录 `../MiniExcel` 中的 .NET 公开 API、控制实现和聚焦测试，以及 Rust 的公开 `MiniExcel` 门面、选项、集成测试和[兼容性边界](compatibility.zh-CN.md)。

@@ -8,7 +8,7 @@ This report compares observable public capabilities in the local checkouts below
 
 | Project | Revision |
 | --- | --- |
-| MiniExcel-Rust | `c89481ee626d2e4c1e356d82c98e2f663861cadf` plus the current SaveAsTemplate working-tree changes (`0.1.0`) |
+| MiniExcel-Rust | `38ce3b220fb3a6ac06dec1026bacc0561d7cc94e` (`0.2.0`) |
 | MiniExcel .NET | `5beb8b6986e93213af0b7ad8f0f1f6351b505d7e` (`2.0.0-preview.4-23-g5beb8b6`) |
 
 The comparison uses the .NET public APIs, their controlling implementations, and focused tests under the sibling `../MiniExcel` checkout. Rust status is based on the public `MiniExcel` facade, options, integration tests, and [compatibility boundary](compatibility.md).

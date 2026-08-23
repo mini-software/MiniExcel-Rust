@@ -6,7 +6,7 @@ use indexmap::IndexSet;
 use rust_xlsxwriter::{CustomSerializeField, Format, SerializeFieldOptions, Workbook, Worksheet};
 use serde::Serialize;
 
-use crate::{CellValue, DynamicRow, Error, Result, WriteOptions};
+use crate::{CellValue, DynamicRow, Error, Result, SheetVisibility, WriteOptions};
 
 const MAX_EXCEL_ROWS: usize = 1_048_576;
 const MAX_EXCEL_COLUMNS: usize = 16_384;
@@ -14,6 +14,10 @@ const MAX_EXCEL_COLUMNS: usize = 16_384;
 pub(crate) struct XlsxWriter {
     workbook: Workbook,
     sheet_names: HashSet<String>,
+    requested_visibilities: HashSet<String>,
+    matched_visibilities: HashSet<String>,
+    visible_worksheets: usize,
+    has_active_worksheet: bool,
 }
 
 impl XlsxWriter {
@@ -73,12 +77,12 @@ impl XlsxWriter {
             worksheet.autofilter(0, 0, output_row.saturating_sub(1), schema.len() as u16 - 1)?;
         }
 
-        self.workbook.push_worksheet(worksheet);
-        self.sheet_names.insert(normalized_sheet_name(options.sheet_name()));
+        self.push_worksheet(worksheet, options);
         Ok(())
     }
 
     pub(crate) fn save(&mut self, path: impl AsRef<Path>, overwrite_file: bool) -> Result<()> {
+        self.validate_workbook()?;
         let file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -90,6 +94,7 @@ impl XlsxWriter {
     }
 
     pub(crate) fn save_to_bytes(&mut self) -> Result<Vec<u8>> {
+        self.validate_workbook()?;
         Ok(self.workbook.save_to_buffer()?)
     }
 
@@ -105,8 +110,7 @@ impl XlsxWriter {
             }
 
             let worksheet = new_worksheet(options)?;
-            self.workbook.push_worksheet(worksheet);
-            self.sheet_names.insert(normalized_sheet_name(options.sheet_name()));
+            self.push_worksheet(worksheet, options);
             return Ok(());
         };
 
@@ -143,15 +147,58 @@ impl XlsxWriter {
             worksheet.autofilter(first_row, first_column, last_row, last_column)?;
         }
 
+        self.push_worksheet(worksheet, options);
+        Ok(())
+    }
+
+    fn push_worksheet(&mut self, mut worksheet: Worksheet, options: &WriteOptions) {
+        self.requested_visibilities.extend(options.sheet_visibilities().keys().cloned());
+        let normalized_name = normalized_sheet_name(options.sheet_name());
+        if options.sheet_visibilities().contains_key(&normalized_name) {
+            self.matched_visibilities.insert(normalized_name.clone());
+        }
+        match options.sheet_visibility(options.sheet_name()) {
+            SheetVisibility::Visible => {
+                self.visible_worksheets += 1;
+                if !self.has_active_worksheet {
+                    worksheet.set_active(true);
+                    self.has_active_worksheet = true;
+                }
+            }
+            SheetVisibility::Hidden => {
+                worksheet.set_hidden(true);
+            }
+            SheetVisibility::VeryHidden => {
+                worksheet.set_very_hidden(true);
+            }
+        }
         self.workbook.push_worksheet(worksheet);
-        self.sheet_names.insert(normalized_sheet_name(options.sheet_name()));
+        self.sheet_names.insert(normalized_name);
+    }
+
+    fn validate_workbook(&self) -> Result<()> {
+        if let Some(name) =
+            self.requested_visibilities.difference(&self.matched_visibilities).next()
+        {
+            return Err(Error::unknown_sheet_visibility(name));
+        }
+        if self.visible_worksheets == 0 {
+            return Err(Error::no_visible_worksheets());
+        }
         Ok(())
     }
 }
 
 impl Default for XlsxWriter {
     fn default() -> Self {
-        Self { workbook: Workbook::new(), sheet_names: HashSet::new() }
+        Self {
+            workbook: Workbook::new(),
+            sheet_names: HashSet::new(),
+            requested_visibilities: HashSet::new(),
+            matched_visibilities: HashSet::new(),
+            visible_worksheets: 0,
+            has_active_worksheet: false,
+        }
     }
 }
 

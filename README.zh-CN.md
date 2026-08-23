@@ -243,6 +243,8 @@ let counts = MiniExcel::save_as_sheets(
 )?;
 ```
 
+使用 `with_sheet_visibility(name, SheetVisibility::...)` 可按最终 sheet name 配置 visible、hidden 或 very hidden，名称匹配不区分大小写。第一个 visible sheet 自动成为 active；未知名称或全部隐藏的 workbook 会在创建输出前报错。隐藏状态只用于 UI 组织，不是数据保护，隐藏 worksheet 仍可查询。
+
 ## 类型化写入
 
 ```rust

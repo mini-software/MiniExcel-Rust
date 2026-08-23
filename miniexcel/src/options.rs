@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use std::path::PathBuf;
 
-use crate::CellReference;
+use crate::{CellReference, SheetVisibility};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum HeaderMode {
@@ -189,6 +189,7 @@ pub struct WriteOptions {
     datetime_format: String,
     duration_format: String,
     column_formats: IndexMap<String, String>,
+    sheet_visibilities: IndexMap<String, SheetVisibility>,
 }
 
 impl WriteOptions {
@@ -292,6 +293,16 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub fn with_sheet_visibility(
+        mut self,
+        sheet_name: impl Into<String>,
+        visibility: SheetVisibility,
+    ) -> Self {
+        self.sheet_visibilities.insert(sheet_name.into().to_lowercase(), visibility);
+        self
+    }
+
+    #[must_use]
     pub(crate) fn sheet_name(&self) -> &str {
         &self.sheet_name
     }
@@ -365,6 +376,19 @@ impl WriteOptions {
     pub(crate) fn column_formats(&self) -> &IndexMap<String, String> {
         &self.column_formats
     }
+
+    #[must_use]
+    pub(crate) fn sheet_visibility(&self, sheet_name: &str) -> SheetVisibility {
+        self.sheet_visibilities
+            .get(&sheet_name.to_lowercase())
+            .copied()
+            .unwrap_or(SheetVisibility::Visible)
+    }
+
+    #[must_use]
+    pub(crate) fn sheet_visibilities(&self) -> &IndexMap<String, SheetVisibility> {
+        &self.sheet_visibilities
+    }
 }
 
 impl Default for WriteOptions {
@@ -385,6 +409,7 @@ impl Default for WriteOptions {
             datetime_format: "yyyy-mm-dd hh:mm:ss".to_owned(),
             duration_format: "[h]:mm:ss".to_owned(),
             column_formats: IndexMap::new(),
+            sheet_visibilities: IndexMap::new(),
         }
     }
 }

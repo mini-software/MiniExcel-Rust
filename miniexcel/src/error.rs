@@ -51,6 +51,12 @@ enum ErrorKind {
     #[error("invalid write options: {0}")]
     InvalidWriteOptions(String),
 
+    #[error("the workbook must contain at least one visible worksheet")]
+    NoVisibleWorksheets,
+
+    #[error("worksheet visibility was configured for unknown worksheet '{0}'")]
+    UnknownSheetVisibility(String),
+
     #[error("failed to deserialize worksheet '{sheet}' at Excel row {row}: {source}")]
     Deserialize {
         sheet: String,
@@ -119,6 +125,14 @@ impl Error {
 
     pub(crate) fn invalid_write_options(message: impl Into<String>) -> Self {
         ErrorKind::InvalidWriteOptions(message.into()).into()
+    }
+
+    pub(crate) fn no_visible_worksheets() -> Self {
+        ErrorKind::NoVisibleWorksheets.into()
+    }
+
+    pub(crate) fn unknown_sheet_visibility(sheet_name: impl Into<String>) -> Self {
+        ErrorKind::UnknownSheetVisibility(sheet_name.into()).into()
     }
 
     pub(crate) fn deserialize(

@@ -32,7 +32,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Caller-owned streams | Missing | Read from and write to caller-owned streams, leave-open behavior, and stream ownership controls. Rust path APIs own their files; byte APIs are separate. |
 | Async and cancellation | Missing | Async query/export/template operations, async row sources, cancellation tokens, and progress callbacks. Rust iterators are synchronous even though path reads use a worker thread. |
 | General save inputs | Partial | Export from general objects/enumerables, dictionaries, `DataTable`, `IDataReader`, and async enumerables, with progress. Rust accepts dynamic or same-type Serde slices and reports per-sheet row counts. |
-| Multi-sheet export | Partial | Rust creates multiple named worksheets in input order, but does not yet create hidden sheets or accept heterogeneous Serde row types in one call. |
+| Multi-sheet export | Partial | Rust creates ordered visible, hidden, and very-hidden worksheets, but does not yet accept heterogeneous Serde row types in one call. |
 | Existing-workbook operations | Missing | Insert or replace a sheet, copy and add a sheet, and rename, reorder, or change visibility of sheets. Rust always creates a new XLSX package. |
 | Templates | Partial | Rust fills path/byte templates with scalar values and single-row arrays while preserving package parts. Streams, grouping, conditions, parametrized sheets, `$=` formulas, formula-reference updates, and calculation-chain handling remain unsupported. |
 | Pictures and merge processing | Missing | Add anchored pictures and merge adjacent identical cells through the templater surface. Structured reads do not provide authoring parity. |

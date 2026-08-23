@@ -243,6 +243,8 @@ let counts = MiniExcel::save_as_sheets(
 )?;
 ```
 
+Configure final sheet names as visible, hidden, or very hidden with `with_sheet_visibility(name, SheetVisibility::...)`. Matching is case-insensitive, the first visible sheet becomes active, and unknown names or an all-hidden workbook are rejected before output is created. Hidden states are UI organization, not data protection; hidden worksheets remain queryable.
+
 ## Typed Writing
 
 ```rust

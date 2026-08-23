@@ -46,6 +46,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | 动态导出 | `save_as()` / `save_as_with_schema()` | map 序列化在内部实现 |
 | 类型化导出 | `save_as_serialized<T>()` | 内部使用 Serde 映射 |
 | 多工作表导出 | `save_as_sheets()` / `save_as_serialized_sheets()` | 保留输入工作表顺序并返回数据行数 |
+| 每表 visibility | `WriteOptions::with_sheet_visibility()` | visible、hidden、very hidden；第一个 visible sheet 为 active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | 默认 `false`；已有路径需要显式允许覆盖 |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | 默认冻结一行、零列 |
 | `AutoFilter` | `WriteOptions::with_auto_filter()` | 默认 `true`；覆盖完整写入范围 |
@@ -119,7 +120,7 @@ Rust integration test 复用仓库 `tests/data/xlsx` 下的现有文件，包括
 - 强制 shared-string 磁盘 spill、索引 lookup、无效目录处理、纯内存 byte query 和提前 drop 清理。
 - structured formula text、缓存值、A1 地址、style ID、内置/自定义 number format、range 和提前丢弃迭代器。
 
-Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、多工作表、行数、空 schema、默认/自定义/禁用冻结窗格、header/headerless/typed AutoFilter 范围、从右到左 view、有界固定 AutoWidth 输出、显式 path 覆盖行为和 worksheet name 验证。模板测试覆盖标量与混合文本、原生 number/boolean、XML 转义、公式注入防护、缺失变量策略、空数组与非空数组、多工作表、样式保留、path 覆盖和 byte 工作流。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range，以及桌面/移动 viewport。
+Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、多工作表、visible/hidden/very-hidden 状态、active sheet 选择、行数、空 schema、默认/自定义/禁用冻结窗格、header/headerless/typed AutoFilter 范围、从右到左 view、有界固定 AutoWidth 输出、显式 path 覆盖行为和 worksheet name 验证。模板测试覆盖标量与混合文本、原生 number/boolean、XML 转义、公式注入防护、缺失变量策略、空数组与非空数组、多工作表、样式保留、path 覆盖和 byte 工作流。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range，以及桌面/移动 viewport。
 
 ## .NET 等价契约
 

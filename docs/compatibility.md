@@ -46,6 +46,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Dynamic export | `save_as()` / `save_as_with_schema()` | Map serialization is implemented internally |
 | Typed export | `save_as_serialized<T>()` | Uses Serde mapping internally |
 | Multi-sheet export | `save_as_sheets()` / `save_as_serialized_sheets()` | Preserves input sheet order and returns data-row counts |
+| Per-sheet visibility | `WriteOptions::with_sheet_visibility()` | Visible, hidden, and very hidden; first visible sheet is active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | Defaults to `false`; existing paths require explicit opt-in |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | Defaults to one frozen row and zero frozen columns |
 | `AutoFilter` | `WriteOptions::with_auto_filter()` | Defaults to `true`; covers the complete written range |
@@ -119,7 +120,7 @@ Rust integration tests reuse the repository's existing files under `tests/data/x
 - Forced shared-string disk spill, indexed lookup, invalid-directory handling, memory-only byte queries, and early-drop cleanup.
 - Structured formula text, cached values, A1 addresses, style IDs, built-in/custom number formats, ranges, and early iterator drop.
 
-Writer tests generate temporary workbooks through `MiniExcel::save_as*()` and read them back through `MiniExcel::query*()`, covering dynamic and typed values, dates, multiple worksheets, row counts, empty schemas, default/custom/disabled freeze panes, header/headerless/typed AutoFilter ranges, right-to-left views, bounded fixed AutoWidth output, explicit path overwrite behavior, and worksheet-name validation. Template tests cover scalar and mixed text, native numbers and booleans, XML escaping, formula-injection protection, missing-variable policy, empty and populated arrays, multiple sheets, style retention, path overwrite, and byte workflows. The WASM adapter has native unit tests, while Browser Lab Playwright tests cover generated-workbook rendering, query controls, inclusive end ranges, and desktop/mobile viewports.
+Writer tests generate temporary workbooks through `MiniExcel::save_as*()` and read them back through `MiniExcel::query*()`, covering dynamic and typed values, dates, multiple worksheets, visible/hidden/very-hidden states, active-sheet selection, row counts, empty schemas, default/custom/disabled freeze panes, header/headerless/typed AutoFilter ranges, right-to-left views, bounded fixed AutoWidth output, explicit path overwrite behavior, and worksheet-name validation. Template tests cover scalar and mixed text, native numbers and booleans, XML escaping, formula-injection protection, missing-variable policy, empty and populated arrays, multiple sheets, style retention, path overwrite, and byte workflows. The WASM adapter has native unit tests, while Browser Lab Playwright tests cover generated-workbook rendering, query controls, inclusive end ranges, and desktop/mobile viewports.
 
 ## .NET Parity Contract
 

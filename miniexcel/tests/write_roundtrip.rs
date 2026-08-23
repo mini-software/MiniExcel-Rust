@@ -1,5 +1,7 @@
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
-use miniexcel::{CellValue, DynamicRow, HeaderMode, MiniExcel, ReadOptions, WriteOptions};
+use miniexcel::{
+    CellValue, DynamicRow, HeaderMode, MiniExcel, ReadOptions, SheetVisibility, WriteOptions,
+};
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
@@ -260,6 +262,77 @@ fn writes_multiple_dynamic_sheets_and_enforces_overwrite_policy() {
 }
 
 #[test]
+fn writes_per_sheet_visibility_and_activates_the_first_visible_sheet() {
+    let temp_dir = tempfile::tempdir().expect("create temp directory");
+    let path = temp_dir.path().join("visibility.xlsx");
+    let archived = [dynamic_row("Archived", 1)];
+    let current = [dynamic_row("Current", 2)];
+    let system = [dynamic_row("System", 3)];
+    let options = WriteOptions::new()
+        .with_sheet_visibility("ARCHIVED", SheetVisibility::Hidden)
+        .with_sheet_visibility("System", SheetVisibility::VeryHidden);
+
+    MiniExcel::save_as_sheets(
+        &path,
+        [
+            ("Archived", archived.as_slice()),
+            ("Current", current.as_slice()),
+            ("System", system.as_slice()),
+        ],
+        &options,
+    )
+    .expect("write sheet visibility");
+
+    let info = MiniExcel::get_sheet_info(&path).expect("read sheet visibility");
+    assert_eq!(info.len(), 3);
+    assert_eq!(info[0].visibility(), SheetVisibility::Hidden);
+    assert!(!info[0].is_active());
+    assert_eq!(info[1].visibility(), SheetVisibility::Visible);
+    assert!(info[1].is_active());
+    assert_eq!(info[2].visibility(), SheetVisibility::VeryHidden);
+    assert!(!info[2].is_active());
+
+    let workbook_xml = archive_xml(&std::fs::read(&path).unwrap(), "xl/workbook.xml");
+    assert!(workbook_xml.contains("name=\"Archived\" sheetId=\"1\" state=\"hidden\""));
+    assert!(workbook_xml.contains("name=\"System\" sheetId=\"3\" state=\"veryHidden\""));
+    assert!(workbook_xml.contains("activeTab=\"1\""));
+
+    let hidden_row = MiniExcel::query_with_options(
+        &path,
+        &ReadOptions::new().with_sheet_name("Archived").with_header_mode(HeaderMode::FirstRow),
+    )
+    .unwrap()
+    .next()
+    .unwrap()
+    .unwrap();
+    assert_eq!(hidden_row["Name"], CellValue::String("Archived".to_owned()));
+}
+
+#[test]
+fn rejects_invalid_sheet_visibility_configurations_before_creating_output() {
+    let temp_dir = tempfile::tempdir().expect("create temp directory");
+    let path = temp_dir.path().join("all-hidden.xlsx");
+    let rows = [dynamic_row("Hidden", 1)];
+    let all_hidden = WriteOptions::new()
+        .with_sheet_visibility("One", SheetVisibility::Hidden)
+        .with_sheet_visibility("Two", SheetVisibility::VeryHidden);
+    assert!(
+        MiniExcel::save_as_sheets(
+            &path,
+            [("One", rows.as_slice()), ("Two", rows.as_slice())],
+            &all_hidden,
+        )
+        .is_err()
+    );
+    assert!(!path.exists());
+
+    let typo_path = temp_dir.path().join("typo.xlsx");
+    let typo = WriteOptions::new().with_sheet_visibility("Missing", SheetVisibility::Hidden);
+    assert!(MiniExcel::save_as_sheets(&typo_path, [("Actual", rows.as_slice())], &typo).is_err());
+    assert!(!typo_path.exists());
+}
+
+#[test]
 fn writes_dynamic_rows_and_reads_them_back() {
     let date = NaiveDate::from_ymd_opt(2025, 8, 13).unwrap();
     let time = NaiveTime::from_hms_opt(14, 30, 15).unwrap();
@@ -428,7 +501,9 @@ fn writes_multiple_serialized_sheets() {
         released_on: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap(),
         internal: true,
     }];
-    let options = WriteOptions::new().with_column_format("ReleasedOn", "yyyy-mm-dd");
+    let options = WriteOptions::new()
+        .with_column_format("ReleasedOn", "yyyy-mm-dd")
+        .with_sheet_visibility("Preview", SheetVisibility::VeryHidden);
 
     let row_counts = MiniExcel::save_as_serialized_sheets(
         &path,
@@ -439,6 +514,10 @@ fn writes_multiple_serialized_sheets() {
 
     assert_eq!(row_counts, [1, 1]);
     assert_eq!(MiniExcel::get_sheet_names(&path).unwrap(), ["Stable", "Preview"]);
+    assert_eq!(
+        MiniExcel::get_sheet_info(&path).unwrap()[1].visibility(),
+        SheetVisibility::VeryHidden
+    );
     let rows = MiniExcel::query_as_with_options::<Release>(
         &path,
         &ReadOptions::new().with_sheet_name("Preview"),

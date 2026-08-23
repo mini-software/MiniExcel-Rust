@@ -227,6 +227,8 @@ Dynamic schemas are the union of row keys in first-seen order. Missing values ar
 
 New worksheets freeze the first physical row by default for MiniExcel v1 compatibility. Configure physical row and column counts with `with_freeze_row_count()` and `with_freeze_column_count()`; set both to `0` to disable frozen panes.
 
+AutoFilter dropdowns cover the complete written range by default, including header-only exports. Use `with_auto_filter(false)` to disable them. When headers are disabled, Excel treats the first data row as the filter-header row.
+
 Create multiple worksheets in input order with `MiniExcel::save_as_sheets()`. It returns one data-row count per worksheet:
 
 ```rust

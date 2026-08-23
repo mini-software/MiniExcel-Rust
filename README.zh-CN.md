@@ -227,6 +227,8 @@ MiniExcel::save_as_with_options(
 
 为兼容 MiniExcel v1，新 worksheet 默认冻结第一个物理 row。使用 `with_freeze_row_count()` 和 `with_freeze_column_count()` 配置物理行列数；两者都设为 `0` 可关闭冻结窗格。
 
+AutoFilter 下拉菜单默认覆盖完整写入范围，包括只有 header 的导出。使用 `with_auto_filter(false)` 可关闭。禁用 header 时，Excel 会把第一个数据 row 当作筛选标题行。
+
 使用 `MiniExcel::save_as_sheets()` 可按输入顺序创建多个工作表；返回值是每张工作表的数据行数：
 
 ```rust

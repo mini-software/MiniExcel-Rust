@@ -183,6 +183,8 @@ for row in MiniExcel::query_with_options("book.xlsx", &options)? {
 
 没有表头时，动态键使用真实 Excel 列名，例如 `A`、`B`、`AA`。为了兼容 MiniExcel，默认保留空行；可通过 `with_ignore_empty_rows(true)` 删除所有单元格都为空的行。
 
+合并单元格默认只保留物理存储的左上角值。使用 `ReadOptions::with_fill_merged_cells(true)` 可在动态、类型化和 byte query 中将该值投影到整个合并范围。Structured query 仍保持稀疏，只暴露物理存储的 cell。
+
 ## 类型化读取
 
 ```rust

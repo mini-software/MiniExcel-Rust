@@ -17,6 +17,7 @@ pub struct ReadOptions {
     end_cell: Option<CellReference>,
     header_mode: HeaderMode,
     ignore_empty_rows: bool,
+    fill_merged_cells: bool,
     trim_headers: bool,
 }
 
@@ -57,6 +58,12 @@ impl ReadOptions {
     }
 
     #[must_use]
+    pub const fn with_fill_merged_cells(mut self, fill_merged_cells: bool) -> Self {
+        self.fill_merged_cells = fill_merged_cells;
+        self
+    }
+
+    #[must_use]
     pub const fn with_trim_headers(mut self, trim_headers: bool) -> Self {
         self.trim_headers = trim_headers;
         self
@@ -83,6 +90,11 @@ impl ReadOptions {
     }
 
     #[must_use]
+    pub(crate) const fn fill_merged_cells(&self) -> bool {
+        self.fill_merged_cells
+    }
+
+    #[must_use]
     pub(crate) const fn trim_headers(&self) -> bool {
         self.trim_headers
     }
@@ -104,6 +116,7 @@ impl Default for ReadOptions {
             end_cell: None,
             header_mode: HeaderMode::Auto,
             ignore_empty_rows: false,
+            fill_merged_cells: false,
             trim_headers: true,
         }
     }

@@ -41,6 +41,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | `GetColumns` | `MiniExcel::get_columns()` | 返回选中的动态 key，或空 vector |
 | `startCell` | `ReadOptions::with_start_cell()` | A1 起始坐标 |
 | `IgnoreEmptyRows` | `ReadOptions::with_ignore_empty_rows()` | 为兼容 MiniExcel，默认值为 `false` |
+| `FillMergedCells` | `ReadOptions::with_fill_merged_cells()` | 默认 `false`；适用于动态、类型化和 byte query |
 | OpenXML exporter | `MiniExcel::save_as*()` | 具体 writer 类型保持内部可见；只创建新 workbook |
 | 动态导出 | `save_as()` / `save_as_with_schema()` | map 序列化在内部实现 |
 | 类型化导出 | `save_as_serialized<T>()` | 内部使用 Serde 映射 |
@@ -57,6 +58,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 - `MiniExcel::query_structured()` 不会消费 header row，并且只输出 worksheet XML 中明确表示的 cell。
 - 未指定名称时，选择 workbook 顺序中的第一个 worksheet。
 - 默认保留所选起点和最后一个已使用 cell 之间的空 row。
+- 除非启用 `fill_merged_cells`，合并范围只暴露物理存储的左上角值。Structured query 永不合成 merged cell。
 - 类型化 header string 默认会 trim。动态 header 遵循 .NET 行为，按存储内容保留非空白文本。
 - 空白动态 header 会被省略。重复动态 header 保留首次出现的 key 位置，后续 column 会覆盖 value。
 - 已知 schema 中缺失的动态 cell 表示为 `CellValue::Empty`，而不是省略。
@@ -92,7 +94,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 
 路径 RAG 导出保留 parser 状态、重复 header 上下文和一个输出 chunk。manifest 通过单独的有界读取计算源文件 hash。Markdown 包含 stream 级 source/sheet provenance 以及 chunk 内 formula/style/number-format metadata，无需保留先前 chunk。Byte/WASM 工作流不会收集源数据行，但浏览器上传必然在 WebAssembly 内存中保留压缩后的 XLSX 字节；生成的 JSONL、Markdown 和 Blob 下载也会消耗与输出大小相当的内存。Browser Lab 在 Web Worker 中运行这些操作是为了保持响应，而不是声称其内存与路径模式等价。
 
-backend 对所选 worksheet entry 执行两次顺序、有界内存扫描。第一次只记录最大已使用 column 和最后一个明确声明的 row。这是为了在合法文件省略 `<dimension>` 时保持 MiniExcel 兼容的稳定动态 schema，并像 .NET reader 一样保留仅含 style 的 row element。第二次扫描输出 row。Worksheet XML 和先前 row 永远不会保留；内存主要由 shared string、style、parser buffer、当前 row 和有界 channel 构成。
+backend 对所选 worksheet entry 执行两次顺序、有界内存扫描。第一次记录使用范围和紧凑 merged-cell 矩形。这是为了在合法文件省略 `<dimension>` 时保持 MiniExcel 兼容的稳定动态 schema、像 .NET reader 一样保留仅含 style 的 row element，并在不展开地址 map 的情况下支持按需 merged-cell 填充。第二次扫描输出 row，只保留当前活动 merge range 的锚点值。Worksheet XML 和先前 row 永远不会保留；内存主要由 shared string、style、merge metadata、parser buffer、当前 row 和有界 channel 构成。
 
 内部 writer 组装包含一个或多个工作表的新 ZIP package。路径保存默认拒绝已有文件，也可显式替换，但不能 patch 现有 workbook 或向其中插入 sheet。模板填充会在复制的 package 中重写 worksheet XML；worksheet 样式和无关 ZIP part 会保留。数组展开会移动 row/cell 地址并更新 worksheet dimension。公式表达式会保留但不会重算；版本 1 不会在插行后调整公式引用、merge range、table、drawing 或 defined name。
 
@@ -107,6 +109,7 @@ Rust integration test 复用仓库 `tests/data/xlsx` 下的现有文件，包括
 - 没有显式 `r` attribute 的 cell。
 - 已验证 Excel row number 的类型化转换失败。
 - 严格流式 A1 起点、空 row 过滤、date、trim header 和提前出现的类型化 error。
+- 动态、类型化和 byte query 的可选纵向/横向 merged-cell 填充。
 - structured formula text、缓存值、A1 地址、style ID、内置/自定义 number format、range 和提前丢弃迭代器。
 
 Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、多工作表、行数、空 schema、显式 path 覆盖行为和 worksheet name 验证。模板测试覆盖标量与混合文本、原生 number/boolean、XML 转义、公式注入防护、缺失变量策略、空数组与非空数组、多工作表、样式保留、path 覆盖和 byte 工作流。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range，以及桌面/移动 viewport。

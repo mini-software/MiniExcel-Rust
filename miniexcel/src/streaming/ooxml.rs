@@ -47,22 +47,18 @@ where
     let context = prepare_workbook(&mut archive, options, preserve_structure)?;
     let sheet_name = context.sheet_name.clone();
     let cancelled = AtomicBool::new(false);
-    let extent = scan_worksheet_extent(&mut archive, &context.sheet_path, &cancelled)?;
+    let scan = scan_worksheet(&mut archive, &context.sheet_path, &cancelled)?;
     let mut visitor_error = None;
-    stream_worksheet(
-        &mut archive,
-        context,
-        extent,
-        options,
-        &cancelled,
-        &mut |row| match visitor(&sheet_name, row) {
-            Ok(should_continue) => should_continue,
-            Err(error) => {
-                visitor_error = Some(error);
-                false
-            }
-        },
-    )?;
+    stream_worksheet(&mut archive, context, scan, options, &cancelled, &mut |row| match visitor(
+        &sheet_name,
+        row,
+    ) {
+        Ok(should_continue) => should_continue,
+        Err(error) => {
+            visitor_error = Some(error);
+            false
+        }
+    })?;
     if let Some(error) = visitor_error {
         return Err(error);
     }
@@ -158,7 +154,7 @@ where
             .target;
         let extent = match read_declared_worksheet_extent(archive, sheet_path)? {
             Some(extent) => extent,
-            None => scan_worksheet_extent(archive, sheet_path, &cancelled)?,
+            None => scan_worksheet(archive, sheet_path, &cancelled)?.extent,
         };
         dimensions.push(ExcelRange::from_bounds(
             extent.start_row,
@@ -311,8 +307,8 @@ fn worker_main<R>(
     if ready_sender.send(Ok(context.sheet_name.clone())).is_err() {
         return;
     }
-    let extent = match scan_worksheet_extent(&mut archive, &context.sheet_path, &cancelled) {
-        Ok(extent) => extent,
+    let scan = match scan_worksheet(&mut archive, &context.sheet_path, &cancelled) {
+        Ok(scan) => scan,
         Err(error) => {
             let _ = row_sender.send(Err(error));
             return;
@@ -323,7 +319,7 @@ fn worker_main<R>(
     }
     let mut emit = |row| row_sender.send(Ok(row)).is_ok();
     if let Err(error) =
-        stream_worksheet(&mut archive, context, extent, &options, &cancelled, &mut emit)
+        stream_worksheet(&mut archive, context, scan, &options, &cancelled, &mut emit)
     {
         let _ = row_sender.send(Err(error));
     }
@@ -687,6 +683,70 @@ struct WorksheetExtent {
     end_column: Option<usize>,
 }
 
+#[derive(Default)]
+struct WorksheetScan {
+    extent: WorksheetExtent,
+    merged_cells: Vec<MergedRange>,
+}
+
+#[derive(Clone, Copy)]
+struct MergedRange {
+    start_row: usize,
+    start_column: usize,
+    end_row: usize,
+    end_column: usize,
+}
+
+struct MergeFillState {
+    ranges: Vec<MergedRange>,
+    anchor_values: Vec<Option<Data>>,
+    active_ranges: Vec<usize>,
+    next_range: usize,
+}
+
+impl MergeFillState {
+    fn new(mut ranges: Vec<MergedRange>) -> Self {
+        ranges.sort_by_key(|range| range.start_row);
+        let anchor_values = vec![None; ranges.len()];
+        Self { ranges, anchor_values, active_ranges: Vec::new(), next_range: 0 }
+    }
+
+    fn apply(&mut self, row: &mut RowState, start_column: usize, end_column: Option<usize>) {
+        while self.ranges.get(self.next_range).is_some_and(|range| range.start_row <= row.excel_row)
+        {
+            if self.ranges[self.next_range].end_row >= row.excel_row {
+                self.active_ranges.push(self.next_range);
+            }
+            self.next_range += 1;
+        }
+        self.active_ranges.retain(|index| self.ranges[*index].end_row >= row.excel_row);
+
+        for &index in &self.active_ranges {
+            let range = &self.ranges[index];
+            if row.excel_row == range.start_row {
+                self.anchor_values[index] = row
+                    .cells
+                    .iter()
+                    .find(|cell| cell.column == range.start_column)
+                    .map(|cell| cell.value.clone());
+            }
+            let Some(value) = self.anchor_values[index].as_ref() else {
+                continue;
+            };
+            let first_column = range.start_column.max(start_column);
+            let last_column = end_column.map_or(range.end_column, |end| range.end_column.min(end));
+            if first_column > last_column {
+                continue;
+            }
+            for column in first_column..=last_column {
+                if row.cells.iter().all(|cell| cell.column != column) {
+                    row.cells.push(ParsedCell { column, value: value.clone(), metadata: None });
+                }
+            }
+        }
+    }
+}
+
 fn read_declared_worksheet_extent<R>(
     archive: &mut ZipArchive<R>,
     sheet_path: &str,
@@ -730,11 +790,11 @@ where
     }
 }
 
-fn scan_worksheet_extent<R>(
+fn scan_worksheet<R>(
     archive: &mut ZipArchive<R>,
     sheet_path: &str,
     cancelled: &AtomicBool,
-) -> Result<WorksheetExtent>
+) -> Result<WorksheetScan>
 where
     R: Read + Seek,
 {
@@ -743,7 +803,7 @@ where
         .map_err(|error| stream_error("cannot scan worksheet XML:", error))?;
     let mut xml = Reader::from_reader(BufReader::new(file));
     let mut buffer = Vec::new();
-    let mut extent = WorksheetExtent::default();
+    let mut scan = WorksheetScan::default();
     let mut current_row = None;
     let mut last_declared_row = None;
     let mut next_column = 0;
@@ -751,7 +811,7 @@ where
 
     loop {
         if cancelled.load(Ordering::Relaxed) {
-            return Ok(extent);
+            return Ok(scan);
         }
         match xml
             .read_event_into(&mut buffer)
@@ -760,15 +820,19 @@ where
             Event::Start(event) if is_name(event.name().as_ref(), b"sheetData") => {
                 in_sheet_data = true;
             }
-            Event::End(event) if is_name(event.name().as_ref(), b"sheetData") => break,
+            Event::End(event) if is_name(event.name().as_ref(), b"sheetData") => {
+                in_sheet_data = false;
+                current_row = None;
+            }
             Event::Start(event) | Event::Empty(event)
                 if in_sheet_data && is_name(event.name().as_ref(), b"row") =>
             {
                 let row = row_index(&event, xml.decoder(), last_declared_row)?;
                 current_row = Some(row);
                 last_declared_row = Some(row);
-                extent.start_row = Some(extent.start_row.map_or(row, |start| start.min(row)));
-                extent.end_row = Some(extent.end_row.map_or(row, |end| end.max(row)));
+                scan.extent.start_row =
+                    Some(scan.extent.start_row.map_or(row, |start| start.min(row)));
+                scan.extent.end_row = Some(scan.extent.end_row.map_or(row, |end| end.max(row)));
                 next_column = 0;
             }
             Event::Start(event) | Event::Empty(event)
@@ -778,25 +842,64 @@ where
                     .and_then(|reference| parse_column(&reference))
                     .unwrap_or(next_column);
                 next_column = column.saturating_add(1);
-                extent.start_column =
-                    Some(extent.start_column.map_or(column, |start| start.min(column)));
-                extent.end_column = Some(extent.end_column.map_or(column, |end| end.max(column)));
+                scan.extent.start_column =
+                    Some(scan.extent.start_column.map_or(column, |start| start.min(column)));
+                scan.extent.end_column =
+                    Some(scan.extent.end_column.map_or(column, |end| end.max(column)));
             }
             Event::End(event) if is_name(event.name().as_ref(), b"row") => {
                 current_row = None;
+            }
+            Event::Start(event) | Event::Empty(event)
+                if is_name(event.name().as_ref(), b"mergeCell") =>
+            {
+                let reference = attribute(&event, xml.decoder(), b"ref")?
+                    .ok_or_else(|| Error::stream("merged cell has no reference"))?;
+                let range = parse_merged_range(&reference)?;
+                scan.extent.start_row = Some(
+                    scan.extent.start_row.map_or(range.start_row, |row| row.min(range.start_row)),
+                );
+                scan.extent.end_row =
+                    Some(scan.extent.end_row.map_or(range.end_row, |row| row.max(range.end_row)));
+                scan.extent.start_column = Some(
+                    scan.extent
+                        .start_column
+                        .map_or(range.start_column, |column| column.min(range.start_column)),
+                );
+                scan.extent.end_column = Some(
+                    scan.extent
+                        .end_column
+                        .map_or(range.end_column, |column| column.max(range.end_column)),
+                );
+                scan.merged_cells.push(range);
             }
             Event::Eof => break,
             _ => {}
         }
         buffer.clear();
     }
-    Ok(extent)
+    Ok(scan)
+}
+
+fn parse_merged_range(reference: &str) -> Result<MergedRange> {
+    let (start, end) = reference.split_once(':').unwrap_or((reference, reference));
+    let start = start.parse::<CellReference>()?;
+    let end = end.parse::<CellReference>()?;
+    if end.row() < start.row() || end.column() < start.column() {
+        return Err(Error::stream(format!("invalid merged-cell range '{reference}'")));
+    }
+    Ok(MergedRange {
+        start_row: start.row(),
+        start_column: start.column(),
+        end_row: end.row(),
+        end_column: end.column(),
+    })
 }
 
 fn stream_worksheet<R, F>(
     archive: &mut ZipArchive<R>,
     context: WorkbookContext,
-    extent: WorksheetExtent,
+    scan: WorksheetScan,
     options: &ReadOptions,
     cancelled: &AtomicBool,
     emit: &mut F,
@@ -815,8 +918,10 @@ where
     let mut last_declared_row = None;
     let mut next_output_row = options.start_cell().row();
     let mut in_sheet_data = false;
-    let end_row = options.end_cell().map_or(extent.end_row, |cell| Some(cell.row()));
-    let end_column = options.end_cell().map_or(extent.end_column, |cell| Some(cell.column()));
+    let end_row = options.end_cell().map_or(scan.extent.end_row, |cell| Some(cell.row()));
+    let end_column = options.end_cell().map_or(scan.extent.end_column, |cell| Some(cell.column()));
+    let mut merge_fill = (options.fill_merged_cells() && !context.preserve_structure)
+        .then(|| MergeFillState::new(scan.merged_cells));
 
     loop {
         if cancelled.load(Ordering::Relaxed) {
@@ -835,7 +940,14 @@ where
                 if end_row.is_none_or(|end_row| excel_row > end_row) {
                     break;
                 }
-                if !emit_missing_rows(&mut next_output_row, excel_row, end_column, options, emit) {
+                if !emit_missing_rows(
+                    &mut next_output_row,
+                    excel_row,
+                    end_column,
+                    options,
+                    &mut merge_fill,
+                    emit,
+                ) {
                     return Ok(());
                 }
                 last_declared_row = Some(excel_row);
@@ -846,12 +958,20 @@ where
                 if end_row.is_none_or(|end_row| excel_row > end_row) {
                     break;
                 }
-                if !emit_missing_rows(&mut next_output_row, excel_row, end_column, options, emit) {
+                if !emit_missing_rows(
+                    &mut next_output_row,
+                    excel_row,
+                    end_column,
+                    options,
+                    &mut merge_fill,
+                    emit,
+                ) {
                     return Ok(());
                 }
                 last_declared_row = Some(excel_row);
                 let row = RowState { excel_row, cells: Vec::new(), next_column: 0 };
-                if !emit_row(row, &mut next_output_row, end_column, options, emit) {
+                if !emit_row(row, &mut next_output_row, end_column, options, &mut merge_fill, emit)
+                {
                     return Ok(());
                 }
             }
@@ -926,7 +1046,14 @@ where
             }
             Event::End(event) if is_name(event.name().as_ref(), b"row") => {
                 if let Some(row) = current_row.take() {
-                    if !emit_row(row, &mut next_output_row, end_column, options, emit) {
+                    if !emit_row(
+                        row,
+                        &mut next_output_row,
+                        end_column,
+                        options,
+                        &mut merge_fill,
+                        emit,
+                    ) {
                         return Ok(());
                     }
                 }
@@ -1023,6 +1150,7 @@ fn emit_missing_rows<F>(
     target_row: usize,
     end_column: Option<usize>,
     options: &ReadOptions,
+    merge_fill: &mut Option<MergeFillState>,
     emit: &mut F,
 ) -> bool
 where
@@ -1030,7 +1158,7 @@ where
 {
     while *next_output_row < target_row {
         let row = RowState { excel_row: *next_output_row, cells: Vec::new(), next_column: 0 };
-        if !emit_row(row, next_output_row, end_column, options, emit) {
+        if !emit_row(row, next_output_row, end_column, options, merge_fill, emit) {
             return false;
         }
     }
@@ -1038,15 +1166,19 @@ where
 }
 
 fn emit_row<F>(
-    row: RowState,
+    mut row: RowState,
     next_output_row: &mut usize,
     end_column: Option<usize>,
     options: &ReadOptions,
+    merge_fill: &mut Option<MergeFillState>,
     emit: &mut F,
 ) -> bool
 where
     F: FnMut(SelectedRow) -> bool,
 {
+    if let Some(merge_fill) = merge_fill {
+        merge_fill.apply(&mut row, options.start_cell().column(), end_column);
+    }
     *next_output_row = (*next_output_row).max(row.excel_row.saturating_add(1));
     if row.excel_row < options.start_cell().row() {
         return true;

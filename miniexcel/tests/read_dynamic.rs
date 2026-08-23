@@ -4,6 +4,16 @@ use chrono::NaiveDate;
 use miniexcel::{
     CellReference, CellValue, HeaderMode, MiniExcel, ReadOptions, SheetType, SheetVisibility,
 };
+use rust_xlsxwriter::{Format, Workbook};
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+struct MergedRecord {
+    department: String,
+    team: String,
+    code: String,
+}
 
 #[test]
 fn queries_rows_through_the_simple_facade() {
@@ -22,6 +32,73 @@ fn streaming_query_can_stop_early() {
         MiniExcel::query(common::fixture("TestTypeMapping.xlsx")).expect("create streaming query");
     assert!(rows.next().expect("first row").is_ok());
     drop(rows);
+}
+
+#[test]
+fn fills_merged_cells_when_requested() {
+    let temp_dir = tempfile::tempdir().expect("create temp directory");
+    let path = temp_dir.path().join("merged.xlsx");
+    let mut workbook = Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet.write_string(0, 0, "Department").unwrap();
+    worksheet.write_string(0, 1, "Team").unwrap();
+    worksheet.write_string(0, 2, "Code").unwrap();
+    worksheet.merge_range(1, 0, 3, 0, "HR", &Format::new()).unwrap();
+    worksheet.merge_range(1, 1, 1, 2, "Shared", &Format::new()).unwrap();
+    worksheet.write_string(2, 1, "A").unwrap();
+    worksheet.write_string(2, 2, "1").unwrap();
+    worksheet.write_string(3, 1, "B").unwrap();
+    worksheet.write_string(3, 2, "2").unwrap();
+    workbook.save(&path).expect("write merged workbook");
+
+    let base_options = ReadOptions::new().with_header_mode(HeaderMode::FirstRow);
+    let physical_rows = MiniExcel::query_with_options(&path, &base_options)
+        .unwrap()
+        .collect::<miniexcel::Result<Vec<_>>>()
+        .unwrap();
+    assert!(physical_rows[1]["Department"].is_empty());
+    assert!(physical_rows[0]["Code"].is_empty());
+
+    let filled_rows =
+        MiniExcel::query_with_options(&path, &base_options.clone().with_fill_merged_cells(true))
+            .unwrap()
+            .collect::<miniexcel::Result<Vec<_>>>()
+            .unwrap();
+    assert_eq!(filled_rows[0]["Department"], CellValue::String("HR".to_owned()));
+    assert_eq!(filled_rows[1]["Department"], CellValue::String("HR".to_owned()));
+    assert_eq!(filled_rows[2]["Department"], CellValue::String("HR".to_owned()));
+    assert_eq!(filled_rows[0]["Team"], CellValue::String("Shared".to_owned()));
+    assert_eq!(filled_rows[0]["Code"], CellValue::String("Shared".to_owned()));
+
+    let bytes = std::fs::read(&path).expect("read merged workbook bytes");
+    let byte_rows =
+        MiniExcel::query_bytes(&bytes, &base_options.clone().with_fill_merged_cells(true))
+            .expect("query merged workbook bytes");
+    assert_eq!(byte_rows, filled_rows);
+
+    let structured =
+        MiniExcel::query_structured_with_options(&path, &base_options.with_fill_merged_cells(true))
+            .unwrap()
+            .collect::<miniexcel::Result<Vec<_>>>()
+            .unwrap();
+    assert!(structured[2].cells().iter().all(|cell| cell.column_index() != 1));
+
+    let typed_rows = MiniExcel::query_as_with_options::<MergedRecord>(
+        &path,
+        &ReadOptions::new().with_fill_merged_cells(true),
+    )
+    .unwrap()
+    .collect::<miniexcel::Result<Vec<_>>>()
+    .unwrap();
+    assert_eq!(
+        typed_rows[0],
+        MergedRecord {
+            department: "HR".to_owned(),
+            team: "Shared".to_owned(),
+            code: "Shared".to_owned(),
+        }
+    );
+    assert_eq!(typed_rows[2].department, "HR");
 }
 
 #[test]

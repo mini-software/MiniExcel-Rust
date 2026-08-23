@@ -183,6 +183,8 @@ for row in MiniExcel::query_with_options("book.xlsx", &options)? {
 
 Without headers, dynamic keys use the actual Excel column names such as `A`, `B`, and `AA`. Empty rows are retained by default to match MiniExcel. Use `with_ignore_empty_rows(true)` to filter rows whose cells are all empty.
 
+Merged cells retain only their physical top-left value by default. Use `ReadOptions::with_fill_merged_cells(true)` to project that value across the merged range for dynamic, typed, and byte queries. Structured queries remain sparse and expose only physically stored cells.
+
 ## Typed Reading
 
 ```rust

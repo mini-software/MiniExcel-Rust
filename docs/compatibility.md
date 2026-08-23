@@ -41,6 +41,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | `GetColumns` | `MiniExcel::get_columns()` | Returns selected dynamic keys or an empty vector |
 | `startCell` | `ReadOptions::with_start_cell()` | A1 start coordinate |
 | `IgnoreEmptyRows` | `ReadOptions::with_ignore_empty_rows()` | Defaults to `false` for MiniExcel compatibility |
+| `FillMergedCells` | `ReadOptions::with_fill_merged_cells()` | Defaults to `false`; applies to dynamic, typed, and byte queries |
 | OpenXML exporter | `MiniExcel::save_as*()` | Concrete writer type is internal; creates new workbooks only |
 | Dynamic export | `save_as()` / `save_as_with_schema()` | Map serialization is implemented internally |
 | Typed export | `save_as_serialized<T>()` | Uses Serde mapping internally |
@@ -57,6 +58,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 - `MiniExcel::query_structured()` never consumes a header row and emits only cells explicitly represented in worksheet XML.
 - The first worksheet in workbook order is selected when no name is supplied.
 - Empty rows between the selected start and last used cell are retained by default.
+- Merged ranges expose only their physical top-left value unless `fill_merged_cells` is enabled. Structured queries never synthesize merged cells.
 - Typed header strings are trimmed by default. Dynamic headers follow the .NET behavior and retain non-blank text as stored.
 - Blank dynamic headers are omitted. Duplicate dynamic headers retain their first key position while later columns overwrite the value.
 - A missing dynamic cell is represented by `CellValue::Empty`, not by omission from a known schema.
@@ -92,7 +94,7 @@ Grouped analytics consume the dynamic row stream without retaining source rows. 
 
 Path RAG exports retain parser state, repeated header context, and one output chunk. Their manifest hashes the source file through a separate bounded read. Markdown includes stream-level source/sheet provenance and chunk-local formula/style/number-format metadata without retaining prior chunks. Byte/WASM workflows avoid collecting source rows, but browser uploads inherently retain compressed XLSX bytes in WebAssembly memory; generated JSONL, Markdown, and Blob downloads also consume output-sized memory. Browser Lab runs these operations in a Web Worker for responsiveness, not as a claim of path-equivalent memory.
 
-The backend makes two sequential, bounded-memory passes over the selected worksheet entry. The first records only the maximum used column and final explicitly declared row. This is required for MiniExcel-compatible stable dynamic schemas when legal files omit `<dimension>`, and to preserve style-only row elements like the .NET reader. The second pass emits rows. Worksheet XML and prior rows are never retained; memory consists primarily of shared strings, styles, parser buffers, the current row, and the bounded channel.
+The backend makes two sequential, bounded-memory passes over the selected worksheet entry. The first records the used extent and compact merged-cell rectangles. This is required for MiniExcel-compatible stable dynamic schemas when legal files omit `<dimension>`, to preserve style-only row elements like the .NET reader, and to support opt-in merged-cell filling without expanding ranges into an address map. The second pass emits rows and retains only anchor values for currently active merged ranges. Worksheet XML and prior rows are never retained; memory consists primarily of shared strings, styles, merge metadata, parser buffers, the current row, and the bounded channel.
 
 The internal writer assembles a new ZIP package with one or more worksheets. Path saves refuse existing files by default and can explicitly replace them, but cannot patch or insert sheets into an existing workbook. Template fills rewrite worksheet XML within a copied package; worksheet styles and unrelated ZIP parts are retained. Array expansion shifts row and cell addresses and updates the worksheet dimension. Formula expressions are preserved but not recalculated, and version 1 does not adjust formula references, merged ranges, tables, drawings, or defined names after inserted rows.
 
@@ -107,6 +109,7 @@ Rust integration tests reuse the repository's existing files under `tests/data/x
 - Cells without explicit `r` attributes.
 - A typed conversion failure with a verified Excel row number.
 - Strict streaming A1 starts, empty-row filtering, dates, trimmed headers, and early typed errors.
+- Opt-in vertical and horizontal merged-cell filling across dynamic, typed, and byte queries.
 - Structured formula text, cached values, A1 addresses, style IDs, built-in/custom number formats, ranges, and early iterator drop.
 
 Writer tests generate temporary workbooks through `MiniExcel::save_as*()` and read them back through `MiniExcel::query*()`, covering dynamic and typed values, dates, multiple worksheets, row counts, empty schemas, explicit path overwrite behavior, and worksheet-name validation. Template tests cover scalar and mixed text, native numbers and booleans, XML escaping, formula-injection protection, missing-variable policy, empty and populated arrays, multiple sheets, style retention, path overwrite, and byte workflows. The WASM adapter has native unit tests, while Browser Lab Playwright tests cover generated-workbook rendering, query controls, inclusive end ranges, and desktop/mobile viewports.

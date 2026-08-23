@@ -57,13 +57,17 @@ impl XlsxWriter {
         }
 
         let formats = CellFormats::new(options);
+        let mut widths = AutoWidthCollector::new(schema.len(), options)?;
         for row in rows {
             for (column, header) in schema.iter().enumerate() {
                 let value = row.get(header).unwrap_or(&CellValue::Empty);
                 write_cell(&mut worksheet, output_row, column as u16, value, &formats)?;
+                widths.observe(column, value_width(value));
             }
             output_row += 1;
         }
+
+        widths.apply(&mut worksheet)?;
 
         if options.auto_filter() && !schema.is_empty() {
             worksheet.autofilter(0, 0, output_row.saturating_sub(1), schema.len() as u16 - 1)?;
@@ -124,6 +128,14 @@ impl XlsxWriter {
             worksheet.serialize(row)?;
         }
 
+        let mut widths = AutoWidthCollector::new(0, options)?;
+        if options.auto_width() {
+            for row in rows {
+                widths.observe_serialized(row)?;
+            }
+            widths.apply(&mut worksheet)?;
+        }
+
         if options.auto_filter() {
             let struct_name = std::any::type_name::<T>().rsplit("::").next().unwrap_or_default();
             let (first_row, first_column, last_row, last_column) =
@@ -157,6 +169,135 @@ struct CellFormats {
     time: Format,
     datetime: Format,
     duration: Format,
+}
+
+struct AutoWidthCollector {
+    widths: Vec<f64>,
+    minimum: f64,
+    maximum: f64,
+    enabled: bool,
+}
+
+impl AutoWidthCollector {
+    fn new(columns: usize, options: &WriteOptions) -> Result<Self> {
+        validate_auto_width_options(options)?;
+        const PADDING: f64 = 5.0 / 7.0;
+        Ok(Self {
+            widths: vec![options.min_width() + PADDING; columns],
+            minimum: options.min_width() + PADDING,
+            maximum: options.max_width() + PADDING,
+            enabled: options.auto_width(),
+        })
+    }
+
+    fn observe(&mut self, column: usize, length: Option<usize>) {
+        if !self.enabled {
+            return;
+        }
+        let Some(length) = length else {
+            return;
+        };
+        if column >= self.widths.len() {
+            self.widths.resize(column + 1, self.minimum);
+        }
+        const PADDING: f64 = 5.0 / 7.0;
+        let width = length as f64 + PADDING;
+        self.widths[column] = self.widths[column].max(width).min(self.maximum);
+    }
+
+    fn apply(&self, worksheet: &mut Worksheet) -> Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        for (column, width) in self.widths.iter().enumerate() {
+            let pixels = (*width * 7.0).round() as u32;
+            worksheet.set_column_width_pixels(column as u16, pixels)?;
+        }
+        Ok(())
+    }
+
+    fn observe_serialized<T>(&mut self, row: &T) -> Result<()>
+    where
+        T: ?Sized + Serialize,
+    {
+        let value = serde_json::to_value(row).map_err(|error| {
+            Error::invalid_write_options(format!(
+                "cannot inspect serialized row for auto width: {error}"
+            ))
+        })?;
+        let fields = value.as_object().ok_or_else(|| {
+            Error::invalid_write_options("auto width requires rows serialized as structs")
+        })?;
+        for (column, value) in fields.values().enumerate() {
+            self.observe(column, json_value_width(value));
+        }
+        Ok(())
+    }
+}
+
+fn json_value_width(value: &serde_json::Value) -> Option<usize> {
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::Bool(_) => Some(1),
+        serde_json::Value::Number(value) => Some(value.to_string().len()),
+        serde_json::Value::String(value) => Some(xml_text_length(value)),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => None,
+    }
+}
+
+fn validate_auto_width_options(options: &WriteOptions) -> Result<()> {
+    let minimum = options.min_width();
+    let maximum = options.max_width();
+    if !minimum.is_finite() || !maximum.is_finite() || minimum < 0.0 || maximum < 0.0 {
+        return Err(Error::invalid_write_options(
+            "auto-width bounds must be finite and non-negative",
+        ));
+    }
+    if minimum > maximum {
+        return Err(Error::invalid_write_options("auto-width minimum cannot exceed maximum"));
+    }
+    Ok(())
+}
+
+fn value_width(value: &CellValue) -> Option<usize> {
+    match value {
+        CellValue::Empty => None,
+        CellValue::Bool(_) => Some(1),
+        CellValue::Int(value) => Some(value.to_string().len()),
+        CellValue::Float(value) => Some(value.to_string().len()),
+        CellValue::String(value) | CellValue::Error(value) => Some(xml_text_length(value)),
+        CellValue::Date(value) => Some(excel_date_serial(*value).to_string().len()),
+        CellValue::Time(value) => Some(excel_time_serial(*value).to_string().len()),
+        CellValue::DateTime(value) => Some(
+            (excel_date_serial(value.date()) + excel_time_serial(value.time())).to_string().len(),
+        ),
+        CellValue::Duration(value) => {
+            Some((value.num_milliseconds() as f64 / 86_400_000.0).to_string().len())
+        }
+    }
+}
+
+fn xml_text_length(value: &str) -> usize {
+    value
+        .chars()
+        .map(|character| match character {
+            '&' => 5,
+            '<' | '>' => 4,
+            _ => character.len_utf16(),
+        })
+        .sum()
+}
+
+fn excel_date_serial(value: chrono::NaiveDate) -> f64 {
+    let epoch = chrono::NaiveDate::from_ymd_opt(1899, 12, 30).expect("valid Excel epoch");
+    (value - epoch).num_days() as f64
+}
+
+fn excel_time_serial(value: chrono::NaiveTime) -> f64 {
+    use chrono::Timelike;
+    let seconds = value.num_seconds_from_midnight() as f64;
+    let nanos = value.nanosecond() as f64 / 1_000_000_000.0;
+    (seconds + nanos) / 86_400.0
 }
 
 impl CellFormats {

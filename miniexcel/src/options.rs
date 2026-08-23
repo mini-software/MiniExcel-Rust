@@ -156,19 +156,32 @@ impl Default for ReadOptions {
             fill_merged_cells: false,
             enable_shared_string_cache: true,
             shared_string_cache_size: 5 * 1024 * 1024,
-            shared_string_cache_path: std::env::temp_dir(),
+            shared_string_cache_path: default_shared_string_cache_path(),
             trim_headers: true,
         }
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg(not(target_arch = "wasm32"))]
+fn default_shared_string_cache_path() -> PathBuf {
+    std::env::temp_dir()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn default_shared_string_cache_path() -> PathBuf {
+    PathBuf::new()
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct WriteOptions {
     sheet_name: String,
     overwrite_file: bool,
     print_header: bool,
     auto_filter: bool,
     right_to_left: bool,
+    auto_width: bool,
+    min_width: f64,
+    max_width: f64,
     freeze_row_count: u32,
     freeze_column_count: u16,
     date_format: String,
@@ -211,6 +224,24 @@ impl WriteOptions {
     #[must_use]
     pub const fn with_right_to_left(mut self, enabled: bool) -> Self {
         self.right_to_left = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_auto_width(mut self, enabled: bool) -> Self {
+        self.auto_width = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_min_width(mut self, width: f64) -> Self {
+        self.min_width = width;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_max_width(mut self, width: f64) -> Self {
+        self.max_width = width;
         self
     }
 
@@ -286,6 +317,21 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub(crate) const fn auto_width(&self) -> bool {
+        self.auto_width
+    }
+
+    #[must_use]
+    pub(crate) const fn min_width(&self) -> f64 {
+        self.min_width
+    }
+
+    #[must_use]
+    pub(crate) const fn max_width(&self) -> f64 {
+        self.max_width
+    }
+
+    #[must_use]
     pub(crate) const fn freeze_row_count(&self) -> u32 {
         self.freeze_row_count
     }
@@ -329,6 +375,9 @@ impl Default for WriteOptions {
             print_header: true,
             auto_filter: true,
             right_to_left: false,
+            auto_width: false,
+            min_width: 8.428_571_43,
+            max_width: 200.0,
             freeze_row_count: 1,
             freeze_column_count: 0,
             date_format: "yyyy-mm-dd".to_owned(),

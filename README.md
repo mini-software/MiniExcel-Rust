@@ -231,6 +231,8 @@ AutoFilter dropdowns cover the complete written range by default, including head
 
 Use `WriteOptions::with_right_to_left(true)` to display a worksheet from right to left. This changes the worksheet view without changing cell coordinates or values.
 
+Enable MiniExcel v1-style fixed column sizing with `with_auto_width(true)`. Data payloads are measured without headers, bounded by `with_min_width()` and `with_max_width()` (defaults `8.42857143` and `200`), and written as fixed widths without `bestFit`. Typed rows perform one additional lightweight Serde pass when this option is enabled. Unlike .NET v1, Rust does not require a separate fast mode.
+
 Create multiple worksheets in input order with `MiniExcel::save_as_sheets()`. It returns one data-row count per worksheet:
 
 ```rust

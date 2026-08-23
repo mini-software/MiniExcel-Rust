@@ -153,6 +153,79 @@ fn writes_right_to_left_worksheet_view() {
 }
 
 #[test]
+fn writes_v1_compatible_auto_widths() {
+    let mut first = DynamicRow::new();
+    first.insert("Column1".to_owned(), CellValue::String("1".repeat(32)));
+    first.insert("Column2".to_owned(), CellValue::String("2".repeat(8)));
+    first.insert("Column3".to_owned(), CellValue::String("3".to_owned()));
+    first.insert("Column4".to_owned(), CellValue::String("4".repeat(100)));
+    let mut second = DynamicRow::new();
+    second.insert("Column1".to_owned(), CellValue::String("1".repeat(16)));
+    second.insert("Column2".to_owned(), CellValue::String("2".repeat(16)));
+    second.insert("Column3".to_owned(), CellValue::String("33".to_owned()));
+    second.insert("Column4".to_owned(), CellValue::String("4".repeat(50)));
+
+    let default_xml = worksheet_xml(
+        &MiniExcel::save_as_bytes(&[first.clone(), second.clone()], &WriteOptions::new())
+            .expect("write without auto width"),
+    );
+    assert!(!default_xml.contains("<cols>"));
+
+    let auto_xml = worksheet_xml(
+        &MiniExcel::save_as_bytes(
+            &[first, second],
+            &WriteOptions::new().with_auto_width(true).with_max_width(50.0),
+        )
+        .expect("write auto widths"),
+    );
+    assert!(auto_xml.contains("min=\"1\" max=\"1\" width=\"32.7109375\""));
+    assert!(auto_xml.contains("min=\"2\" max=\"2\" width=\"16.7109375\""));
+    assert!(auto_xml.contains("min=\"3\" max=\"3\" width=\"9.140625\""));
+    assert!(auto_xml.contains("min=\"4\" max=\"4\" width=\"50.7109375\""));
+    assert!(!auto_xml.contains("bestFit="));
+
+    let schema = vec!["This header is deliberately long".to_owned()];
+    let temp_dir = tempfile::tempdir().expect("create temp directory");
+    let path = temp_dir.path().join("header-only.xlsx");
+    MiniExcel::save_as_with_schema(
+        &path,
+        &schema,
+        &[],
+        &WriteOptions::new().with_auto_width(true).with_min_width(1.0),
+    )
+    .expect("write minimum auto width");
+    let header_xml = worksheet_xml(&std::fs::read(path).unwrap());
+    assert!(header_xml.contains("width=\"1.7109375\""));
+
+    let typed_path = temp_dir.path().join("typed-auto-width.xlsx");
+    let releases = [Release {
+        name: "N".repeat(20),
+        version: 1234,
+        released_on: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+        internal: true,
+    }];
+    MiniExcel::save_as_serialized_with_options(
+        &typed_path,
+        &releases,
+        &WriteOptions::new().with_auto_width(true).with_min_width(1.0),
+    )
+    .expect("write typed auto widths");
+    let typed_xml = worksheet_xml(&std::fs::read(typed_path).unwrap());
+    assert!(typed_xml.contains("min=\"1\" max=\"1\" width=\"20.7109375\""));
+    assert!(typed_xml.contains("min=\"2\" max=\"2\" width=\"4.7109375\""));
+    assert!(!typed_xml.contains("min=\"4\""));
+
+    for options in [
+        WriteOptions::new().with_auto_width(true).with_min_width(f64::NAN),
+        WriteOptions::new().with_auto_width(true).with_max_width(f64::INFINITY),
+        WriteOptions::new().with_auto_width(true).with_min_width(-1.0),
+        WriteOptions::new().with_auto_width(true).with_min_width(10.0).with_max_width(5.0),
+    ] {
+        assert!(MiniExcel::save_as_bytes(&[dynamic_row("Ada", 1)], &options).is_err());
+    }
+}
+
+#[test]
 fn writes_multiple_dynamic_sheets_and_enforces_overwrite_policy() {
     let temp_dir = tempfile::tempdir().expect("create temp directory");
     let path = temp_dir.path().join("output.xlsx");

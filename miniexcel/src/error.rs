@@ -48,6 +48,9 @@ enum ErrorKind {
     #[error("column name '{0}' appears more than once in the schema")]
     DuplicateColumnName(String),
 
+    #[error("invalid write options: {0}")]
+    InvalidWriteOptions(String),
+
     #[error("failed to deserialize worksheet '{sheet}' at Excel row {row}: {source}")]
     Deserialize {
         sheet: String,
@@ -112,6 +115,10 @@ impl Error {
 
     pub(crate) fn duplicate_column_name(name: impl Into<String>) -> Self {
         ErrorKind::DuplicateColumnName(name.into()).into()
+    }
+
+    pub(crate) fn invalid_write_options(message: impl Into<String>) -> Self {
+        ErrorKind::InvalidWriteOptions(message.into()).into()
     }
 
     pub(crate) fn deserialize(

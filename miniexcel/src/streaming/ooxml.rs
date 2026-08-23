@@ -23,6 +23,8 @@ use crate::{
     SheetVisibility,
 };
 
+use super::shared_strings::SharedStrings;
+
 const ROW_BUFFER_SIZE: usize = 8;
 
 pub(super) struct StreamingRawRows {
@@ -44,7 +46,7 @@ where
     validate_range(options)?;
     let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|error| stream_error("cannot open in-memory XLSX data:", error))?;
-    let context = prepare_workbook(&mut archive, options, preserve_structure)?;
+    let context = prepare_workbook(&mut archive, options, preserve_structure, false)?;
     let sheet_name = context.sheet_name.clone();
     let cancelled = AtomicBool::new(false);
     let scan = scan_worksheet(&mut archive, &context.sheet_path, &cancelled)?;
@@ -240,7 +242,7 @@ impl Drop for StreamingRawRows {
 struct WorkbookContext {
     sheet_name: String,
     sheet_path: String,
-    shared_strings: Vec<String>,
+    shared_strings: SharedStrings,
     styles: Vec<CellStyle>,
     is_1904: bool,
     preserve_structure: bool,
@@ -297,7 +299,7 @@ fn worker_main<R>(
             return;
         }
     };
-    let context = match prepare_workbook(&mut archive, &options, preserve_structure) {
+    let context = match prepare_workbook(&mut archive, &options, preserve_structure, true) {
         Ok(context) => context,
         Err(error) => {
             let _ = ready_sender.send(Err(error));
@@ -329,6 +331,7 @@ fn prepare_workbook<R>(
     archive: &mut ZipArchive<R>,
     options: &ReadOptions,
     preserve_structure: bool,
+    allow_disk_cache: bool,
 ) -> Result<WorkbookContext>
 where
     R: Read + Seek,
@@ -343,7 +346,7 @@ where
         None => workbook.sheets.first().ok_or_else(Error::no_worksheets)?,
     };
     let sheet_path = read_relationship_target(archive, &sheet.relationship_id)?;
-    let shared_strings = read_shared_strings(archive)?;
+    let shared_strings = read_shared_strings(archive, options, allow_disk_cache)?;
     let styles = read_styles(archive, preserve_structure)?;
     Ok(WorkbookContext {
         sheet_name: sheet.name.clone(),
@@ -515,18 +518,29 @@ fn sheet_type_from_relationship(relationship_type: &str) -> Result<SheetType> {
     }
 }
 
-fn read_shared_strings<R>(archive: &mut ZipArchive<R>) -> Result<Vec<String>>
+fn read_shared_strings<R>(
+    archive: &mut ZipArchive<R>,
+    options: &ReadOptions,
+    allow_disk_cache: bool,
+) -> Result<SharedStrings>
 where
     R: Read + Seek,
 {
     let file = match archive.by_name("xl/sharedStrings.xml") {
         Ok(file) => file,
-        Err(ZipError::FileNotFound) => return Ok(Vec::new()),
+        Err(ZipError::FileNotFound) => return Ok(SharedStrings::memory()),
         Err(error) => return Err(stream_error("cannot read shared strings:", error)),
+    };
+    let use_disk = allow_disk_cache
+        && options.shared_string_disk_cache()
+        && file.size() >= options.shared_string_cache_size();
+    let mut strings = if use_disk {
+        SharedStrings::disk(options.shared_string_cache_path())?
+    } else {
+        SharedStrings::memory()
     };
     let mut xml = Reader::from_reader(BufReader::new(file));
     let mut buffer = Vec::new();
-    let mut strings = Vec::new();
     let mut current = String::new();
     let mut in_item = false;
     let mut in_text = false;
@@ -540,7 +554,7 @@ where
                 in_item = true;
             }
             Event::Empty(event) if is_name(event.name().as_ref(), b"si") => {
-                strings.push(String::new());
+                strings.push(String::new())?;
             }
             Event::Start(event) if in_item && is_name(event.name().as_ref(), b"t") => {
                 in_text = true;
@@ -549,7 +563,7 @@ where
             Event::GeneralRef(reference) if in_text => append_reference(&reference, &mut current)?,
             Event::End(event) if is_name(event.name().as_ref(), b"t") => in_text = false,
             Event::End(event) if is_name(event.name().as_ref(), b"si") => {
-                strings.push(decode_excel_escapes(&current));
+                strings.push(decode_excel_escapes(&current))?;
                 in_item = false;
             }
             Event::Eof => break,
@@ -1106,7 +1120,7 @@ fn finish_cell(cell: CellState, row: &mut RowState, context: &WorkbookContext) -
                 let index = value
                     .parse::<usize>()
                     .map_err(|error| stream_error("invalid shared string index:", error))?;
-                Data::String(context.shared_strings.get(index).cloned().ok_or_else(|| {
+                Data::String(context.shared_strings.get(index)?.ok_or_else(|| {
                     Error::stream(format!("shared string index {index} is out of range"))
                 })?)
             }

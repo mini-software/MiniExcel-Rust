@@ -35,6 +35,45 @@ fn streaming_query_can_stop_early() {
 }
 
 #[test]
+fn spills_large_shared_strings_to_disk_and_cleans_up_on_drop() {
+    let cache_dir = tempfile::tempdir().expect("create shared-string cache directory");
+    let options = ReadOptions::new()
+        .with_header_mode(HeaderMode::FirstRow)
+        .with_shared_string_cache_size(1)
+        .with_shared_string_cache_path(cache_dir.path());
+    let mut rows = MiniExcel::query_with_options(common::fixture("TestTypeMapping.xlsx"), &options)
+        .expect("create disk-cached query");
+
+    assert!(cache_dir.path().read_dir().unwrap().next().is_some());
+    let first = rows.next().unwrap().unwrap();
+    assert_eq!(first["Name"], CellValue::String("Wade".to_owned()));
+    drop(rows);
+    assert!(cache_dir.path().read_dir().unwrap().next().is_none());
+}
+
+#[test]
+fn keeps_byte_queries_in_memory_and_allows_disabling_the_disk_cache() {
+    let path = common::fixture("TestTypeMapping.xlsx");
+    let bytes = std::fs::read(&path).expect("read fixture bytes");
+    let missing_cache_dir = path.parent().unwrap().join("missing-shared-string-cache");
+    let options = ReadOptions::new()
+        .with_header_mode(HeaderMode::FirstRow)
+        .with_shared_string_cache_size(1)
+        .with_shared_string_cache_path(&missing_cache_dir);
+
+    let byte_rows = MiniExcel::query_bytes(&bytes, &options).expect("byte query stays in memory");
+    assert_eq!(byte_rows[0]["Name"], CellValue::String("Wade".to_owned()));
+    assert!(MiniExcel::query_with_options(&path, &options).is_err());
+
+    let first = MiniExcel::query_with_options(&path, &options.with_shared_string_disk_cache(false))
+        .expect("disabled disk cache uses memory")
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(first["Name"], CellValue::String("Wade".to_owned()));
+}
+
+#[test]
 fn fills_merged_cells_when_requested() {
     let temp_dir = tempfile::tempdir().expect("create temp directory");
     let path = temp_dir.path().join("merged.xlsx");

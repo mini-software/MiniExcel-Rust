@@ -96,7 +96,7 @@ for record in MiniExcel::query_as::<Record>("book.xlsx")? {
 
 `MiniExcel::query()` and `query_as()` accept paths because a worker owns the ZIP archive while the iterator is alive.
 
-> **Memory boundary:** the streaming path keeps workbook metadata, styles, and the shared-string table in memory, plus a small row channel and parser buffers. It does not retain worksheet XML or all worksheet rows. It performs one bounded-memory metadata pass before the streaming pass so every dynamic row has a stable global column schema and explicitly declared style-only rows are preserved even when `<dimension>` is missing or stale. Peak memory can still grow with the shared-string table or a single exceptionally large row, but not with the full worksheet row count.
+> **Memory boundary:** the streaming path keeps workbook metadata, styles, a small row channel, and parser buffers in memory. Shared-string tables at least 5 MiB spill to indexed temporary files by default; dropping the iterator removes them. Configure this with `with_shared_string_disk_cache()`, `with_shared_string_cache_size()`, and `with_shared_string_cache_path()`. The directory must already exist. Byte/WASM queries always keep shared strings in memory. Worksheet XML and prior rows are never retained. Peak memory can still grow with a single exceptionally large row, but not with the full worksheet row count.
 
 ## Structured Streaming Query
 

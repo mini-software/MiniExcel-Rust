@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use std::path::PathBuf;
 
 use crate::CellReference;
 
@@ -18,6 +19,9 @@ pub struct ReadOptions {
     header_mode: HeaderMode,
     ignore_empty_rows: bool,
     fill_merged_cells: bool,
+    enable_shared_string_cache: bool,
+    shared_string_cache_size: u64,
+    shared_string_cache_path: PathBuf,
     trim_headers: bool,
 }
 
@@ -64,6 +68,24 @@ impl ReadOptions {
     }
 
     #[must_use]
+    pub const fn with_shared_string_disk_cache(mut self, enabled: bool) -> Self {
+        self.enable_shared_string_cache = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_shared_string_cache_size(mut self, size: u64) -> Self {
+        self.shared_string_cache_size = size;
+        self
+    }
+
+    #[must_use]
+    pub fn with_shared_string_cache_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.shared_string_cache_path = path.into();
+        self
+    }
+
+    #[must_use]
     pub const fn with_trim_headers(mut self, trim_headers: bool) -> Self {
         self.trim_headers = trim_headers;
         self
@@ -95,6 +117,21 @@ impl ReadOptions {
     }
 
     #[must_use]
+    pub(crate) const fn shared_string_disk_cache(&self) -> bool {
+        self.enable_shared_string_cache
+    }
+
+    #[must_use]
+    pub(crate) const fn shared_string_cache_size(&self) -> u64 {
+        self.shared_string_cache_size
+    }
+
+    #[must_use]
+    pub(crate) fn shared_string_cache_path(&self) -> &std::path::Path {
+        &self.shared_string_cache_path
+    }
+
+    #[must_use]
     pub(crate) const fn trim_headers(&self) -> bool {
         self.trim_headers
     }
@@ -117,6 +154,9 @@ impl Default for ReadOptions {
             header_mode: HeaderMode::Auto,
             ignore_empty_rows: false,
             fill_merged_cells: false,
+            enable_shared_string_cache: true,
+            shared_string_cache_size: 5 * 1024 * 1024,
+            shared_string_cache_path: std::env::temp_dir(),
             trim_headers: true,
         }
     }

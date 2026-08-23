@@ -1,4 +1,5 @@
 mod ooxml;
+mod shared_strings;
 
 use std::iter::FusedIterator;
 use std::marker::PhantomData;

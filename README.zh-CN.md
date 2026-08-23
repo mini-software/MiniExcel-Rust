@@ -96,7 +96,7 @@ for record in MiniExcel::query_as::<Record>("book.xlsx")? {
 
 `MiniExcel::query()` 和 `query_as()` 接收路径，因为迭代器存活期间由 worker 持有 ZIP archive。
 
-> **内存边界：** 流式路径会在内存中保留工作簿元数据、样式、shared-string table、少量行 channel 和 parser buffer，但不会保留完整 worksheet XML 或所有行。为了在 `<dimension>` 缺失/过期时仍提供稳定的全局列 schema，并保留 XML 中明确声明的仅样式空行，它会先做一次有界内存元数据扫描，再进行流式输出。峰值内存仍可能随 shared-string table 或单个超大行增长，但不会随 worksheet 总行数增长。
+> **内存边界：** 流式路径会在内存中保留工作簿元数据、样式、少量行 channel 和 parser buffer。默认情况下，至少 5 MiB 的 shared-string table 会 spill 到带索引的临时文件；丢弃 iterator 后自动删除。可通过 `with_shared_string_disk_cache()`、`with_shared_string_cache_size()` 和 `with_shared_string_cache_path()` 配置，目录必须预先存在。Byte/WASM query 始终将 shared string 保留在内存中。Worksheet XML 和先前 row 永远不会保留；峰值内存仍可能随单个超大 row 增长，但不会随 worksheet 总行数增长。
 
 ## 保留结构的流式 Query
 

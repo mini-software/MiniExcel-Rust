@@ -6,6 +6,7 @@ mod analytics;
 mod cell;
 mod error;
 mod facade;
+mod insert;
 mod options;
 mod rag;
 mod reader;

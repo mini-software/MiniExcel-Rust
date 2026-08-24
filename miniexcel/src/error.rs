@@ -57,6 +57,21 @@ enum ErrorKind {
     #[error("worksheet visibility was configured for unknown worksheet '{0}'")]
     UnknownSheetVisibility(String),
 
+    #[error("failed to inspect XLSX package: {0}")]
+    InsertPackage(String),
+
+    #[error("unsafe XLSX package: {0}")]
+    UnsafePackage(String),
+
+    #[error("unsupported XLSX package feature: {0}")]
+    UnsupportedPackageFeature(String),
+
+    #[error("worksheet '{0}' already exists")]
+    ExistingWorksheet(String),
+
+    #[error("atomic workbook commit failed: {0}")]
+    AtomicCommit(String),
+
     #[error("failed to deserialize worksheet '{sheet}' at Excel row {row}: {source}")]
     Deserialize {
         sheet: String,
@@ -133,6 +148,27 @@ impl Error {
 
     pub(crate) fn unknown_sheet_visibility(sheet_name: impl Into<String>) -> Self {
         ErrorKind::UnknownSheetVisibility(sheet_name.into()).into()
+    }
+
+    pub(crate) fn insert_package(message: impl Into<String>) -> Self {
+        ErrorKind::InsertPackage(message.into()).into()
+    }
+
+    pub(crate) fn unsafe_package(message: impl Into<String>) -> Self {
+        ErrorKind::UnsafePackage(message.into()).into()
+    }
+
+    pub(crate) fn unsupported_package_feature(message: impl Into<String>) -> Self {
+        ErrorKind::UnsupportedPackageFeature(message.into()).into()
+    }
+
+    pub(crate) fn existing_worksheet(sheet_name: impl Into<String>) -> Self {
+        ErrorKind::ExistingWorksheet(sheet_name.into()).into()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn atomic_commit(message: impl Into<String>) -> Self {
+        ErrorKind::AtomicCommit(message.into()).into()
     }
 
     pub(crate) fn deserialize(

@@ -158,19 +158,21 @@ Donor-workbook 方案复用经过测试的 `XlsxWriter`，避免重复实现 ser
 
 依赖 Task 0。
 
-- [ ] 新增内部 `insert/package.rs`，为 content type、workbook sheet、workbook relationship、workbook view、defined name 和 worksheet relationship 建立 typed model。
-- [ ] 规范化 relationship target，不假设 `sheetN.xml`，也不从 `sheetId` 推导 path。
-- [ ] 保留 source workbook 中 sheet 的文档顺序。
-- [ ] 独立分配无冲突 `sheetId`、relationship ID 和 worksheet target。
-- [ ] 拒绝重复 ZIP entry name、不安全 entry path、加密/非 ZIP、macro-enabled content type、VBA relationship 和 signed OPC package。
-- [ ] worksheet name 不区分大小写，并复用现有 Excel name validation。
-- [ ] 增加 Insert 专属 error：duplicate target sheet、unsupported package feature、unsafe package、操作后无 visible sheet、atomic commit failure。
+- [x] 新增内部 `insert/package.rs`，为 content type、workbook sheet、workbook relationship、workbook view、defined name 和 worksheet relationship 建立 typed model。
+- [x] 规范化 relationship target，不假设 `sheetN.xml`，也不从 `sheetId` 推导 path。
+- [x] 保留 source workbook 中 sheet 的文档顺序。
+- [x] 独立分配无冲突 `sheetId`、relationship ID 和 worksheet target。
+- [x] 拒绝重复 ZIP entry name、不安全 entry path、加密/非 ZIP、macro-enabled content type、VBA relationship 和 signed OPC package。
+- [x] worksheet name 不区分大小写，并复用现有 Excel name validation。
+- [x] 增加 Insert 专属 error：duplicate target sheet、unsupported package feature、unsafe package、操作后无 visible sheet、atomic commit failure。
+
+已于 2026-08-24 完成。聚焦测试：`cargo +1.85.0 test -p miniexcel insert::package::tests --lib --locked`。
 
 验收：
 
 - Inventory 可无写入地 roundtrip 所有 fixture metadata。
 - 除小型 control part 外，不保留 workbook-sized XML。
-- 聚焦命令：`cargo +1.85.0 test -p miniexcel --test insert package_inventory --locked`。
+- 聚焦命令：`cargo +1.85.0 test -p miniexcel insert::package::tests --lib --locked`。
 
 ### Task 2：Donor Worksheet 提取
 

@@ -534,7 +534,7 @@ fn validate_column_widths(options: &WriteOptions) -> Result<()> {
     Ok(())
 }
 
-fn validate_sheet_name(name: &str, existing_names: &HashSet<String>) -> Result<()> {
+pub(crate) fn validate_sheet_name(name: &str, existing_names: &HashSet<String>) -> Result<()> {
     if name.is_empty() {
         return Err(invalid_sheet_name(name, "name cannot be blank"));
     }

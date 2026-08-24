@@ -158,19 +158,21 @@ Acceptance:
 
 Depends on Task 0.
 
-- [ ] Add an internal `insert/package.rs` with typed models for content types, workbook sheets, workbook relationships, workbook views, defined names, and worksheet relationships.
-- [ ] Normalize relationship targets without assuming `sheetN.xml` or deriving paths from `sheetId`.
-- [ ] Preserve source workbook sheet document order.
-- [ ] Allocate collision-free `sheetId`, relationship ID, and worksheet target independently.
-- [ ] Reject duplicate ZIP entry names, unsafe entry paths, encrypted/non-ZIP data, macro-enabled content types, VBA relationships, and signed OPC packages.
-- [ ] Match worksheet names case-insensitively and reuse existing Excel name validation.
-- [ ] Add insert-specific errors: duplicate target sheet, unsupported package feature, unsafe package, no visible sheet after operation, and atomic commit failure.
+- [x] Add an internal `insert/package.rs` with typed models for content types, workbook sheets, workbook relationships, workbook views, defined names, and worksheet relationships.
+- [x] Normalize relationship targets without assuming `sheetN.xml` or deriving paths from `sheetId`.
+- [x] Preserve source workbook sheet document order.
+- [x] Allocate collision-free `sheetId`, relationship ID, and worksheet target independently.
+- [x] Reject duplicate ZIP entry names, unsafe entry paths, encrypted/non-ZIP data, macro-enabled content types, VBA relationships, and signed OPC packages.
+- [x] Match worksheet names case-insensitively and reuse existing Excel name validation.
+- [x] Add insert-specific errors: duplicate target sheet, unsupported package feature, unsafe package, no visible sheet after operation, and atomic commit failure.
+
+Completed on 2026-08-24. Focused test: `cargo +1.85.0 test -p miniexcel insert::package::tests --lib --locked`.
 
 Acceptance:
 
 - Inventory round-trips all fixture metadata without writing a package.
 - No workbook-sized XML is retained beyond the small control parts.
-- Focused command: `cargo +1.85.0 test -p miniexcel --test insert package_inventory --locked`.
+- Focused command: `cargo +1.85.0 test -p miniexcel insert::package::tests --lib --locked`.
 
 ### Task 2: Donor Worksheet Extraction
 

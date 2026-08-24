@@ -482,7 +482,7 @@ fn parse_workbook(xml: &[u8]) -> Result<(Vec<SheetElement>, Vec<WorkbookView>, V
             }
             Event::Text(text) if current_defined_name.is_some() => {
                 current_defined_name.as_mut().expect("defined-name state").formula.push_str(
-                    &text.decode().map_err(|error| {
+                    &text.xml10_content().map_err(|error| {
                         Error::insert_package(format!("invalid defined-name text: {error}"))
                     })?,
                 );

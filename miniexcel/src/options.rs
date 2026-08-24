@@ -41,8 +41,6 @@ pub enum ExistingSheetPolicy {
     #[default]
     Reject,
     /// Replace the existing worksheet.
-    ///
-    /// Replacement is reserved for a later compatibility stage and is currently rejected.
     Replace,
 }
 
@@ -54,7 +52,9 @@ pub enum TargetRelationshipPolicy {
     Reject,
     /// Remove relationship types that MiniExcel explicitly supports.
     ///
-    /// Relationship removal is reserved for worksheet replacement and is currently rejected.
+    /// This currently covers worksheet-owned tables, drawings with exclusively owned images,
+    /// comments, VML drawings, and external hyperlinks. Unknown or shared relationships are
+    /// rejected or preserved conservatively.
     RemoveSupported,
 }
 
@@ -645,10 +645,11 @@ impl Default for WriteOptions {
 /// Options for inserting a worksheet into an XLSX path.
 ///
 /// The contained [`WriteOptions`] configure the generated worksheet. Existing worksheets are
-/// rejected by default; replacement policies are exposed for API stability but are not yet
-/// implemented. Path insertion is available on native targets only. Inserted worksheets must be
-/// visible, and `WriteOptions::with_overwrite_file()` is rejected because workbook replacement is
-/// controlled by [`ExistingSheetPolicy`].
+/// rejected by default. Replacement preserves the target worksheet's workbook identity and uses
+/// [`TargetRelationshipPolicy`] to control target-owned package relationships. Path insertion is
+/// available on native targets only. Inserted worksheets must be visible, and
+/// `WriteOptions::with_overwrite_file()` is rejected because workbook replacement is controlled by
+/// [`ExistingSheetPolicy`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct InsertOptions {
     write_options: WriteOptions,
@@ -686,7 +687,6 @@ impl InsertOptions {
     #[must_use]
     /// Sets the behavior for an existing worksheet with the requested name.
     ///
-    /// [`ExistingSheetPolicy::Replace`] is currently rejected before any output is created.
     pub const fn with_existing_sheet_policy(mut self, policy: ExistingSheetPolicy) -> Self {
         self.existing_sheet_policy = policy;
         self
@@ -695,7 +695,6 @@ impl InsertOptions {
     #[must_use]
     /// Sets the relationship policy reserved for worksheet replacement.
     ///
-    /// [`TargetRelationshipPolicy::RemoveSupported`] is currently rejected.
     pub const fn with_target_relationship_policy(
         mut self,
         policy: TargetRelationshipPolicy,

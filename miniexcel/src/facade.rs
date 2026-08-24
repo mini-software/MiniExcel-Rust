@@ -474,9 +474,13 @@ impl MiniExcel {
             writer.save(path, false)?;
             return Ok(rows.len());
         }
-        crate::insert::atomic::append_to_path(path, options.write_options().sheet_name(), || {
-            crate::insert::donor::DonorBuilder::from_dynamic(rows, options.write_options())
-        })
+        crate::insert::atomic::insert_to_path(
+            path,
+            options.write_options().sheet_name(),
+            options.existing_sheet_policy(),
+            options.target_relationship_policy(),
+            || crate::insert::donor::DonorBuilder::from_dynamic(rows, options.write_options()),
+        )
     }
 
     /// Inserts a one-pass dynamic row iterator using an explicit schema.
@@ -506,13 +510,19 @@ impl MiniExcel {
                 options.write_options(),
             );
         }
-        crate::insert::atomic::append_to_path(path, options.write_options().sheet_name(), || {
-            crate::insert::donor::DonorBuilder::from_dynamic_iter(
-                schema,
-                rows,
-                options.write_options(),
-            )
-        })
+        crate::insert::atomic::insert_to_path(
+            path,
+            options.write_options().sheet_name(),
+            options.existing_sheet_policy(),
+            options.target_relationship_policy(),
+            || {
+                crate::insert::donor::DonorBuilder::from_dynamic_iter(
+                    schema,
+                    rows,
+                    options.write_options(),
+                )
+            },
+        )
     }
 
     /// Inserts Serde-serializable rows as a new worksheet.
@@ -536,9 +546,13 @@ impl MiniExcel {
             writer.save(path, false)?;
             return Ok(rows.len());
         }
-        crate::insert::atomic::append_to_path(path, options.write_options().sheet_name(), || {
-            crate::insert::donor::DonorBuilder::from_serialized(rows, options.write_options())
-        })
+        crate::insert::atomic::insert_to_path(
+            path,
+            options.write_options().sheet_name(),
+            options.existing_sheet_policy(),
+            options.target_relationship_policy(),
+            || crate::insert::donor::DonorBuilder::from_serialized(rows, options.write_options()),
+        )
     }
 
     /// Fills an existing XLSX template and writes a new workbook.
@@ -586,21 +600,12 @@ fn validate_insert_options(path: &Path, options: &InsertOptions) -> Result<()> {
             "overwrite_file does not apply to Insert; use ExistingSheetPolicy",
         ));
     }
-    match options.existing_sheet_policy() {
-        ExistingSheetPolicy::Reject => {}
-        ExistingSheetPolicy::Replace => {
-            return Err(crate::Error::unsupported_package_feature(
-                "worksheet replacement is not supported yet",
-            ));
-        }
-    }
-    match options.target_relationship_policy() {
-        TargetRelationshipPolicy::Reject => {}
-        TargetRelationshipPolicy::RemoveSupported => {
-            return Err(crate::Error::unsupported_package_feature(
-                "removing target worksheet relationships is not supported yet",
-            ));
-        }
+    if options.existing_sheet_policy() == ExistingSheetPolicy::Reject
+        && options.target_relationship_policy() != TargetRelationshipPolicy::Reject
+    {
+        return Err(crate::Error::invalid_write_options(
+            "target relationship removal requires ExistingSheetPolicy::Replace",
+        ));
     }
     validate_single_sheet_options(options.write_options())
 }

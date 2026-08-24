@@ -7,8 +7,11 @@ use std::path::PathBuf;
 
 use super::donor::DonorWorksheet;
 use super::package::PackageInventory;
-use super::rewrite::{PackageRewriteStage, append_worksheet_to_writer_with_hook};
-use crate::{Error, Result, SheetVisibility};
+use super::rewrite::{
+    PackageRewriteStage, ReplacementPlan, append_worksheet_to_writer_with_hook, plan_replacement,
+    replace_worksheet_to_writer_with_hook,
+};
+use crate::{Error, ExistingSheetPolicy, Result, SheetVisibility, TargetRelationshipPolicy};
 
 const WORKSHEET_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
@@ -31,12 +34,66 @@ pub(crate) fn append_to_path<F>(
 where
     F: FnOnce() -> Result<DonorWorksheet>,
 {
-    append_to_path_with_hook(path.as_ref(), sheet_name, donor_builder, |_| Ok(()))
+    insert_to_path(
+        path,
+        sheet_name,
+        ExistingSheetPolicy::Reject,
+        TargetRelationshipPolicy::Reject,
+        donor_builder,
+    )
+}
+
+pub(crate) fn insert_to_path<F>(
+    path: impl AsRef<Path>,
+    sheet_name: &str,
+    existing_sheet_policy: ExistingSheetPolicy,
+    target_relationship_policy: TargetRelationshipPolicy,
+    donor_builder: F,
+) -> Result<usize>
+where
+    F: FnOnce() -> Result<DonorWorksheet>,
+{
+    insert_to_path_with_hook(
+        path.as_ref(),
+        sheet_name,
+        existing_sheet_policy,
+        target_relationship_policy,
+        donor_builder,
+        |_| Ok(()),
+    )
 }
 
 fn append_to_path_with_hook<F, H>(
     path: &Path,
     sheet_name: &str,
+    donor_builder: F,
+    checkpoint: H,
+) -> Result<usize>
+where
+    F: FnOnce() -> Result<DonorWorksheet>,
+    H: FnMut(AtomicCommitStage) -> Result<()>,
+{
+    insert_to_path_with_hook(
+        path,
+        sheet_name,
+        ExistingSheetPolicy::Reject,
+        TargetRelationshipPolicy::Reject,
+        donor_builder,
+        checkpoint,
+    )
+}
+
+enum WorksheetMutation {
+    Append,
+    Replace(ReplacementPlan),
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_to_path_with_hook<F, H>(
+    path: &Path,
+    sheet_name: &str,
+    existing_sheet_policy: ExistingSheetPolicy,
+    target_relationship_policy: TargetRelationshipPolicy,
     donor_builder: F,
     mut checkpoint: H,
 ) -> Result<usize>
@@ -48,7 +105,16 @@ where
     let source_metadata = fs::metadata(path)?;
     let mut source = File::open(path)?;
     let inventory = PackageInventory::inspect(&mut source)?;
-    inventory.ensure_sheet_absent(sheet_name)?;
+    let mutation =
+        match (inventory.find_sheet(sheet_name), existing_sheet_policy) {
+            (None, _) => WorksheetMutation::Append,
+            (Some(_), ExistingSheetPolicy::Reject) => {
+                return Err(Error::existing_worksheet(sheet_name));
+            }
+            (Some(_), ExistingSheetPolicy::Replace) => WorksheetMutation::Replace(
+                plan_replacement(&inventory, sheet_name, target_relationship_policy)?,
+            ),
+        };
 
     checkpoint(AtomicCommitStage::RowGeneration)?;
     let donor = donor_builder()?;
@@ -64,12 +130,29 @@ where
     let mut temporary =
         tempfile::Builder::new().prefix(".miniexcel-").suffix(".xlsx.tmp").tempfile_in(parent)?;
     source.rewind()?;
-    append_worksheet_to_writer_with_hook(source, temporary.as_file_mut(), &donor, |stage| {
-        match stage {
-            PackageRewriteStage::Copy => checkpoint(AtomicCommitStage::ZipCopy),
-            PackageRewriteStage::Finish => checkpoint(AtomicCommitStage::ZipFinish),
+    let rewrite_checkpoint = |stage| match stage {
+        PackageRewriteStage::Copy => checkpoint(AtomicCommitStage::ZipCopy),
+        PackageRewriteStage::Finish => checkpoint(AtomicCommitStage::ZipFinish),
+    };
+    match &mutation {
+        WorksheetMutation::Append => {
+            append_worksheet_to_writer_with_hook(
+                source,
+                temporary.as_file_mut(),
+                &donor,
+                rewrite_checkpoint,
+            )?;
         }
-    })?;
+        WorksheetMutation::Replace(plan) => {
+            replace_worksheet_to_writer_with_hook(
+                source,
+                temporary.as_file_mut(),
+                &donor,
+                plan,
+                rewrite_checkpoint,
+            )?;
+        }
+    }
     temporary.as_file_mut().flush()?;
     temporary.as_file().sync_all()?;
 

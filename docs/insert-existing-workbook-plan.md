@@ -278,12 +278,14 @@ Acceptance:
 
 Depends on Task 6.
 
-- [ ] Preserve the target sheet element's order, `sheetId`, relationship ID, target path, visibility, and active state.
-- [ ] Inspect the target worksheet relationship closure before replacement.
-- [ ] Under default `TargetRelationshipPolicy::Reject`, reject tables, drawings, comments, hyperlinks, pivots, external links, and unknown relationship types.
-- [ ] Under `RemoveSupported`, remove only explicitly supported target-owned parts and their content-type entries; never delete shared/global parts.
-- [ ] Replace only the target worksheet XML and its local AutoFilter defined name.
-- [ ] Reject case-insensitive duplicate ambiguity.
+- [x] Preserve the target sheet element's order, `sheetId`, relationship ID, target path, visibility, and active state.
+- [x] Inspect the target worksheet relationship closure before replacement.
+- [x] Under default `TargetRelationshipPolicy::Reject`, reject tables, drawings, comments, hyperlinks, pivots, external links, and unknown relationship types.
+- [x] Under `RemoveSupported`, remove only explicitly supported target-owned parts and their content-type entries; never delete shared/global parts.
+- [x] Replace only the target worksheet XML and its local AutoFilter defined name.
+- [x] Reject case-insensitive duplicate ambiguity.
+
+Completed on 2026-08-24. Focused test: `cargo +1.85.0 test -p miniexcel --test insert replace_sheet --locked`.
 
 Acceptance:
 

@@ -47,7 +47,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Dynamic export | `save_as()` / `save_as_with_schema()` | Map serialization is implemented internally |
 | Typed export | `save_as_serialized<T>()` | Uses Serde mapping internally |
 | Multi-sheet export | `save_as_sheets()` / `save_as_serialized_sheets()` | Preserves input sheet order and returns data-row counts |
-| `InsertSheet` append | `insert()` / `insert_with_schema()` / `insert_serialized()` | Atomically appends a visible worksheet; missing paths create a workbook; replacement is deferred |
+| `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` | Atomic append; strict in-place replacement preserves sheet identity and has an explicit relationship policy |
 | Per-sheet visibility | `WriteOptions::with_sheet_visibility()` | Visible, hidden, and very hidden; first visible sheet is active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | Defaults to `false`; existing paths require explicit opt-in |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | Defaults to one frozen row and zero frozen columns |
@@ -174,7 +174,7 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | Addressed JSONL/Markdown/manifest RAG export | Rust research extension | No |
 | Async APIs, DataReader, stream ownership | Deferred | No |
 | Append worksheet to existing `.xlsx` workbook | Implemented and atomically committed | Rust tests; shared parity contract not yet extended |
-| Replace/edit existing worksheets | Deferred | No |
+| Strict worksheet replacement | Implemented for plain targets and supported target-owned closures | Rust tests; calculation policy remains deferred |
 | CSV and legacy formats | Deferred | No |
 | Advanced templates, pictures, merges, comments | Deferred | No |
 
@@ -182,4 +182,4 @@ This matrix is the coverage claim: Rust does not yet provide complete API parity
 
 ## Deferred Work
 
-SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, advanced template directives and sheet cloning, images, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, replacing/editing existing worksheets, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.
+SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, advanced template directives and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, replacement calculation-chain policy, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.

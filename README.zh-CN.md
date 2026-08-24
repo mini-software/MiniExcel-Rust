@@ -271,7 +271,7 @@ let counts = MiniExcel::save_as_sheets(
 
 使用 `with_sheet_visibility(name, SheetVisibility::...)` 可按最终 sheet name 配置 visible、hidden 或 very hidden，名称匹配不区分大小写。第一个 visible sheet 自动成为 active；未知名称或全部隐藏的 workbook 会在创建输出前报错。隐藏状态只用于 UI 组织，不是数据保护，隐藏 worksheet 仍可查询。
 
-## 向现有工作簿追加 Worksheet
+## 追加或替换 Worksheet
 
 使用 `MiniExcel::insert()` 原子追加一张 visible worksheet。路径不存在时会新建 workbook，并保持相同的数据 row count 语义：
 
@@ -291,7 +291,7 @@ assert_eq!(count, 1);
 
 `insert_with_schema()` 接受可返回错误、只消费一次的动态 iterator。源 row 会先落盘 spool，constant-memory backend 在生成 donor workbook 时只保留当前 row；style rebase 当前仍会物化生成的 worksheet XML。`insert_serialized()` 接受 Serde struct。现有无关 ZIP entry、worksheet identity、formula 和 cached value 均会保留；只有重写 package 完成验证并同步后，才原子替换现有 workbook。
 
-默认的 `ExistingSheetPolicy::Reject` 会不区分大小写地拒绝重复 worksheet name。`ExistingSheetPolicy::Replace` 与 `TargetRelationshipPolicy::RemoveSupported` 预留给后续 replacement 里程碑，当前会在创建输出前返回错误。Insert 写入 XLSX package，拒绝 macro-enabled `.xlsm` path，只创建 visible worksheet，并拒绝 `WriteOptions::with_overwrite_file(true)`，因为 workbook replacement 由 Insert policy 控制。
+默认的 `ExistingSheetPolicy::Reject` 会不区分大小写地拒绝重复 worksheet name。使用 `ExistingSheetPolicy::Replace` 可原位替换 worksheet，并保留其 workbook 顺序、ID、relationship/path、visibility 与 active state。默认 `TargetRelationshipPolicy::Reject` 只接受没有 worksheet relationship 的 plain target。`RemoveSupported` 可删除 target-owned table、drawing 及其独占 image、comment、VML drawing 和 external hyperlink；pivot、external link、未知 relationship 与 shared/global part 会被拒绝或保守保留。Insert 写入 XLSX package，拒绝 macro-enabled `.xlsm` path，并拒绝 `WriteOptions::with_overwrite_file(true)`，因为 workbook replacement 由 Insert policy 控制。
 
 ## 类型化写入
 

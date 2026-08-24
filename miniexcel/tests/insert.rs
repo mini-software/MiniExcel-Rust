@@ -545,9 +545,6 @@ fn public_append_rejects_unsupported_policies_and_invalid_options_before_output(
     for options in [
         InsertOptions::new()
             .with_sheet_name("Data")
-            .with_existing_sheet_policy(ExistingSheetPolicy::Replace),
-        InsertOptions::new()
-            .with_sheet_name("Data")
             .with_target_relationship_policy(TargetRelationshipPolicy::RemoveSupported),
         InsertOptions::new().with_sheet_name("Invalid/Name"),
         InsertOptions::new().with_write_options(
@@ -560,6 +557,20 @@ fn public_append_rejects_unsupported_policies_and_invalid_options_before_output(
         assert!(MiniExcel::insert(&missing, &rows, &options).is_err());
         assert!(!missing.exists());
     }
+
+    let replace_missing = directory.path().join("replace-missing.xlsx");
+    assert_eq!(
+        MiniExcel::insert(
+            &replace_missing,
+            &rows,
+            &InsertOptions::new()
+                .with_sheet_name("Data")
+                .with_existing_sheet_policy(ExistingSheetPolicy::Replace),
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(MiniExcel::get_sheet_names(&replace_missing).unwrap(), ["Data"]);
 
     let invalid_schema = vec!["Value".to_owned(), "Value".to_owned()];
     let calls = Rc::new(Cell::new(0));
@@ -631,6 +642,177 @@ fn public_append_rejects_unsupported_policies_and_invalid_options_before_output(
         .is_err()
     );
     assert_eq!(std::fs::read(&missing).unwrap(), before);
+}
+
+#[test]
+fn replace_sheet_preserves_target_identity_order_visibility_and_active_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("replace-plain.xlsx");
+    let current = [dynamic_insert_row("Current", 1)];
+    let hidden = [dynamic_insert_row("Old", 2)];
+    MiniExcel::save_as_sheets(
+        &path,
+        [("Current", current.as_slice()), ("Hidden", hidden.as_slice())],
+        &WriteOptions::new().with_sheet_visibility("Hidden", SheetVisibility::Hidden),
+    )
+    .unwrap();
+    let before_bytes = std::fs::read(&path).unwrap();
+    let before = package_inventory(&before_bytes);
+    let current_xml = read_entry(&before_bytes, &format!("xl/{}", before.sheets[0].target));
+    let target_xml = entry_text(&before_bytes, &format!("xl/{}", before.sheets[1].target));
+    let workbook_relationships = before
+        .relationships
+        .iter()
+        .filter(|relationship| relationship.source == "xl/workbook.xml")
+        .collect::<Vec<_>>();
+
+    let replacement = [dynamic_insert_row("New", 7)];
+    let count = MiniExcel::insert(
+        &path,
+        &replacement,
+        &InsertOptions::new()
+            .with_write_options(
+                WriteOptions::new().with_sheet_name("hidden").with_auto_filter(false),
+            )
+            .with_existing_sheet_policy(ExistingSheetPolicy::Replace),
+    )
+    .unwrap();
+    assert_eq!(count, 1);
+
+    let after_bytes = std::fs::read(&path).unwrap();
+    let after = package_inventory(&after_bytes);
+    assert_eq!(after.sheets, before.sheets);
+    assert_eq!(after.active_tab, before.active_tab);
+    assert_eq!(
+        after
+            .relationships
+            .iter()
+            .filter(|relationship| relationship.source == "xl/workbook.xml")
+            .collect::<Vec<_>>(),
+        workbook_relationships
+    );
+    assert_eq!(read_entry(&after_bytes, &format!("xl/{}", after.sheets[0].target)), current_xml);
+    assert_eq!(
+        entry_text(&after_bytes, &format!("xl/{}", after.sheets[1].target))
+            .contains("tabSelected="),
+        target_xml.contains("tabSelected=")
+    );
+    assert!(
+        !after
+            .defined_names
+            .iter()
+            .any(|name| { name.name == "_xlnm._FilterDatabase" && name.local_sheet_id == Some(1) })
+    );
+    let rows = MiniExcel::query_with_options(
+        &path,
+        &ReadOptions::new().with_sheet_name("Hidden").with_header_mode(HeaderMode::FirstRow),
+    )
+    .unwrap()
+    .collect::<miniexcel::Result<Vec<_>>>()
+    .unwrap();
+    assert_eq!(rows[0]["Name"], CellValue::String("New".to_owned()));
+    assert_eq!(rows[0]["Version"], CellValue::Int(7));
+}
+
+#[test]
+fn replace_sheet_strict_policy_rejects_complex_target_before_consuming_rows() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("replace-strict.xlsx");
+    let source = complex_fixture();
+    std::fs::write(&path, &source).unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&calls);
+    let rows = std::iter::once_with(move || {
+        observed.set(observed.get() + 1);
+        Ok(dynamic_insert_row("Never written", 1))
+    });
+
+    assert!(
+        MiniExcel::insert_with_schema(
+            &path,
+            &["Name".to_owned(), "Version".to_owned()],
+            rows,
+            &InsertOptions::new()
+                .with_sheet_name("Data")
+                .with_existing_sheet_policy(ExistingSheetPolicy::Replace),
+        )
+        .is_err()
+    );
+    assert_eq!(calls.get(), 0);
+    assert_eq!(std::fs::read(&path).unwrap(), source);
+}
+
+#[test]
+fn replace_sheet_remove_supported_deletes_only_target_owned_closure() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("replace-remove-supported.xlsx");
+    let source = complex_fixture();
+    let before = package_inventory(&source);
+    let hidden_sheet = read_entry(&source, "xl/worksheets/sheet7.xml");
+    let archive_sheet = read_entry(&source, "xl/worksheets/archive.xml");
+    let custom_xml = read_entry(&source, "customXml/item1.xml");
+    let removed_entries = BTreeSet::from([
+        "xl/worksheets/_rels/data.xml.rels",
+        "xl/tables/table1.xml",
+        "xl/drawings/drawing1.xml",
+        "xl/drawings/_rels/drawing1.xml.rels",
+        "xl/media/image1.png",
+        "xl/comments1.xml",
+        "xl/drawings/vmlDrawing1.vml",
+    ]);
+    std::fs::write(&path, &source).unwrap();
+
+    let count = MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Replacement", 9)],
+        &InsertOptions::new()
+            .with_sheet_name("data")
+            .with_existing_sheet_policy(ExistingSheetPolicy::Replace)
+            .with_target_relationship_policy(TargetRelationshipPolicy::RemoveSupported),
+    )
+    .unwrap();
+    assert_eq!(count, 1);
+
+    let output = std::fs::read(&path).unwrap();
+    let after = package_inventory(&output);
+    assert_eq!(after.sheets, before.sheets);
+    assert_eq!(after.active_tab, before.active_tab);
+    assert_eq!(read_entry(&output, "xl/worksheets/sheet7.xml"), hidden_sheet);
+    assert_eq!(read_entry(&output, "xl/worksheets/archive.xml"), archive_sheet);
+    assert_eq!(read_entry(&output, "customXml/item1.xml"), custom_xml);
+    for removed in &removed_entries {
+        assert!(!after.entries.contains_key(*removed), "entry '{removed}' was retained");
+    }
+    for name in before.entries.keys().filter(|name| name.ends_with(".rels")) {
+        if !removed_entries.contains(name.as_str()) {
+            assert_eq!(read_entry(&output, name), read_entry(&source, name), "{name} changed");
+        }
+    }
+    assert!(
+        after.defined_names.iter().any(|name| {
+            name.name == "_xlnm._FilterDatabase"
+                && name.local_sheet_id == Some(0)
+                && name.formula == "'Data'!$A$1:$B$2"
+        }),
+        "defined names: {:?}",
+        after.defined_names
+    );
+    assert!(after.defined_names.iter().any(|name| name.name == "GlobalTotal"));
+    assert!(after.defined_names.iter().any(|name| name.name == "_xlnm.Print_Area"));
+    assert!(after.defined_names.iter().any(|name| name.name == "HiddenFormula"));
+    assert!(after.relationships.iter().all(|relationship| {
+        relationship.source != "xl/worksheets/data.xml"
+            && relationship.source != "xl/drawings/drawing1.xml"
+    }));
+    let rows = MiniExcel::query_with_options(
+        &path,
+        &ReadOptions::new().with_sheet_name("Data").with_header_mode(HeaderMode::FirstRow),
+    )
+    .unwrap()
+    .collect::<miniexcel::Result<Vec<_>>>()
+    .unwrap();
+    assert_eq!(rows[0]["Name"], CellValue::String("Replacement".to_owned()));
+    assert_eq!(rows[0]["Version"], CellValue::Int(9));
 }
 
 fn dynamic_insert_row(name: &str, version: i64) -> DynamicRow {
@@ -761,6 +943,21 @@ fn parse_workbook(
             }
             Event::Text(text) if current_name.is_some() => {
                 current_name.as_mut().unwrap().formula.push_str(&text.decode().unwrap());
+            }
+            Event::GeneralRef(reference) if current_name.is_some() => {
+                let decoded = reference.decode().unwrap();
+                match decoded.as_ref() {
+                    "lt" => current_name.as_mut().unwrap().formula.push('<'),
+                    "gt" => current_name.as_mut().unwrap().formula.push('>'),
+                    "amp" => current_name.as_mut().unwrap().formula.push('&'),
+                    "quot" => current_name.as_mut().unwrap().formula.push('"'),
+                    "apos" => current_name.as_mut().unwrap().formula.push('\''),
+                    _ => {
+                        if let Some(value) = reference.resolve_char_ref().unwrap() {
+                            current_name.as_mut().unwrap().formula.push(value);
+                        }
+                    }
+                }
             }
             Event::End(event) if local_name(event.name().as_ref()) == b"definedName" => {
                 defined_names.push(current_name.take().expect("defined name state"));

@@ -47,7 +47,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | 动态导出 | `save_as()` / `save_as_with_schema()` | map 序列化在内部实现 |
 | 类型化导出 | `save_as_serialized<T>()` | 内部使用 Serde 映射 |
 | 多工作表导出 | `save_as_sheets()` / `save_as_serialized_sheets()` | 保留输入工作表顺序并返回数据行数 |
-| `InsertSheet` append | `insert()` / `insert_with_schema()` / `insert_serialized()` | 原子追加 visible worksheet；路径不存在时创建 workbook；replacement 延后 |
+| `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` | 原子 append；严格原位 replacement 保留 sheet identity，并使用显式 relationship policy |
 | 每表 visibility | `WriteOptions::with_sheet_visibility()` | visible、hidden、very hidden；第一个 visible sheet 为 active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | 默认 `false`；已有路径需要显式允许覆盖 |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | 默认冻结一行、零列 |
@@ -174,7 +174,7 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | 带地址 JSONL/Markdown/manifest RAG 导出 | Rust 研究扩展 | 否 |
 | Async API、DataReader、stream ownership | 延后 | 否 |
 | 向现有 `.xlsx` workbook 追加 worksheet | 已实现并原子提交 | Rust 测试；共享 parity contract 尚未扩展 |
-| 替换/编辑现有 worksheet | 延后 | 否 |
+| 严格 worksheet replacement | 已支持 plain target 与受支持的 target-owned closure | Rust 测试；calculation policy 仍延后 |
 | CSV 和旧格式 | 延后 | 否 |
 | 高级 template、picture、merge、comment | 延后 | 否 |
 
@@ -182,4 +182,4 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 
 ## 延后工作
 
-SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、CSV provider、旧 Excel 格式、高级 template 指令与 sheet 克隆、image、merged-cell API、公式计算/依赖展开、公式编写、通用 style、替换/编辑现有 worksheet、async I/O，以及从调用方拥有的 reader 流式读取，都需要独立的设计与验收里程碑。
+SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、CSV provider、旧 Excel 格式、高级 template 指令与 sheet 克隆、image authoring、merged-cell API、公式计算/依赖展开、公式编写、通用 style、replacement calculation-chain policy、async I/O，以及从调用方拥有的 reader 流式读取，都需要独立的设计与验收里程碑。

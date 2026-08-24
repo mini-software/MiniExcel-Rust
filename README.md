@@ -271,7 +271,7 @@ let counts = MiniExcel::save_as_sheets(
 
 Configure final sheet names as visible, hidden, or very hidden with `with_sheet_visibility(name, SheetVisibility::...)`. Matching is case-insensitive, the first visible sheet becomes active, and unknown names or an all-hidden workbook are rejected before output is created. Hidden states are UI organization, not data protection; hidden worksheets remain queryable.
 
-## Append To An Existing Workbook
+## Append Or Replace A Worksheet
 
 Use `MiniExcel::insert()` to atomically append a visible worksheet. A missing path creates a new workbook with the same row-count semantics:
 
@@ -291,7 +291,7 @@ assert_eq!(count, 1);
 
 `insert_with_schema()` accepts a fallible, one-pass dynamic iterator. Source rows are disk-spooled and the constant-memory backend retains only the current row while generating the donor workbook; style rebasing currently materializes the generated worksheet XML. `insert_serialized()` accepts Serde structs. Existing unrelated ZIP entries, worksheet identities, formulas, and cached values are preserved, and an existing workbook is replaced only after the rewritten package validates and syncs.
 
-The default `ExistingSheetPolicy::Reject` rejects duplicate worksheet names case-insensitively. `ExistingSheetPolicy::Replace` and `TargetRelationshipPolicy::RemoveSupported` are reserved for the replacement milestone and currently return an error before output is created. Insert writes XLSX packages, rejects macro-enabled `.xlsm` paths, creates visible worksheets, and rejects `WriteOptions::with_overwrite_file(true)` because workbook replacement is controlled by the insert policy.
+The default `ExistingSheetPolicy::Reject` rejects duplicate worksheet names case-insensitively. Use `ExistingSheetPolicy::Replace` to replace a worksheet in place while preserving its workbook order, ID, relationship/path, visibility, and active state. The default `TargetRelationshipPolicy::Reject` accepts only a plain target with no worksheet relationships. `RemoveSupported` can remove target-owned tables, drawings with exclusively owned images, comments, VML drawings, and external hyperlinks; pivots, external links, unknown relationships, and shared/global parts are rejected or preserved conservatively. Insert writes XLSX packages, rejects macro-enabled `.xlsm` paths, and rejects `WriteOptions::with_overwrite_file(true)` because workbook replacement is controlled by the insert policy.
 
 ## Typed Writing
 

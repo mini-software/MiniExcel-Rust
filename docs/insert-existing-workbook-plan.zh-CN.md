@@ -278,12 +278,14 @@ Donor-workbook 方案复用经过测试的 `XlsxWriter`，避免重复实现 ser
 
 依赖 Task 6。
 
-- [ ] 保留目标 sheet element 的顺序、`sheetId`、relationship ID、target path、visibility 与 active 状态。
-- [ ] replacement 前检查目标 worksheet relationship closure。
-- [ ] 默认 `TargetRelationshipPolicy::Reject` 拒绝 table、drawing、comment、hyperlink、pivot、external link 和未知 relationship type。
-- [ ] `RemoveSupported` 只删除明确支持的 target-owned part 与 content-type entry，绝不删除 shared/global part。
-- [ ] 只替换目标 worksheet XML 与其 local AutoFilter defined name。
-- [ ] 拒绝大小写不敏感时产生的 duplicate ambiguity。
+- [x] 保留目标 sheet element 的顺序、`sheetId`、relationship ID、target path、visibility 与 active 状态。
+- [x] replacement 前检查目标 worksheet relationship closure。
+- [x] 默认 `TargetRelationshipPolicy::Reject` 拒绝 table、drawing、comment、hyperlink、pivot、external link 和未知 relationship type。
+- [x] `RemoveSupported` 只删除明确支持的 target-owned part 与 content-type entry，绝不删除 shared/global part。
+- [x] 只替换目标 worksheet XML 与其 local AutoFilter defined name。
+- [x] 拒绝大小写不敏感时产生的 duplicate ambiguity。
+
+已于 2026-08-24 完成。聚焦测试：`cargo +1.85.0 test -p miniexcel --test insert replace_sheet --locked`。
 
 验收：
 

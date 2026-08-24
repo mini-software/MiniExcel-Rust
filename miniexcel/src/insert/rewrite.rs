@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -7,9 +7,9 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use super::donor::DonorWorksheet;
-use super::package::{DefinedName, PackageInventory, WorksheetAllocation};
+use super::package::{DefinedName, PackageInventory, WorkbookSheet, WorksheetAllocation};
 use super::style::rebase_styles;
-use crate::{Error, Result};
+use crate::{Error, Result, TargetRelationshipPolicy};
 
 const CONTENT_TYPES_PATH: &str = "[Content_Types].xml";
 const WORKBOOK_PATH: &str = "xl/workbook.xml";
@@ -23,6 +23,157 @@ const WORKSHEET_RELATIONSHIP_TYPE: &str =
 pub(super) enum PackageRewriteStage {
     Copy,
     Finish,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ReplacementPlan {
+    target: WorkbookSheet,
+    styles_path: String,
+    removed_entries: BTreeSet<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReplacementRelationshipKind {
+    Table,
+    Drawing,
+    Comments,
+    VmlDrawing,
+    Hyperlink,
+    Image,
+}
+
+pub(super) fn plan_replacement(
+    inventory: &PackageInventory,
+    sheet_name: &str,
+    policy: TargetRelationshipPolicy,
+) -> Result<ReplacementPlan> {
+    let target = inventory
+        .find_sheet(sheet_name)
+        .cloned()
+        .ok_or_else(|| Error::sheet_not_found(sheet_name))?;
+    let direct_relationships = inventory
+        .relationships
+        .iter()
+        .filter(|relationship| relationship.source.as_deref() == Some(target.target.as_str()))
+        .collect::<Vec<_>>();
+    if policy == TargetRelationshipPolicy::Reject && !direct_relationships.is_empty() {
+        return Err(Error::unsupported_package_feature(format!(
+            "worksheet '{}' owns relationship type '{}'",
+            target.name, direct_relationships[0].relationship_type
+        )));
+    }
+
+    let mut removed_entries = BTreeSet::new();
+    if policy == TargetRelationshipPolicy::RemoveSupported {
+        let target_relationship_part = relationship_part_path(&target.target)?;
+        if inventory.entry_names.contains(&target_relationship_part) {
+            removed_entries.insert(target_relationship_part);
+        }
+
+        let mut candidates = BTreeSet::new();
+        let mut queue = VecDeque::new();
+        for relationship in direct_relationships {
+            match replacement_relationship_kind(&relationship.relationship_type) {
+                Some(
+                    ReplacementRelationshipKind::Table
+                    | ReplacementRelationshipKind::Drawing
+                    | ReplacementRelationshipKind::Comments
+                    | ReplacementRelationshipKind::VmlDrawing,
+                ) => {
+                    let part = relationship.normalized_target.clone().ok_or_else(|| {
+                        Error::unsupported_package_feature(format!(
+                            "worksheet relationship '{}' cannot be external",
+                            relationship.relationship_type
+                        ))
+                    })?;
+                    if candidates.insert(part.clone()) {
+                        queue.push_back(part);
+                    }
+                }
+                Some(ReplacementRelationshipKind::Hyperlink)
+                    if relationship
+                        .target_mode
+                        .as_deref()
+                        .is_some_and(|mode| mode.eq_ignore_ascii_case("External")) => {}
+                _ => {
+                    return Err(Error::unsupported_package_feature(format!(
+                        "worksheet replacement cannot remove relationship type '{}'",
+                        relationship.relationship_type
+                    )));
+                }
+            }
+        }
+
+        while let Some(source) = queue.pop_front() {
+            if !inventory.entry_names.contains(&source) {
+                return Err(Error::insert_package(format!(
+                    "worksheet-owned part '{source}' is missing"
+                )));
+            }
+            for relationship in inventory
+                .relationships
+                .iter()
+                .filter(|relationship| relationship.source.as_deref() == Some(source.as_str()))
+            {
+                match replacement_relationship_kind(&relationship.relationship_type) {
+                    Some(ReplacementRelationshipKind::Image) => {
+                        let part = relationship.normalized_target.clone().ok_or_else(|| {
+                            Error::unsupported_package_feature(
+                                "worksheet-owned drawing contains an external image",
+                            )
+                        })?;
+                        if candidates.insert(part.clone()) {
+                            queue.push_back(part);
+                        }
+                    }
+                    _ => {
+                        return Err(Error::unsupported_package_feature(format!(
+                            "worksheet-owned closure contains relationship type '{}'",
+                            relationship.relationship_type
+                        )));
+                    }
+                }
+            }
+        }
+
+        let mut preserved = candidates
+            .iter()
+            .filter(|candidate| {
+                inventory.relationships.iter().any(|relationship| {
+                    relationship.normalized_target.as_deref() == Some(candidate.as_str())
+                        && relationship.source.as_deref() != Some(target.target.as_str())
+                        && !relationship
+                            .source
+                            .as_deref()
+                            .is_some_and(|source| candidates.contains(source))
+                })
+            })
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mut preserve_queue = preserved.iter().cloned().collect::<VecDeque<_>>();
+        while let Some(source) = preserve_queue.pop_front() {
+            for relationship in inventory
+                .relationships
+                .iter()
+                .filter(|relationship| relationship.source.as_deref() == Some(source.as_str()))
+            {
+                if let Some(target) = relationship.normalized_target.as_ref() {
+                    if candidates.contains(target) && preserved.insert(target.clone()) {
+                        preserve_queue.push_back(target.clone());
+                    }
+                }
+            }
+        }
+        for part in candidates.difference(&preserved) {
+            removed_entries.insert(part.clone());
+            let relationship_part = relationship_part_path(part)?;
+            if inventory.entry_names.contains(&relationship_part) {
+                removed_entries.insert(relationship_part);
+            }
+        }
+    }
+
+    Ok(ReplacementPlan { target, styles_path: styles_path(inventory)?, removed_entries })
 }
 
 pub(crate) fn append_worksheet<R>(source: R, donor: &DonorWorksheet) -> Result<Vec<u8>>
@@ -107,10 +258,166 @@ where
         archive,
         destination,
         &replacements,
-        &allocation.package_path,
-        &style_rebase.worksheet_xml,
+        &BTreeSet::new(),
+        Some((&allocation.package_path, style_rebase.worksheet_xml.as_slice())),
         &mut checkpoint,
     )
+}
+
+pub(super) fn replace_worksheet_to_writer_with_hook<R, W, F>(
+    mut source: R,
+    destination: W,
+    donor: &DonorWorksheet,
+    plan: &ReplacementPlan,
+    mut checkpoint: F,
+) -> Result<W>
+where
+    R: Read + Seek,
+    W: Write + Seek,
+    F: FnMut(PackageRewriteStage) -> Result<()>,
+{
+    source.seek(SeekFrom::Start(0))?;
+    let mut archive = ZipArchive::new(source).map_err(|error| {
+        Error::insert_package(format!("cannot reopen source workbook: {error}"))
+    })?;
+    let workbook_xml = read_part(&mut archive, WORKBOOK_PATH)?;
+    let content_types_xml = read_part(&mut archive, CONTENT_TYPES_PATH)?;
+    let styles_xml = read_part(&mut archive, &plan.styles_path)?;
+    let target_worksheet_xml = read_part(&mut archive, &plan.target.target)?;
+    let style_rebase = rebase_styles(&styles_xml, donor)?;
+    let worksheet_xml = preserve_tab_selected(&style_rebase.worksheet_xml, &target_worksheet_xml)?;
+    let patched_workbook = replace_target_filter_defined_name(&workbook_xml, plan, donor)?;
+    let patched_content_types =
+        remove_content_type_overrides(&content_types_xml, &plan.removed_entries)?;
+
+    let mut replacements = BTreeMap::from([
+        (plan.styles_path.clone(), style_rebase.styles_xml),
+        (plan.target.target.clone(), worksheet_xml),
+    ]);
+    if patched_workbook != workbook_xml {
+        replacements.insert(WORKBOOK_PATH.to_owned(), patched_workbook);
+    }
+    if patched_content_types != content_types_xml {
+        replacements.insert(CONTENT_TYPES_PATH.to_owned(), patched_content_types);
+    }
+    write_package(archive, destination, &replacements, &plan.removed_entries, None, &mut checkpoint)
+}
+
+fn replacement_relationship_kind(relationship_type: &str) -> Option<ReplacementRelationshipKind> {
+    const BASES: [&str; 2] = [
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/",
+        "http://purl.oclc.org/ooxml/officeDocument/relationships/",
+    ];
+    let kind = BASES.iter().find_map(|base| relationship_type.strip_prefix(base))?;
+    match kind {
+        "table" => Some(ReplacementRelationshipKind::Table),
+        "drawing" => Some(ReplacementRelationshipKind::Drawing),
+        "comments" => Some(ReplacementRelationshipKind::Comments),
+        "vmlDrawing" => Some(ReplacementRelationshipKind::VmlDrawing),
+        "hyperlink" => Some(ReplacementRelationshipKind::Hyperlink),
+        "image" => Some(ReplacementRelationshipKind::Image),
+        _ => None,
+    }
+}
+
+fn preserve_tab_selected(donor_xml: &[u8], target_xml: &[u8]) -> Result<Vec<u8>> {
+    let target_value = first_sheet_view_attribute(target_xml, b"tabSelected")?;
+    let mut reader = Reader::from_reader(donor_xml);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(Vec::with_capacity(donor_xml.len()));
+    loop {
+        let event = reader.read_event().map_err(|error| {
+            Error::insert_package(format!("invalid donor worksheet XML: {error}"))
+        })?;
+        match event {
+            Event::Start(start) if local_name(start.name().as_ref()) == b"sheetView" => {
+                write_event(
+                    &mut writer,
+                    Event::Start(replace_optional_attribute(
+                        &start,
+                        b"tabSelected",
+                        target_value.as_deref(),
+                    )?),
+                )?;
+            }
+            Event::Empty(empty) if local_name(empty.name().as_ref()) == b"sheetView" => {
+                write_event(
+                    &mut writer,
+                    Event::Empty(replace_optional_attribute(
+                        &empty,
+                        b"tabSelected",
+                        target_value.as_deref(),
+                    )?),
+                )?;
+            }
+            Event::Eof => break,
+            event => write_event(&mut writer, event)?,
+        }
+    }
+    Ok(writer.into_inner())
+}
+
+fn first_sheet_view_attribute(xml: &[u8], attribute_name: &[u8]) -> Result<Option<String>> {
+    let mut reader = Reader::from_reader(xml);
+    loop {
+        match reader
+            .read_event()
+            .map_err(|error| Error::insert_package(format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Start(start) | Event::Empty(start)
+                if local_name(start.name().as_ref()) == b"sheetView" =>
+            {
+                return xml_attribute(&start, attribute_name);
+            }
+            Event::Eof => return Ok(None),
+            _ => {}
+        }
+    }
+}
+
+fn replace_optional_attribute(
+    element: &BytesStart<'_>,
+    attribute_name: &[u8],
+    replacement: Option<&str>,
+) -> Result<BytesStart<'static>> {
+    let qualified_name = element.name();
+    let name = std::str::from_utf8(qualified_name.as_ref())
+        .map_err(|_| Error::insert_package("worksheet element name is not UTF-8"))?;
+    let mut output = BytesStart::new(name.to_owned());
+    for attribute in element.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| {
+            Error::insert_package(format!("invalid worksheet attribute: {error}"))
+        })?;
+        if local_name(attribute.key.as_ref()) == attribute_name {
+            continue;
+        }
+        let key = std::str::from_utf8(attribute.key.as_ref())
+            .map_err(|_| Error::insert_package("worksheet attribute name is not UTF-8"))?;
+        let value = attribute
+            .decode_and_unescape_value(element.decoder())
+            .map_err(|error| Error::insert_package(format!("invalid worksheet value: {error}")))?;
+        output.push_attribute((key, value.as_ref()));
+    }
+    if let Some(replacement) = replacement {
+        let name = std::str::from_utf8(attribute_name)
+            .map_err(|_| Error::insert_package("worksheet attribute name is not UTF-8"))?;
+        output.push_attribute((name, replacement));
+    }
+    Ok(output)
+}
+
+fn relationship_part_path(source: &str) -> Result<String> {
+    let (directory, name) = source.rsplit_once('/').map_or(("", source), |value| value);
+    if name.is_empty() {
+        return Err(Error::insert_package(format!(
+            "cannot derive relationship path for '{source}'"
+        )));
+    }
+    if directory.is_empty() {
+        Ok(format!("_rels/{name}.rels"))
+    } else {
+        Ok(format!("{directory}/_rels/{name}.rels"))
+    }
 }
 
 fn styles_path(inventory: &PackageInventory) -> Result<String> {
@@ -251,6 +558,246 @@ fn append_content_type_override(
     })
 }
 
+fn remove_content_type_overrides(xml: &[u8], removed: &BTreeSet<String>) -> Result<Vec<u8>> {
+    if removed.is_empty() {
+        return Ok(xml.to_vec());
+    }
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(Vec::with_capacity(xml.len()));
+    let mut skip_depth = 0_usize;
+    loop {
+        let event = reader.read_event().map_err(|error| {
+            Error::insert_package(format!("invalid content types XML: {error}"))
+        })?;
+        if skip_depth > 0 {
+            match event {
+                Event::Start(_) => skip_depth += 1,
+                Event::End(_) => skip_depth -= 1,
+                Event::Eof => {
+                    return Err(Error::insert_package(
+                        "unterminated removed content-type override",
+                    ));
+                }
+                _ => {}
+            }
+            continue;
+        }
+        match event {
+            Event::Start(start) if local_name(start.name().as_ref()) == b"Override" => {
+                if override_is_removed(&start, removed)? {
+                    skip_depth = 1;
+                } else {
+                    write_event(&mut writer, Event::Start(start))?;
+                }
+            }
+            Event::Empty(empty) if local_name(empty.name().as_ref()) == b"Override" => {
+                if !override_is_removed(&empty, removed)? {
+                    write_event(&mut writer, Event::Empty(empty))?;
+                }
+            }
+            Event::Eof => break,
+            event => write_event(&mut writer, event)?,
+        }
+    }
+    Ok(writer.into_inner())
+}
+
+fn override_is_removed(element: &BytesStart<'_>, removed: &BTreeSet<String>) -> Result<bool> {
+    let Some(part_name) = xml_attribute(element, b"PartName")? else {
+        return Err(Error::insert_package("content-type override has no PartName"));
+    };
+    Ok(removed.contains(part_name.trim_start_matches('/')))
+}
+
+fn replace_target_filter_defined_name(
+    xml: &[u8],
+    plan: &ReplacementPlan,
+    donor: &DonorWorksheet,
+) -> Result<Vec<u8>> {
+    const FILTER_NAME: &str = "_xlnm._FilterDatabase";
+    let has_defined_names = contains_element(xml, b"definedNames")?;
+    let retained_names = count_retained_defined_names(xml, plan.target.index)?;
+    let donor_names = donor
+        .local_defined_names
+        .iter()
+        .filter(|name| name.name == FILTER_NAME)
+        .collect::<Vec<_>>();
+    let keep_container = retained_names + donor_names.len() > 0;
+
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(Vec::with_capacity(xml.len() + 128));
+    let mut depth = 0_usize;
+    let mut in_defined_names = false;
+    let mut skip_depth = 0_usize;
+    let mut pending_defined_names = false;
+    let mut element_prefix = String::new();
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|error| Error::insert_package(format!("invalid workbook XML: {error}")))?;
+        if skip_depth > 0 {
+            match event {
+                Event::Start(_) => {
+                    skip_depth += 1;
+                    depth += 1;
+                }
+                Event::End(_) => {
+                    skip_depth -= 1;
+                    depth = depth.saturating_sub(1);
+                }
+                Event::Eof => {
+                    return Err(Error::insert_package("unterminated definedName element"));
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if pending_defined_names && is_direct_child_after_defined_names(&event, depth) {
+            write_replacement_defined_names(
+                &mut writer,
+                &donor_names,
+                &plan.target,
+                &element_prefix,
+            )?;
+            pending_defined_names = false;
+        }
+        match event {
+            Event::Start(start) if local_name(start.name().as_ref()) == b"definedNames" => {
+                in_defined_names = true;
+                element_prefix = element_prefix_from_name(start.name().as_ref())?;
+                depth += 1;
+                if keep_container {
+                    write_event(&mut writer, Event::Start(start))?;
+                } else {
+                    skip_depth = 1;
+                }
+            }
+            Event::Empty(empty) if local_name(empty.name().as_ref()) == b"definedNames" => {
+                element_prefix = element_prefix_from_name(empty.name().as_ref())?;
+                if !donor_names.is_empty() {
+                    write_replacement_defined_names(
+                        &mut writer,
+                        &donor_names,
+                        &plan.target,
+                        &element_prefix,
+                    )?;
+                }
+            }
+            Event::Start(start)
+                if in_defined_names
+                    && depth == 2
+                    && local_name(start.name().as_ref()) == b"definedName"
+                    && defined_name_is_target_filter(&start, plan.target.index)? =>
+            {
+                skip_depth = 1;
+                depth += 1;
+            }
+            Event::Empty(empty)
+                if in_defined_names
+                    && depth == 2
+                    && local_name(empty.name().as_ref()) == b"definedName"
+                    && defined_name_is_target_filter(&empty, plan.target.index)? => {}
+            Event::End(end) if local_name(end.name().as_ref()) == b"definedNames" => {
+                for name in &donor_names {
+                    write_retargeted_defined_name(
+                        &mut writer,
+                        name,
+                        &plan.target,
+                        &element_prefix,
+                    )?;
+                }
+                write_event(&mut writer, Event::End(end))?;
+                in_defined_names = false;
+                depth = depth.saturating_sub(1);
+            }
+            Event::End(end) if local_name(end.name().as_ref()) == b"sheets" => {
+                element_prefix = element_prefix_from_name(end.name().as_ref())?;
+                write_event(&mut writer, Event::End(end))?;
+                depth = depth.saturating_sub(1);
+                if !has_defined_names && !donor_names.is_empty() {
+                    pending_defined_names = true;
+                }
+            }
+            Event::Start(start) => {
+                write_event(&mut writer, Event::Start(start))?;
+                depth += 1;
+            }
+            Event::End(end) => {
+                write_event(&mut writer, Event::End(end))?;
+                depth = depth.saturating_sub(1);
+            }
+            Event::Eof => break,
+            event => write_event(&mut writer, event)?,
+        }
+    }
+    if pending_defined_names {
+        return Err(Error::insert_package(
+            "workbook ended before replacement definedNames could be inserted",
+        ));
+    }
+    Ok(writer.into_inner())
+}
+
+fn count_retained_defined_names(xml: &[u8], target_index: usize) -> Result<usize> {
+    let mut reader = Reader::from_reader(xml);
+    let mut count = 0;
+    loop {
+        match reader
+            .read_event()
+            .map_err(|error| Error::insert_package(format!("invalid workbook XML: {error}")))?
+        {
+            Event::Start(start) | Event::Empty(start)
+                if local_name(start.name().as_ref()) == b"definedName" =>
+            {
+                if !defined_name_is_target_filter(&start, target_index)? {
+                    count += 1;
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(count)
+}
+
+fn defined_name_is_target_filter(element: &BytesStart<'_>, target_index: usize) -> Result<bool> {
+    let name = xml_attribute(element, b"name")?;
+    let local_sheet_id =
+        xml_attribute(element, b"localSheetId")?.and_then(|value| value.parse::<usize>().ok());
+    Ok(name.as_deref() == Some("_xlnm._FilterDatabase") && local_sheet_id == Some(target_index))
+}
+
+fn write_replacement_defined_names(
+    writer: &mut Writer<Vec<u8>>,
+    names: &[&DefinedName],
+    target: &WorkbookSheet,
+    element_prefix: &str,
+) -> Result<()> {
+    write_event(writer, Event::Start(BytesStart::new(qualify(element_prefix, "definedNames"))))?;
+    for name in names {
+        write_retargeted_defined_name(writer, name, target, element_prefix)?;
+    }
+    write_event(writer, Event::End(BytesEnd::new(qualify(element_prefix, "definedNames"))))
+}
+
+fn write_retargeted_defined_name(
+    writer: &mut Writer<Vec<u8>>,
+    name: &DefinedName,
+    target: &WorkbookSheet,
+    element_prefix: &str,
+) -> Result<()> {
+    let range = name
+        .formula
+        .rsplit_once('!')
+        .map(|(_, range)| range)
+        .ok_or_else(|| Error::insert_package("AutoFilter defined name has no range"))?;
+    let escaped_name = target.name.replace('\'', "''");
+    let formula = format!("'{escaped_name}'!{range}");
+    write_defined_name_formula(writer, name, target.index, element_prefix, &formula)
+}
+
 fn append_empty_child<F>(xml: &[u8], parent_name: &[u8], child: F) -> Result<Vec<u8>>
 where
     F: FnOnce(String) -> BytesStart<'static>,
@@ -331,6 +878,22 @@ fn write_defined_name(
     local_sheet_id: usize,
     element_prefix: &str,
 ) -> Result<()> {
+    write_defined_name_formula(
+        writer,
+        defined_name,
+        local_sheet_id,
+        element_prefix,
+        &defined_name.formula,
+    )
+}
+
+fn write_defined_name_formula(
+    writer: &mut Writer<Vec<u8>>,
+    defined_name: &DefinedName,
+    local_sheet_id: usize,
+    element_prefix: &str,
+    formula: &str,
+) -> Result<()> {
     let mut element = BytesStart::new(qualify(element_prefix, "definedName"));
     let local_sheet_id = local_sheet_id.to_string();
     element.push_attribute(("name", defined_name.name.as_str()));
@@ -339,7 +902,7 @@ fn write_defined_name(
         element.push_attribute(("hidden", "1"));
     }
     write_event(writer, Event::Start(element))?;
-    write_event(writer, Event::Text(BytesText::new(&defined_name.formula)))?;
+    write_event(writer, Event::Text(BytesText::new(formula)))?;
     write_event(writer, Event::End(BytesEnd::new(qualify(element_prefix, "definedName"))))
 }
 
@@ -404,6 +967,10 @@ fn element_prefix(name: &[u8]) -> Result<String> {
     Ok(name.rsplit_once(':').map_or("", |(prefix, _)| prefix).to_owned())
 }
 
+fn element_prefix_from_name(name: &[u8]) -> Result<String> {
+    element_prefix(name)
+}
+
 fn qualify(prefix: &str, local_name: &str) -> String {
     if prefix.is_empty() { local_name.to_owned() } else { format!("{prefix}:{local_name}") }
 }
@@ -438,12 +1005,26 @@ where
     Ok(bytes)
 }
 
+fn xml_attribute(event: &BytesStart<'_>, name: &[u8]) -> Result<Option<String>> {
+    for attribute in event.attributes().with_checks(false) {
+        let attribute = attribute
+            .map_err(|error| Error::insert_package(format!("invalid XML attribute: {error}")))?;
+        if local_name(attribute.key.as_ref()) == name {
+            return attribute
+                .decode_and_unescape_value(event.decoder())
+                .map(|value| Some(value.into_owned()))
+                .map_err(|error| Error::insert_package(format!("invalid XML value: {error}")));
+        }
+    }
+    Ok(None)
+}
+
 fn write_package<R, W, F>(
     mut archive: ZipArchive<R>,
     destination: W,
     replacements: &BTreeMap<String, Vec<u8>>,
-    worksheet_path: &str,
-    worksheet_xml: &[u8],
+    removed_entries: &BTreeSet<String>,
+    new_entry: Option<(&str, &[u8])>,
     checkpoint: &mut F,
 ) -> Result<W>
 where
@@ -463,6 +1044,9 @@ where
             Error::insert_package(format!("cannot copy source ZIP entry: {error}"))
         })?;
         let name = entry.name().to_owned();
+        if removed_entries.contains(&name) {
+            continue;
+        }
         if let Some(replacement) = replacements.get(&name) {
             let options = entry.options();
             writer.start_file(&name, options).map_err(|error| {
@@ -476,15 +1060,19 @@ where
         }
     }
 
-    writer
-        .start_file(
-            worksheet_path,
-            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
-        )
-        .map_err(|error| {
-            Error::insert_package(format!("cannot create worksheet '{worksheet_path}': {error}"))
-        })?;
-    writer.write_all(worksheet_xml)?;
+    if let Some((worksheet_path, worksheet_xml)) = new_entry {
+        writer
+            .start_file(
+                worksheet_path,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+            )
+            .map_err(|error| {
+                Error::insert_package(format!(
+                    "cannot create worksheet '{worksheet_path}': {error}"
+                ))
+            })?;
+        writer.write_all(worksheet_xml)?;
+    }
     checkpoint(PackageRewriteStage::Finish)?;
     writer
         .finish()
@@ -511,6 +1099,7 @@ mod tests {
 
     use super::*;
     use crate::insert::donor::DonorBuilder;
+    use crate::insert::package::{ContentTypes, PackageRelationship, WorkbookSheet};
     use crate::writer::XlsxWriter;
     use crate::{
         CellValue, DynamicRow, HeaderMode, MiniExcel, ReadOptions, SheetVisibility, WriteOptions,
@@ -526,6 +1115,120 @@ mod tests {
         unix_mode: Option<u32>,
         comment: String,
         extra_data: Option<Vec<u8>>,
+    }
+
+    #[test]
+    fn replacement_plan_preserves_shared_parts_and_rejects_unknown_relationships() {
+        let mut inventory = PackageInventory {
+            entry_names: BTreeSet::from([
+                "xl/styles.xml".to_owned(),
+                "xl/worksheets/target.xml".to_owned(),
+                "xl/worksheets/other.xml".to_owned(),
+                "xl/worksheets/_rels/target.xml.rels".to_owned(),
+                "xl/drawings/drawing1.xml".to_owned(),
+                "xl/drawings/_rels/drawing1.xml.rels".to_owned(),
+                "xl/media/shared.png".to_owned(),
+            ]),
+            content_types: ContentTypes::default(),
+            relationships: vec![
+                relationship("xl/workbook.xml", "rIdStyles", "styles", "xl/styles.xml"),
+                relationship(
+                    "xl/worksheets/target.xml",
+                    "rIdDrawing",
+                    "drawing",
+                    "xl/drawings/drawing1.xml",
+                ),
+                relationship(
+                    "xl/drawings/drawing1.xml",
+                    "rIdImage",
+                    "image",
+                    "xl/media/shared.png",
+                ),
+                relationship(
+                    "xl/worksheets/other.xml",
+                    "rIdShared",
+                    "image",
+                    "xl/media/shared.png",
+                ),
+            ],
+            sheets: vec![
+                worksheet("Target", "xl/worksheets/target.xml", 0),
+                worksheet("Other", "xl/worksheets/other.xml", 1),
+            ],
+            views: Vec::new(),
+            defined_names: Vec::new(),
+        };
+
+        let plan =
+            plan_replacement(&inventory, "Target", TargetRelationshipPolicy::RemoveSupported)
+                .unwrap();
+        assert!(plan.removed_entries.contains("xl/drawings/drawing1.xml"));
+        assert!(plan.removed_entries.contains("xl/drawings/_rels/drawing1.xml.rels"));
+        assert!(!plan.removed_entries.contains("xl/media/shared.png"));
+
+        inventory.relationships.push(relationship(
+            "xl/worksheets/target.xml",
+            "rIdPivot",
+            "pivotTable",
+            "xl/pivotTables/pivotTable1.xml",
+        ));
+        assert!(
+            plan_replacement(&inventory, "Target", TargetRelationshipPolicy::RemoveSupported,)
+                .is_err()
+        );
+
+        let mut unknown_uri = inventory.clone();
+        unknown_uri.relationships.pop();
+        unknown_uri.relationships.push(PackageRelationship {
+            source: Some("xl/worksheets/target.xml".to_owned()),
+            id: "rIdFake".to_owned(),
+            relationship_type: "https://example.invalid/relationships/table".to_owned(),
+            target: "xl/tables/fake.xml".to_owned(),
+            normalized_target: Some("xl/tables/fake.xml".to_owned()),
+            target_mode: None,
+        });
+        assert!(
+            plan_replacement(&unknown_uri, "Target", TargetRelationshipPolicy::RemoveSupported,)
+                .is_err()
+        );
+
+        let mut external_image = inventory;
+        external_image.relationships[2].normalized_target = None;
+        external_image.relationships[2].target = "https://example.invalid/image.png".to_owned();
+        external_image.relationships[2].target_mode = Some("External".to_owned());
+        assert!(
+            plan_replacement(&external_image, "Target", TargetRelationshipPolicy::RemoveSupported,)
+                .is_err()
+        );
+    }
+
+    fn relationship(
+        source: &str,
+        id: &str,
+        kind: &str,
+        normalized_target: &str,
+    ) -> PackageRelationship {
+        PackageRelationship {
+            source: Some(source.to_owned()),
+            id: id.to_owned(),
+            relationship_type: format!(
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}"
+            ),
+            target: normalized_target.to_owned(),
+            normalized_target: Some(normalized_target.to_owned()),
+            target_mode: None,
+        }
+    }
+
+    fn worksheet(name: &str, target: &str, index: usize) -> WorkbookSheet {
+        WorkbookSheet {
+            index,
+            name: name.to_owned(),
+            sheet_id: index as u32 + 1,
+            relationship_id: format!("rId{}", index + 1),
+            target: target.to_owned(),
+            visibility: SheetVisibility::Visible,
+        }
     }
 
     #[test]

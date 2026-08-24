@@ -302,6 +302,8 @@ pub struct WriteOptions {
     datetime_format: String,
     duration_format: String,
     column_formats: IndexMap<String, String>,
+    column_widths: IndexMap<String, f64>,
+    hidden_columns: IndexMap<String, bool>,
     sheet_visibilities: IndexMap<String, SheetVisibility>,
 }
 
@@ -436,6 +438,18 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub fn with_column_width(mut self, field_name: impl Into<String>, width: f64) -> Self {
+        self.column_widths.insert(field_name.into(), width);
+        self
+    }
+
+    #[must_use]
+    pub fn with_column_hidden(mut self, field_name: impl Into<String>, hidden: bool) -> Self {
+        self.hidden_columns.insert(field_name.into(), hidden);
+        self
+    }
+
+    #[must_use]
     pub fn with_sheet_visibility(
         mut self,
         sheet_name: impl Into<String>,
@@ -546,6 +560,21 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub(crate) fn column_width(&self, field_name: &str) -> Option<f64> {
+        self.column_widths.get(field_name).copied()
+    }
+
+    #[must_use]
+    pub(crate) fn column_widths(&self) -> &IndexMap<String, f64> {
+        &self.column_widths
+    }
+
+    #[must_use]
+    pub(crate) fn column_hidden(&self, field_name: &str) -> bool {
+        self.hidden_columns.get(field_name).copied().unwrap_or(false)
+    }
+
+    #[must_use]
     pub(crate) fn sheet_visibility(&self, sheet_name: &str) -> SheetVisibility {
         self.sheet_visibilities
             .get(&sheet_name.to_lowercase())
@@ -582,6 +611,8 @@ impl Default for WriteOptions {
             datetime_format: "yyyy-mm-dd hh:mm:ss".to_owned(),
             duration_format: "[h]:mm:ss".to_owned(),
             column_formats: IndexMap::new(),
+            column_widths: IndexMap::new(),
+            hidden_columns: IndexMap::new(),
             sheet_visibilities: IndexMap::new(),
         }
     }

@@ -233,6 +233,8 @@ Use `WriteOptions::with_right_to_left(true)` to display a worksheet from right t
 
 Enable MiniExcel v1-style fixed column sizing with `with_auto_width(true)`. Data payloads are measured without headers, bounded by `with_min_width()` and `with_max_width()` (defaults `8.42857143` and `200`), and written as fixed widths without `bestFit`. Typed rows perform one additional lightweight Serde pass when this option is enabled. Unlike .NET v1, Rust does not require a separate fast mode.
 
+Set explicit per-column layout by final dynamic/Serde header name with `with_column_width()` and `with_column_hidden()`. Explicit widths are AutoWidth starting minima; hidden state does not remove data and hidden columns remain queryable.
+
 Use `with_wrap_cell_contents(true)` to wrap ordinary body values. Headers, dates, times, durations, and fields with explicit number formats remain unwrapped, matching the MiniExcel v1 style boundary.
 
 Configure body-cell alignment with `with_horizontal_alignment()` and `with_vertical_alignment()`. Horizontal choices are left/general, center, and right; vertical choices are bottom, center, and top. Alignment composes with wrapping and number formats but does not affect headers.

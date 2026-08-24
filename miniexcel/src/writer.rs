@@ -68,7 +68,7 @@ impl XlsxWriter {
         }
 
         let formats = CellFormats::new(options);
-        let mut widths = AutoWidthCollector::new(schema.len(), options)?;
+        let mut widths = AutoWidthCollector::new(schema, options)?;
         for row in rows {
             for (column, header) in schema.iter().enumerate() {
                 let value = row.get(header).unwrap_or(&CellValue::Empty);
@@ -79,6 +79,7 @@ impl XlsxWriter {
         }
 
         widths.apply(&mut worksheet)?;
+        apply_column_layout(&mut worksheet, schema, options)?;
 
         if options.auto_filter() && !schema.is_empty() {
             worksheet.autofilter(0, 0, output_row.saturating_sub(1), schema.len() as u16 - 1)?;
@@ -122,7 +123,8 @@ impl XlsxWriter {
         };
 
         let mut worksheet = new_worksheet(options)?;
-        let custom_headers = serialized_field_options(first, options)?;
+        let field_names = serialized_field_names(first)?;
+        let custom_headers = serialized_field_options(&field_names, options);
         let mut header_options = SerializeFieldOptions::new()
             .hide_headers(!options.print_header())
             .set_header_format(header_format(options));
@@ -134,13 +136,14 @@ impl XlsxWriter {
             worksheet.serialize(row)?;
         }
 
-        let mut widths = AutoWidthCollector::new(0, options)?;
+        let mut widths = AutoWidthCollector::new(&field_names, options)?;
         if options.auto_width() {
             for row in rows {
                 widths.observe_serialized(row)?;
             }
             widths.apply(&mut worksheet)?;
         }
+        apply_column_layout(&mut worksheet, &field_names, options)?;
 
         if options.auto_filter() {
             let struct_name = std::any::type_name::<T>().rsplit("::").next().unwrap_or_default();
@@ -229,11 +232,14 @@ struct AutoWidthCollector {
 }
 
 impl AutoWidthCollector {
-    fn new(columns: usize, options: &WriteOptions) -> Result<Self> {
+    fn new(columns: &[String], options: &WriteOptions) -> Result<Self> {
         validate_auto_width_options(options)?;
         const PADDING: f64 = 5.0 / 7.0;
         Ok(Self {
-            widths: vec![options.min_width() + PADDING; columns],
+            widths: columns
+                .iter()
+                .map(|column| options.column_width(column).unwrap_or(options.min_width()) + PADDING)
+                .collect(),
             minimum: options.min_width() + PADDING,
             maximum: options.max_width() + PADDING,
             enabled: options.auto_width(),
@@ -456,10 +462,7 @@ fn write_cell(
     Ok(())
 }
 
-fn serialized_field_options<T>(
-    first: &T,
-    options: &WriteOptions,
-) -> Result<Vec<CustomSerializeField>>
+fn serialized_field_names<T>(first: &T) -> Result<Vec<String>>
 where
     T: Serialize,
 {
@@ -469,8 +472,15 @@ where
     let fields = value.as_object().ok_or_else(|| {
         Error::invalid_write_options("typed writing requires rows serialized as structs")
     })?;
-    Ok(fields
-        .keys()
+    Ok(fields.keys().cloned().collect())
+}
+
+fn serialized_field_options(
+    fields: &[String],
+    options: &WriteOptions,
+) -> Vec<CustomSerializeField> {
+    fields
+        .iter()
         .map(|field_name| {
             let number_format = options.column_formats().get(field_name).map(String::as_str);
             let wrap = options.wrap_cell_contents() && number_format.is_none();
@@ -480,7 +490,38 @@ where
                 number_format,
             ))
         })
-        .collect())
+        .collect()
+}
+
+fn apply_column_layout(
+    worksheet: &mut Worksheet,
+    columns: &[String],
+    options: &WriteOptions,
+) -> Result<()> {
+    validate_column_widths(options)?;
+    const PADDING: f64 = 5.0 / 7.0;
+    for (index, column) in columns.iter().enumerate() {
+        if !options.auto_width() {
+            if let Some(width) = options
+                .column_width(column)
+                .or_else(|| options.column_hidden(column).then_some(options.min_width()))
+            {
+                let pixels = ((width + PADDING) * 7.0).round() as u32;
+                worksheet.set_column_width_pixels(index as u16, pixels)?;
+            }
+        }
+        if options.column_hidden(column) {
+            worksheet.set_column_hidden(index as u16)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_column_widths(options: &WriteOptions) -> Result<()> {
+    if options.column_widths().values().any(|width| !width.is_finite() || *width < 0.0) {
+        return Err(Error::invalid_write_options("column widths must be finite and non-negative"));
+    }
+    Ok(())
 }
 
 fn validate_sheet_name(name: &str, existing_names: &HashSet<String>) -> Result<()> {

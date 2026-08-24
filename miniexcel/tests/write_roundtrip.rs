@@ -368,6 +368,68 @@ fn writes_v1_compatible_auto_widths() {
 }
 
 #[test]
+fn writes_explicit_column_widths_and_hidden_columns() {
+    let mut row = DynamicRow::new();
+    row.insert("Name".to_owned(), CellValue::String("N".repeat(30)));
+    row.insert("InternalId".to_owned(), CellValue::Int(42));
+
+    let fixed_bytes = MiniExcel::save_as_bytes(
+        &[row.clone()],
+        &WriteOptions::new().with_column_width("Name", 20.0).with_column_hidden("InternalId", true),
+    )
+    .expect("write fixed column layout");
+    let fixed_xml = worksheet_xml(&fixed_bytes);
+    assert!(fixed_xml.contains("min=\"1\" max=\"1\" width=\"20.7109375\""));
+    assert!(fixed_xml.contains("min=\"2\" max=\"2\" width=\"0\" hidden=\"1\""));
+    let read_rows = MiniExcel::query_bytes(
+        &fixed_bytes,
+        &ReadOptions::new().with_header_mode(HeaderMode::FirstRow),
+    )
+    .expect("query hidden column");
+    assert_eq!(read_rows[0]["InternalId"], CellValue::Int(42));
+
+    let auto_bytes = MiniExcel::save_as_bytes(
+        &[row],
+        &WriteOptions::new()
+            .with_auto_width(true)
+            .with_column_width("Name", 20.0)
+            .with_column_hidden("InternalId", true),
+    )
+    .expect("write auto width from explicit minimum");
+    let auto_xml = worksheet_xml(&auto_bytes);
+    assert!(auto_xml.contains("min=\"1\" max=\"1\" width=\"30.7109375\""));
+    assert!(auto_xml.contains("hidden=\"1\""));
+
+    let temp_dir = tempfile::tempdir().expect("create temp directory");
+    let path = temp_dir.path().join("typed-column-layout.xlsx");
+    let releases = [Release {
+        name: "MiniExcel".to_owned(),
+        version: 2,
+        released_on: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+        internal: false,
+    }];
+    MiniExcel::save_as_serialized_with_options(
+        &path,
+        &releases,
+        &WriteOptions::new().with_column_width("Name", 18.0).with_column_hidden("Version", true),
+    )
+    .expect("write typed column layout");
+    let typed_xml = worksheet_xml(&std::fs::read(path).unwrap());
+    assert!(typed_xml.contains("min=\"1\" max=\"1\" width=\"18.7109375\""));
+    assert!(typed_xml.contains("min=\"2\" max=\"2\" width=\"0\" hidden=\"1\""));
+
+    for width in [f64::NAN, f64::INFINITY, -1.0] {
+        assert!(
+            MiniExcel::save_as_bytes(
+                &[dynamic_row("Ada", 1)],
+                &WriteOptions::new().with_column_width("Name", width),
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn wraps_ordinary_body_cells_without_wrapping_headers_or_formatted_values() {
     let date = NaiveDate::from_ymd_opt(2026, 8, 24).unwrap();
     let mut row = DynamicRow::new();

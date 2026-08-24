@@ -52,6 +52,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | `AutoFilter` | `WriteOptions::with_auto_filter()` | 默认 `true`；覆盖完整写入范围 |
 | `RightToLeft` | `WriteOptions::with_right_to_left()` | 默认 `false`；只改变 worksheet view |
 | `EnableAutoWidth` / `MinWidth` / `MaxWidth` | `WriteOptions::with_auto_width()` / `with_min_width()` / `with_max_width()` | 固定 v1 风格 width；默认关闭、`8.42857143`、`200` |
+| 每列 width/hidden | `WriteOptions::with_column_width()` / `with_column_hidden()` | 按最终 header name 映射；explicit width 作为 AutoWidth 起点 |
 | `WrapCellContents` | `WriteOptions::with_wrap_cell_contents()` | 默认 `false`；只换行普通 body value |
 | Body 水平/垂直对齐 | `WriteOptions::with_horizontal_alignment()` / `with_vertical_alignment()` | 默认 left/general、bottom；header 独立 |
 | Header style | `HeaderStyle` / `WriteOptions::with_header_style()` | v1 蓝底白字细边框视觉默认值，可配置 wrap、RGB 和 alignment |
@@ -124,7 +125,7 @@ Rust integration test 复用仓库 `tests/data/xlsx` 下的现有文件，包括
 - 强制 shared-string 磁盘 spill、索引 lookup、无效目录处理、纯内存 byte query 和提前 drop 清理。
 - structured formula text、缓存值、A1 地址、style ID、内置/自定义 number format、range 和提前丢弃迭代器。
 
-Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、多工作表、visible/hidden/very-hidden 状态、active sheet 选择、行数、空 schema、默认/自定义/禁用冻结窗格、header/headerless/typed AutoFilter 范围、从右到左 view、有界固定 AutoWidth 输出、普通 body 换行及 formatted-value 排除、body 对齐与换行/number format 组合、默认/自定义 header style、默认/最小 cell style 模式、显式 path 覆盖行为和 worksheet name 验证。模板测试覆盖标量与混合文本、原生 number/boolean、XML 转义、公式注入防护、缺失变量策略、空数组与非空数组、多工作表、样式保留、path 覆盖和 byte 工作流。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range，以及桌面/移动 viewport。
+Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、多工作表、visible/hidden/very-hidden 状态、active sheet 选择、行数、空 schema、默认/自定义/禁用冻结窗格、header/headerless/typed AutoFilter 范围、从右到左 view、有界固定 AutoWidth 输出、explicit/hidden column layout、普通 body 换行及 formatted-value 排除、body 对齐与换行/number format 组合、默认/自定义 header style、默认/最小 cell style 模式、显式 path 覆盖行为和 worksheet name 验证。模板测试覆盖标量与混合文本、原生 number/boolean、XML 转义、公式注入防护、缺失变量策略、空数组与非空数组、多工作表、样式保留、path 覆盖和 byte 工作流。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range，以及桌面/移动 viewport。
 
 `TableStyle` 控制普通 cell format，并不是 OOXML table 抽象。两种模式都不会创建 `xl/tables` entry 或 worksheet `tableParts`。
 

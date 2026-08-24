@@ -58,6 +58,8 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | Header style | `HeaderStyle` / `WriteOptions::with_header_style()` | v1 蓝底白字细边框视觉默认值，可配置 wrap、RGB 和 alignment |
 | `TableStyles.Default` / `None` | `TableStyle::Default` / `None` | Cell styling 模式；`None` 保留 number format 与 AutoFilter |
 | 基础模板填充 | `save_as_template()` / `save_as_template_bytes()` | 标量占位符与单 row 数组展开；保留 package part |
+| 调用方持有的 XLSX input | `visit_*_from_reader()` / metadata `*_from_reader()` | 借用 `Read + Seek`；同步 visitor 模型 |
+| 调用方持有的 XLSX output | `save_as*_to_writer()` | 借用 `Write + Send`；动态、schema、类型化和多工作表 |
 
 `MiniExcel` 是唯一公共行为入口。Reader、writer、parser 和具体迭代器类型均为 crate 内部实现。公共支持类型仅限 row/cell value、结构化 provenance row、option、error/result 和 Serde date/time helper。
 
@@ -98,6 +100,8 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 
 `MiniExcel::query()` 和 `query_as()` 使用专用的路径流式 backend。worker 拥有 ZIP archive，读取 workbook relationship、style 和 shared string，然后使用 quick-xml 处理 worksheet XML。有界 channel 最多保留 8 个已解析 row。丢弃公共迭代器会断开 channel 并 join worker，因此提前执行 `take` 或 `find` 会停止后续工作。
 
+借用 reader 通过 callback 同步使用相同的两遍 parser。库不会关闭或消费 reader；ZIP discovery 每次调用都可独立 seek，调用结束后的 reader position 不保证。Callback 返回 `false` 会停止 row delivery，callback error 会原样传播。借用 writer 在调用后仍可使用，从当前位置开始写入，库不会执行 truncate。
+
 路径 query 在 `xl/sharedStrings.xml` 未压缩大小至少为 5 MiB 时，默认自动使用带索引的临时文件。`ReadOptions` 可关闭 cache、调整 threshold 或选择一个已存在的 cache 目录。索引使用固定宽度 offset/length record，因此 lookup metadata 不会随 string 数量占用更多内存。正常完成、parser failure 和提前丢弃 iterator 都会通过 worker 持有的 RAII 清理删除文件。Byte/WASM query 保持纯内存模式，因为它们不具备原生临时文件系统契约。
 
 `MiniExcel::query_structured()` 使用相同的有界 pipeline，并额外保留当前 row 与 channel 中明确 cell 的 metadata。sheet name 在每个 row 内共享，number-format string 按 style 共享。缺失 cell 不会扩展成 structured cell object。公式表达式按存储内容原样保留，但 shared formula 不会被展开，缓存值也可能过期。
@@ -123,6 +127,7 @@ Rust integration test 复用仓库 `tests/data/xlsx` 下的现有文件，包括
 - 严格流式 A1 起点、空 row 过滤、date、trim header 和提前出现的类型化 error。
 - 动态、类型化和 byte query 的可选纵向/横向 merged-cell 填充。
 - 强制 shared-string 磁盘 spill、索引 lookup、无效目录处理、纯内存 byte query 和提前 drop 清理。
+- 借用动态/类型化/structured reader、重复 metadata 读取、callback 停止/error，以及借用动态/schema/类型化/多表 writer。
 - structured formula text、缓存值、A1 地址、style ID、内置/自定义 number format、range 和提前丢弃迭代器。
 
 Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、多工作表、visible/hidden/very-hidden 状态、active sheet 选择、行数、空 schema、默认/自定义/禁用冻结窗格、header/headerless/typed AutoFilter 范围、从右到左 view、有界固定 AutoWidth 输出、explicit/hidden column layout、普通 body 换行及 formatted-value 排除、body 对齐与换行/number format 组合、默认/自定义 header style、默认/最小 cell style 模式、显式 path 覆盖行为和 worksheet name 验证。模板测试覆盖标量与混合文本、原生 number/boolean、XML 转义、公式注入防护、缺失变量策略、空数组与非空数组、多工作表、样式保留、path 覆盖和 byte 工作流。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range，以及桌面/移动 viewport。

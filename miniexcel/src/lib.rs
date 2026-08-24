@@ -31,4 +31,4 @@ pub use rag::{
     RagValue,
 };
 pub use sheet::{SheetInfo, SheetType, SheetVisibility};
-pub use streaming::ByteQuerySummary;
+pub use streaming::{ByteQuerySummary, QuerySummary};

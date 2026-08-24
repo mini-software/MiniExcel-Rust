@@ -29,7 +29,7 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 | --- | --- | --- |
 | 命名表格 | 未实现 | 按表格名称查询 OpenXML Table（`QueryTable`），并遵循表格自身的表头与范围。 |
 | DataReader 与 DataTable | 未实现 | `IDataReader`/异步 reader、架构表、强类型 getter、通过 `NextResult` 遍历工作表，以及物化为 `DataTable`。 |
-| 调用方提供的流 | 未实现 | 从调用方提供的流读取或写入、leave-open 行为及流所有权控制。Rust 路径 API 自行拥有文件，字节 API 是独立入口。 |
+| 调用方提供的流 | 部分实现 | 已实现借用的同步动态/类型化/structured visitor、metadata 读取，以及动态/schema/类型化/多表 writer，并保持 leave-open。借用 lazy iterator、async stream 和 template stream 仍不支持。 |
 | 异步与取消 | 未实现 | 异步查询/导出/模板操作、异步行源、取消令牌和进度回调。Rust 路径读取虽使用工作线程，对外迭代器仍是同步的。 |
 | 通用保存输入 | 部分实现 | 从普通对象/可枚举对象、字典、`DataTable`、`IDataReader` 和异步枚举导出，并报告进度。Rust 接受动态行或同类型 Serde 切片，并返回每张工作表的行数。 |
 | 多工作表导出 | 部分实现 | Rust 可按输入顺序创建 visible、hidden 和 very-hidden 工作表，但尚不能在一次调用中接受异构 Serde 行类型。 |

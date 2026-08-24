@@ -1,6 +1,7 @@
 mod ooxml;
 mod shared_strings;
 
+use std::io::{Read, Seek};
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
 use std::path::Path;
@@ -124,13 +125,13 @@ pub(crate) fn query_bytes(bytes: &[u8], options: &ReadOptions) -> Result<Vec<Dyn
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ByteQuerySummary {
+pub struct QuerySummary {
     sheet_name: String,
     columns: Vec<String>,
     visited_rows: usize,
 }
 
-impl ByteQuerySummary {
+impl QuerySummary {
     #[must_use]
     pub fn sheet_name(&self) -> &str {
         &self.sheet_name
@@ -146,6 +147,8 @@ impl ByteQuerySummary {
         self.visited_rows
     }
 }
+
+pub type ByteQuerySummary = QuerySummary;
 
 pub(crate) fn visit_structured_rows<F>(
     bytes: &[u8],
@@ -163,11 +166,34 @@ where
     })
 }
 
+pub(crate) fn visit_structured_rows_from_reader<R, F>(
+    reader: &mut R,
+    options: &ReadOptions,
+    mut visitor: F,
+) -> Result<String>
+where
+    R: Read + Seek,
+    F: FnMut(StructuredRow) -> Result<bool>,
+{
+    let mut shared_sheet_name = None;
+    ooxml::visit_raw_rows_from_reader(
+        reader,
+        options,
+        true,
+        !cfg!(target_arch = "wasm32"),
+        |sheet_name, selected_row| {
+            let sheet_name =
+                Arc::clone(shared_sheet_name.get_or_insert_with(|| Arc::<str>::from(sheet_name)));
+            visitor(to_structured_row(sheet_name, selected_row))
+        },
+    )
+}
+
 pub(crate) fn visit_dynamic_rows<F>(
     bytes: &[u8],
     options: &ReadOptions,
     mut visitor: F,
-) -> Result<ByteQuerySummary>
+) -> Result<QuerySummary>
 where
     F: FnMut(&str, usize, DynamicRow) -> Result<bool>,
 {
@@ -187,7 +213,108 @@ where
         visitor(sheet_name, excel_row, row)
     })?;
     let columns = headers.map_or_else(Vec::new, |headers| headers.columns());
-    Ok(ByteQuerySummary { sheet_name, columns, visited_rows })
+    Ok(QuerySummary { sheet_name, columns, visited_rows })
+}
+
+pub(crate) fn visit_dynamic_rows_from_reader<R, F>(
+    reader: &mut R,
+    options: &ReadOptions,
+    mut visitor: F,
+) -> Result<QuerySummary>
+where
+    R: Read + Seek,
+    F: FnMut(&str, usize, DynamicRow) -> Result<bool>,
+{
+    let mut headers = (!options.uses_headers(false)).then(|| Headers::ColumnLetters {
+        start_column: options.start_cell().column(),
+        headers: None,
+    });
+    let mut visited_rows = 0;
+    let sheet_name = ooxml::visit_raw_rows_from_reader(
+        reader,
+        options,
+        false,
+        !cfg!(target_arch = "wasm32"),
+        |sheet_name, selected_row| {
+            if headers.is_none() {
+                headers = Some(Headers::FirstRow(header_names(&selected_row.values)));
+                return Ok(true);
+            }
+            let excel_row = selected_row.excel_row + 1;
+            let row = to_dynamic_row(headers.as_mut().expect("headers initialized"), selected_row);
+            visited_rows += 1;
+            visitor(sheet_name, excel_row, row)
+        },
+    )?;
+    let columns = headers.map_or_else(Vec::new, |headers| headers.columns());
+    Ok(QuerySummary { sheet_name, columns, visited_rows })
+}
+
+pub(crate) fn visit_typed_rows_from_reader<R, T, F>(
+    reader: &mut R,
+    options: &ReadOptions,
+    mut visitor: F,
+) -> Result<QuerySummary>
+where
+    R: Read + Seek,
+    T: DeserializeOwned,
+    F: FnMut(&str, usize, T) -> Result<bool>,
+{
+    let uses_headers = options.uses_headers(true);
+    let mut headers = None::<Vec<Data>>;
+    let mut columns = None::<Headers>;
+    let mut visited_rows = 0;
+    let sheet_name = ooxml::visit_raw_rows_from_reader(
+        reader,
+        options,
+        false,
+        !cfg!(target_arch = "wasm32"),
+        |sheet_name, mut selected_row| {
+            if uses_headers && headers.is_none() {
+                if options.trim_headers() {
+                    trim_header_row(&mut selected_row.values);
+                }
+                columns = Some(Headers::FirstRow(header_names(&selected_row.values)));
+                headers = Some(selected_row.values);
+                return Ok(true);
+            }
+            if columns.is_none() {
+                columns = Some(Headers::ColumnLetters {
+                    start_column: selected_row.start_column,
+                    headers: None,
+                });
+            }
+            columns.as_mut().expect("columns initialized").for_width(selected_row.values.len());
+            let excel_row = selected_row.excel_row + 1;
+            let value =
+                deserialize_selected_row::<T>(sheet_name, headers.as_deref(), selected_row)?;
+            visited_rows += 1;
+            visitor(sheet_name, excel_row, value)
+        },
+    )?;
+    let columns = columns.map_or_else(Vec::new, |headers| headers.columns());
+    Ok(QuerySummary { sheet_name, columns, visited_rows })
+}
+
+pub(crate) fn sheet_names_from_reader<R>(reader: &mut R) -> Result<Vec<String>>
+where
+    R: Read + Seek,
+{
+    ooxml::sheet_names_from_reader(reader)
+}
+
+pub(crate) fn sheet_info_from_reader<R>(reader: &mut R) -> Result<Vec<crate::SheetInfo>>
+where
+    R: Read + Seek,
+{
+    ooxml::sheet_info_from_reader(reader)
+}
+
+pub(crate) fn sheet_dimensions_from_reader<R>(reader: &mut R) -> Result<Vec<crate::ExcelRange>>
+where
+    R: Read + Seek,
+{
+    ooxml::sheet_dimensions_from_reader(reader)
 }
 
 pub(crate) fn sheet_names_from_bytes(bytes: &[u8]) -> Result<Vec<String>> {
@@ -294,21 +421,32 @@ where
             Ok(row) => row,
             Err(error) => return Some(Err(error)),
         };
-        let range = row_to_range(self.headers.as_deref(), &row.values);
-        let mut builder = RangeDeserializerBuilder::new();
-        builder.has_headers(self.headers.is_some());
-        let result = builder
-            .from_range::<Data, T>(&range)
-            .and_then(|mut iterator| {
-                iterator.next().unwrap_or_else(|| {
-                    Err(calamine::DeError::Custom(
-                        "the selected Excel row did not produce a value".to_owned(),
-                    ))
-                })
-            })
-            .map_err(|source| Error::deserialize(&self.sheet_name, row.excel_row + 1, source));
-        Some(result)
+        Some(deserialize_selected_row(&self.sheet_name, self.headers.as_deref(), row))
     }
 }
 
 impl<T> FusedIterator for StreamingTypedRows<T> where T: DeserializeOwned {}
+
+fn deserialize_selected_row<T>(
+    sheet_name: &str,
+    headers: Option<&[Data]>,
+    row: crate::reader::SelectedRow,
+) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let excel_row = row.excel_row + 1;
+    let range = row_to_range(headers, &row.values);
+    let mut builder = RangeDeserializerBuilder::new();
+    builder.has_headers(headers.is_some());
+    builder
+        .from_range::<Data, T>(&range)
+        .and_then(|mut iterator| {
+            iterator.next().unwrap_or_else(|| {
+                Err(calamine::DeError::Custom(
+                    "the selected Excel row did not produce a value".to_owned(),
+                ))
+            })
+        })
+        .map_err(|source| Error::deserialize(sheet_name, excel_row, source))
+}

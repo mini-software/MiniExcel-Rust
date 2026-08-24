@@ -29,7 +29,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | --- | --- | --- |
 | Named tables | Missing | Query an OpenXML table by table name (`QueryTable`), including table-specific headers and bounds. |
 | DataReader and DataTable | Missing | `IDataReader`/async reader access, schema tables, typed getters, `NextResult` sheet traversal, and `DataTable` materialization. |
-| Caller-owned streams | Missing | Read from and write to caller-owned streams, leave-open behavior, and stream ownership controls. Rust path APIs own their files; byte APIs are separate. |
+| Caller-owned streams | Partial | Borrowed synchronous dynamic/typed/structured visitors, metadata reads, and dynamic/schema/typed/multi-sheet writers are implemented with leave-open semantics. Borrowed lazy iterators, async streams, and template streams remain unsupported. |
 | Async and cancellation | Missing | Async query/export/template operations, async row sources, cancellation tokens, and progress callbacks. Rust iterators are synchronous even though path reads use a worker thread. |
 | General save inputs | Partial | Export from general objects/enumerables, dictionaries, `DataTable`, `IDataReader`, and async enumerables, with progress. Rust accepts dynamic or same-type Serde slices and reports per-sheet row counts. |
 | Multi-sheet export | Partial | Rust creates ordered visible, hidden, and very-hidden worksheets, but does not yet accept heterogeneous Serde row types in one call. |

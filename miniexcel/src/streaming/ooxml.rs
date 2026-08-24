@@ -38,15 +38,29 @@ pub(super) fn visit_raw_rows<F>(
     bytes: &[u8],
     options: &ReadOptions,
     preserve_structure: bool,
-    mut visitor: F,
+    visitor: F,
 ) -> Result<String>
 where
     F: FnMut(&str, SelectedRow) -> Result<bool>,
 {
+    visit_raw_rows_from_reader(Cursor::new(bytes), options, preserve_structure, false, visitor)
+}
+
+pub(super) fn visit_raw_rows_from_reader<R, F>(
+    reader: R,
+    options: &ReadOptions,
+    preserve_structure: bool,
+    allow_disk_cache: bool,
+    mut visitor: F,
+) -> Result<String>
+where
+    R: Read + Seek,
+    F: FnMut(&str, SelectedRow) -> Result<bool>,
+{
     validate_range(options)?;
-    let mut archive = ZipArchive::new(Cursor::new(bytes))
-        .map_err(|error| stream_error("cannot open in-memory XLSX data:", error))?;
-    let context = prepare_workbook(&mut archive, options, preserve_structure, false)?;
+    let mut archive =
+        ZipArchive::new(reader).map_err(|error| stream_error("cannot open XLSX reader:", error))?;
+    let context = prepare_workbook(&mut archive, options, preserve_structure, allow_disk_cache)?;
     let sheet_name = context.sheet_name.clone();
     let cancelled = AtomicBool::new(false);
     let scan = scan_worksheet(&mut archive, &context.sheet_path, &cancelled)?;
@@ -68,8 +82,15 @@ where
 }
 
 pub(super) fn sheet_names_from_bytes(bytes: &[u8]) -> Result<Vec<String>> {
-    let mut archive = ZipArchive::new(Cursor::new(bytes))
-        .map_err(|error| stream_error("cannot open in-memory XLSX data:", error))?;
+    sheet_names_from_reader(Cursor::new(bytes))
+}
+
+pub(super) fn sheet_names_from_reader<R>(reader: R) -> Result<Vec<String>>
+where
+    R: Read + Seek,
+{
+    let mut archive =
+        ZipArchive::new(reader).map_err(|error| stream_error("cannot open XLSX reader:", error))?;
     Ok(read_workbook_info(&mut archive)?.sheets.into_iter().map(|sheet| sheet.name).collect())
 }
 
@@ -88,8 +109,15 @@ pub(super) fn sheet_info(path: impl AsRef<Path>) -> Result<Vec<PublicSheetInfo>>
 }
 
 pub(super) fn sheet_info_from_bytes(bytes: &[u8]) -> Result<Vec<PublicSheetInfo>> {
-    let mut archive = ZipArchive::new(Cursor::new(bytes))
-        .map_err(|error| stream_error("cannot open in-memory XLSX data:", error))?;
+    sheet_info_from_reader(Cursor::new(bytes))
+}
+
+pub(super) fn sheet_info_from_reader<R>(reader: R) -> Result<Vec<PublicSheetInfo>>
+where
+    R: Read + Seek,
+{
+    let mut archive =
+        ZipArchive::new(reader).map_err(|error| stream_error("cannot open XLSX reader:", error))?;
     read_sheet_info(&mut archive)
 }
 
@@ -131,8 +159,15 @@ pub(super) fn sheet_dimensions(path: impl AsRef<Path>) -> Result<Vec<ExcelRange>
 }
 
 pub(super) fn sheet_dimensions_from_bytes(bytes: &[u8]) -> Result<Vec<ExcelRange>> {
-    let mut archive = ZipArchive::new(Cursor::new(bytes))
-        .map_err(|error| stream_error("cannot open in-memory XLSX data:", error))?;
+    sheet_dimensions_from_reader(Cursor::new(bytes))
+}
+
+pub(super) fn sheet_dimensions_from_reader<R>(reader: R) -> Result<Vec<ExcelRange>>
+where
+    R: Read + Seek,
+{
+    let mut archive =
+        ZipArchive::new(reader).map_err(|error| stream_error("cannot open XLSX reader:", error))?;
     read_sheet_dimensions(&mut archive)
 }
 

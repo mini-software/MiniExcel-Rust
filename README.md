@@ -96,6 +96,21 @@ for record in MiniExcel::query_as::<Record>("book.xlsx")? {
 
 `MiniExcel::query()` and `query_as()` accept paths because a worker owns the ZIP archive while the iterator is alive.
 
+## Borrowed Readers And Writers
+
+Use visitor APIs for caller-owned `Read + Seek` sources without materializing all rows or transferring ownership:
+
+```rust
+MiniExcel::visit_rows_from_reader(&mut input, &options, |excel_row, row| {
+    println!("{excel_row}: {:?}", row);
+    Ok(true)
+})?;
+```
+
+Typed and structured visitors plus sheet names, information, dimensions, and columns are also available from borrowed readers. Borrowed lazy iterators are intentionally not exposed because path iterators move their reader into a worker thread.
+
+Dynamic, explicit-schema, typed, and multi-sheet workbooks can be written to a borrowed `Write + Send` sink with the `*_to_writer` APIs. The library does not close readers or writers. Reader position is unspecified after a call. Writer output begins at the current position and does not truncate existing content, so callers should provide an empty or already-truncated sink.
+
 > **Memory boundary:** the streaming path keeps workbook metadata, styles, a small row channel, and parser buffers in memory. Shared-string tables at least 5 MiB spill to indexed temporary files by default; dropping the iterator removes them. Configure this with `with_shared_string_disk_cache()`, `with_shared_string_cache_size()`, and `with_shared_string_cache_path()`. The directory must already exist. Byte/WASM queries always keep shared strings in memory. Worksheet XML and prior rows are never retained. Peak memory can still grow with a single exceptionally large row, but not with the full worksheet row count.
 
 ## Structured Streaming Query

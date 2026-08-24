@@ -1,3 +1,4 @@
+use std::io::{Read, Seek, Write};
 use std::path::Path;
 
 use serde::Serialize;
@@ -6,9 +7,9 @@ use serde::de::DeserializeOwned;
 use crate::streaming::{StreamingRows, StreamingStructuredRows, StreamingTypedRows};
 use crate::writer::XlsxWriter;
 use crate::{
-    AnalysisResult, ByteQuerySummary, DynamicRow, ExcelRange, QueryPlan, RagChunk, RagExport,
-    RagExportOptions, RagManifest, ReadOptions, Result, SheetInfo, StructuredRow, TemplateOptions,
-    WriteOptions,
+    AnalysisResult, ByteQuerySummary, DynamicRow, ExcelRange, QueryPlan, QuerySummary, RagChunk,
+    RagExport, RagExportOptions, RagManifest, ReadOptions, Result, SheetInfo, StructuredRow,
+    TemplateOptions, WriteOptions,
 };
 
 /// Convenience entry points for the common path-based MiniExcel workflow.
@@ -25,6 +26,14 @@ impl MiniExcel {
         crate::streaming::sheet_names_from_bytes(bytes)
     }
 
+    /// Returns worksheet names from a borrowed seekable XLSX reader.
+    pub fn get_sheet_names_from_reader<R>(reader: &mut R) -> Result<Vec<String>>
+    where
+        R: Read + Seek,
+    {
+        crate::streaming::sheet_names_from_reader(reader)
+    }
+
     /// Returns worksheet metadata in workbook order.
     pub fn get_sheet_info(path: impl AsRef<Path>) -> Result<Vec<SheetInfo>> {
         crate::streaming::sheet_info(path)
@@ -35,6 +44,14 @@ impl MiniExcel {
         crate::streaming::sheet_info_from_bytes(bytes)
     }
 
+    /// Returns worksheet metadata from a borrowed seekable XLSX reader.
+    pub fn get_sheet_info_from_reader<R>(reader: &mut R) -> Result<Vec<SheetInfo>>
+    where
+        R: Read + Seek,
+    {
+        crate::streaming::sheet_info_from_reader(reader)
+    }
+
     /// Returns the used range of each worksheet in workbook order.
     pub fn get_sheet_dimensions(path: impl AsRef<Path>) -> Result<Vec<ExcelRange>> {
         crate::streaming::sheet_dimensions(path)
@@ -43,6 +60,14 @@ impl MiniExcel {
     /// Returns worksheet used ranges from an in-memory XLSX workbook.
     pub fn get_sheet_dimensions_from_bytes(bytes: &[u8]) -> Result<Vec<ExcelRange>> {
         crate::streaming::sheet_dimensions_from_bytes(bytes)
+    }
+
+    /// Returns worksheet dimensions from a borrowed seekable XLSX reader.
+    pub fn get_sheet_dimensions_from_reader<R>(reader: &mut R) -> Result<Vec<ExcelRange>>
+    where
+        R: Read + Seek,
+    {
+        crate::streaming::sheet_dimensions_from_reader(reader)
     }
 
     /// Streams dynamic rows from the first worksheet without a header row.
@@ -104,6 +129,60 @@ impl MiniExcel {
         crate::streaming::visit_dynamic_rows(bytes, options, |_, excel_row, row| {
             visitor(excel_row, &row)
         })
+    }
+
+    /// Visits dynamic rows from a borrowed seekable XLSX reader without taking ownership.
+    pub fn visit_rows_from_reader<R, F>(
+        reader: &mut R,
+        options: &ReadOptions,
+        mut visitor: F,
+    ) -> Result<QuerySummary>
+    where
+        R: Read + Seek,
+        F: FnMut(usize, &DynamicRow) -> Result<bool>,
+    {
+        crate::streaming::visit_dynamic_rows_from_reader(reader, options, |_, excel_row, row| {
+            visitor(excel_row, &row)
+        })
+    }
+
+    /// Visits typed rows from a borrowed seekable XLSX reader without taking ownership.
+    pub fn visit_rows_as_from_reader<T, R, F>(
+        reader: &mut R,
+        options: &ReadOptions,
+        mut visitor: F,
+    ) -> Result<QuerySummary>
+    where
+        T: DeserializeOwned,
+        R: Read + Seek,
+        F: FnMut(usize, &T) -> Result<bool>,
+    {
+        crate::streaming::visit_typed_rows_from_reader(reader, options, |_, excel_row, row| {
+            visitor(excel_row, &row)
+        })
+    }
+
+    /// Visits sparse structure-preserving rows from a borrowed seekable XLSX reader.
+    pub fn visit_structured_rows_from_reader<R, F>(
+        reader: &mut R,
+        options: &ReadOptions,
+        mut visitor: F,
+    ) -> Result<String>
+    where
+        R: Read + Seek,
+        F: FnMut(&StructuredRow) -> Result<bool>,
+    {
+        crate::streaming::visit_structured_rows_from_reader(reader, options, |row| visitor(&row))
+    }
+
+    /// Returns selected dynamic column names from a borrowed seekable XLSX reader.
+    pub fn get_columns_from_reader<R>(reader: &mut R, options: &ReadOptions) -> Result<Vec<String>>
+    where
+        R: Read + Seek,
+    {
+        let summary =
+            crate::streaming::visit_dynamic_rows_from_reader(reader, options, |_, _, _| Ok(false))?;
+        Ok(summary.columns().to_vec())
     }
 
     /// Streams worksheet rows into a grouped analytical query.
@@ -217,6 +296,60 @@ impl MiniExcel {
         writer.save_to_bytes()
     }
 
+    /// Writes a dynamic XLSX workbook to a borrowed writer without closing it.
+    pub fn save_as_to_writer<W>(
+        writer: &mut W,
+        rows: &[DynamicRow],
+        options: &WriteOptions,
+    ) -> Result<()>
+    where
+        W: Write + Send,
+    {
+        let mut xlsx_writer = XlsxWriter::new();
+        xlsx_writer.add_rows(rows, options)?;
+        xlsx_writer.save_to_writer(writer)
+    }
+
+    /// Writes an explicit-schema dynamic XLSX workbook to a borrowed writer.
+    pub fn save_as_with_schema_to_writer<W>(
+        writer: &mut W,
+        schema: &[String],
+        rows: &[DynamicRow],
+        options: &WriteOptions,
+    ) -> Result<()>
+    where
+        W: Write + Send,
+    {
+        let mut xlsx_writer = XlsxWriter::new();
+        xlsx_writer.add_rows_with_schema(schema, rows, options)?;
+        xlsx_writer.save_to_writer(writer)
+    }
+
+    /// Writes multiple dynamic worksheets to a borrowed writer.
+    pub fn save_as_sheets_to_writer<'a, W, I, N>(
+        writer: &mut W,
+        sheets: I,
+        options: &WriteOptions,
+    ) -> Result<Vec<usize>>
+    where
+        W: Write + Send,
+        I: IntoIterator<Item = (N, &'a [DynamicRow])>,
+        N: AsRef<str>,
+    {
+        let mut xlsx_writer = XlsxWriter::new();
+        let mut row_counts = Vec::new();
+        for (sheet_name, rows) in sheets {
+            let sheet_options = options.clone().with_sheet_name(sheet_name.as_ref());
+            xlsx_writer.add_rows(rows, &sheet_options)?;
+            row_counts.push(rows.len());
+        }
+        if row_counts.is_empty() {
+            return Err(crate::Error::no_worksheets());
+        }
+        xlsx_writer.save_to_writer(writer)?;
+        Ok(row_counts)
+    }
+
     /// Creates a new XLSX workbook using an explicit dynamic schema.
     pub fn save_as_with_schema(
         path: impl AsRef<Path>,
@@ -249,6 +382,47 @@ impl MiniExcel {
         let mut writer = XlsxWriter::new();
         writer.add_serialized(rows, options)?;
         writer.save(path, options.overwrite_file())
+    }
+
+    /// Writes Serde rows to a borrowed writer without closing it.
+    pub fn save_as_serialized_to_writer<T, W>(
+        writer: &mut W,
+        rows: &[T],
+        options: &WriteOptions,
+    ) -> Result<()>
+    where
+        T: Serialize,
+        W: Write + Send,
+    {
+        let mut xlsx_writer = XlsxWriter::new();
+        xlsx_writer.add_serialized(rows, options)?;
+        xlsx_writer.save_to_writer(writer)
+    }
+
+    /// Writes multiple same-type Serde worksheets to a borrowed writer.
+    pub fn save_as_serialized_sheets_to_writer<'a, T, W, I, N>(
+        writer: &mut W,
+        sheets: I,
+        options: &WriteOptions,
+    ) -> Result<Vec<usize>>
+    where
+        T: Serialize + 'a,
+        W: Write + Send,
+        I: IntoIterator<Item = (N, &'a [T])>,
+        N: AsRef<str>,
+    {
+        let mut xlsx_writer = XlsxWriter::new();
+        let mut row_counts = Vec::new();
+        for (sheet_name, rows) in sheets {
+            let sheet_options = options.clone().with_sheet_name(sheet_name.as_ref());
+            xlsx_writer.add_serialized(rows, &sheet_options)?;
+            row_counts.push(rows.len());
+        }
+        if row_counts.is_empty() {
+            return Err(crate::Error::no_worksheets());
+        }
+        xlsx_writer.save_to_writer(writer)?;
+        Ok(row_counts)
     }
 
     /// Creates a new XLSX workbook containing multiple Serde-serializable worksheets.

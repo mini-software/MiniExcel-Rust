@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 
 use indexmap::IndexSet;
@@ -104,6 +105,15 @@ impl XlsxWriter {
     pub(crate) fn save_to_bytes(&mut self) -> Result<Vec<u8>> {
         self.validate_workbook()?;
         Ok(self.workbook.save_to_buffer()?)
+    }
+
+    pub(crate) fn save_to_writer<W>(&mut self, writer: &mut W) -> Result<()>
+    where
+        W: Write + Send,
+    {
+        self.validate_workbook()?;
+        self.workbook.save_to_writer(writer)?;
+        Ok(())
     }
 
     pub(crate) fn add_serialized<T>(&mut self, rows: &[T], options: &WriteOptions) -> Result<()>

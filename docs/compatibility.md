@@ -58,6 +58,8 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Header style | `HeaderStyle` / `WriteOptions::with_header_style()` | Blue/white/thin-border v1 visual default with configurable wrap, RGB, and alignment |
 | `TableStyles.Default` / `None` | `TableStyle::Default` / `None` | Cell styling modes; `None` retains number formats and AutoFilter |
 | Basic template fill | `save_as_template()` / `save_as_template_bytes()` | Scalar placeholders and single-row array expansion; preserves package parts |
+| Caller-owned XLSX input | `visit_*_from_reader()` / metadata `*_from_reader()` | Borrowed `Read + Seek`; synchronous visitor model |
+| Caller-owned XLSX output | `save_as*_to_writer()` | Borrowed `Write + Send`; dynamic, schema, typed, and multi-sheet |
 
 `MiniExcel` is the only public behavior entry point. Reader, writer, parser, and concrete iterator types are crate-internal. Public supporting types are limited to row/cell values, structured provenance rows, options, errors/results, and Serde date/time helpers.
 
@@ -98,6 +100,8 @@ For typed writing, chrono values must use the matching MiniExcel helper (`serial
 
 `MiniExcel::query()` and `query_as()` use a dedicated path-streaming backend. A worker owns the ZIP archive, reads workbook relationships, styles, and shared strings, then processes worksheet XML with quick-xml. A bounded channel holds at most eight parsed rows. Dropping the public iterator disconnects the channel and joins the worker, so an early `take` or `find` stops further work.
 
+Borrowed readers use the same two-pass parser synchronously through callbacks. They are never closed or consumed by the library; ZIP discovery may seek independently on every call, and the final reader position is unspecified. Callback `false` stops row delivery, while callback errors propagate unchanged. Borrowed writers are left usable, begin at their current position, and are not truncated by the library.
+
 Path queries automatically store `xl/sharedStrings.xml` in indexed temporary files when its uncompressed size is at least 5 MiB. `ReadOptions` can disable the cache, change the threshold, or select an existing cache directory. The index uses fixed-width offset/length records, so lookup metadata does not grow in memory with string count. Normal completion, parser failure, and early iterator drop remove the files through worker-owned RAII cleanup. Byte/WASM queries remain memory-only because they do not own a native temporary-filesystem contract.
 
 `MiniExcel::query_structured()` uses the same bounded pipeline and additionally retains metadata for explicit cells in the current row and channel. Sheet names are shared per row, and number-format strings are shared by style. Missing cells are not expanded into structured cell objects. Formula expressions are preserved exactly as stored, but shared formulas are not expanded and cached values can be stale.
@@ -123,6 +127,7 @@ Rust integration tests reuse the repository's existing files under `tests/data/x
 - Strict streaming A1 starts, empty-row filtering, dates, trimmed headers, and early typed errors.
 - Opt-in vertical and horizontal merged-cell filling across dynamic, typed, and byte queries.
 - Forced shared-string disk spill, indexed lookup, invalid-directory handling, memory-only byte queries, and early-drop cleanup.
+- Borrowed dynamic, typed, and structured readers; repeated metadata reads; callback stopping/errors; borrowed dynamic/schema/typed/multi-sheet writers.
 - Structured formula text, cached values, A1 addresses, style IDs, built-in/custom number formats, ranges, and early iterator drop.
 
 Writer tests generate temporary workbooks through `MiniExcel::save_as*()` and read them back through `MiniExcel::query*()`, covering dynamic and typed values, dates, multiple worksheets, visible/hidden/very-hidden states, active-sheet selection, row counts, empty schemas, default/custom/disabled freeze panes, header/headerless/typed AutoFilter ranges, right-to-left views, bounded fixed AutoWidth output, explicit/hidden column layout, ordinary body wrapping with formatted-value exclusions, body alignment composed with wrapping and number formats, default/custom header styles, default/minimal cell style modes, explicit path overwrite behavior, and worksheet-name validation. Template tests cover scalar and mixed text, native numbers and booleans, XML escaping, formula-injection protection, missing-variable policy, empty and populated arrays, multiple sheets, style retention, path overwrite, and byte workflows. The WASM adapter has native unit tests, while Browser Lab Playwright tests cover generated-workbook rendering, query controls, inclusive end ranges, and desktop/mobile viewports.

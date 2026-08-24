@@ -96,6 +96,21 @@ for record in MiniExcel::query_as::<Record>("book.xlsx")? {
 
 `MiniExcel::query()` 和 `query_as()` 接收路径，因为迭代器存活期间由 worker 持有 ZIP archive。
 
+## 借用 Reader 与 Writer
+
+对调用方持有的 `Read + Seek` source，可使用 visitor API 流式处理，不会物化全部 row 或转移所有权：
+
+```rust
+MiniExcel::visit_rows_from_reader(&mut input, &options, |excel_row, row| {
+    println!("{excel_row}: {:?}", row);
+    Ok(true)
+})?;
+```
+
+借用 reader 还支持类型化/structured visitor，以及 sheet name、information、dimension 和 column。这里刻意不提供借用 lazy iterator，因为路径 iterator 会把 reader 移入 worker thread。
+
+动态、显式 schema、类型化和多工作表 workbook 可通过 `*_to_writer` API 写入借用的 `Write + Send` sink。库不会关闭 reader 或 writer。调用结束后的 reader position 不保证；writer 从当前位置开始写入且不截断既有内容，因此调用方应提供空或已截断的 sink。
+
 > **内存边界：** 流式路径会在内存中保留工作簿元数据、样式、少量行 channel 和 parser buffer。默认情况下，至少 5 MiB 的 shared-string table 会 spill 到带索引的临时文件；丢弃 iterator 后自动删除。可通过 `with_shared_string_disk_cache()`、`with_shared_string_cache_size()` 和 `with_shared_string_cache_path()` 配置，目录必须预先存在。Byte/WASM query 始终将 shared string 保留在内存中。Worksheet XML 和先前 row 永远不会保留；峰值内存仍可能随单个超大 row 增长，但不会随 worksheet 总行数增长。
 
 ## 保留结构的流式 Query

@@ -239,19 +239,21 @@ Acceptance:
 
 Depends on Task 4.
 
-- [ ] Write path inserts to a uniquely named sibling temporary file opened with `create_new`.
-- [ ] Finish the ZIP central directory, flush, sync the temporary file, and reopen it for structural validation.
-- [ ] Validate workbook/rels/content-types consistency, unique IDs/targets, worksheet availability, and at least one visible worksheet.
-- [ ] Commit with a safe cross-platform replacement primitive. Workspace code must remain `unsafe`-free; evaluate the existing `tempfile` API first and add a narrowly scoped dependency only if required.
-- [ ] Preserve original file permissions where supported.
-- [ ] Clean temporary package and row-spool files on all error paths.
-- [ ] Add failure injection at preflight, row generation, ZIP copy, ZIP finish, validation, and commit.
+- [x] Write path inserts to a uniquely named sibling temporary file opened with `create_new`.
+- [x] Finish the ZIP central directory, flush, sync the temporary file, and reopen it for structural validation.
+- [x] Validate workbook/rels/content-types consistency, unique IDs/targets, worksheet availability, and at least one visible worksheet.
+- [x] Commit with a safe cross-platform replacement primitive. Workspace code must remain `unsafe`-free; evaluate the existing `tempfile` API first and add a narrowly scoped dependency only if required.
+- [x] Preserve original file permissions where supported.
+- [x] Clean temporary package and row-spool files on all error paths.
+- [x] Add failure injection at preflight, row generation, ZIP copy, ZIP finish, validation, and commit.
+
+Completed on 2026-08-24. Focused test: `cargo +1.85.0 test -p miniexcel insert::atomic::tests --lib --locked`. Windows replacement uses the safe `atomicwrites` wrapper so staged attributes are preserved; Unix mode-bit coverage runs under `cfg(unix)` in CI.
 
 Acceptance:
 
 - The original workbook hash remains unchanged for every injected pre-commit failure.
 - Successful replacement works on Linux and Windows CI.
-- Focused command: `cargo +1.85.0 test -p miniexcel --test insert atomic_commit --locked`.
+- Focused command: `cargo +1.85.0 test -p miniexcel insert::atomic::tests --lib --locked`.
 
 ### Task 6: Public Append API
 

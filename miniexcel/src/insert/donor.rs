@@ -79,7 +79,7 @@ impl DonorBuilder {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn build_from_dynamic_iter<I>(
+pub(super) fn build_from_dynamic_iter<I>(
     schema: &[String],
     rows: I,
     options: &WriteOptions,

@@ -27,6 +27,9 @@ zip.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tempfile.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+atomicwrites.workspace = true
+
 [dev-dependencies]
 serde_json.workspace = true
 tempfile.workspace = true

@@ -19,9 +19,42 @@ const WORKSHEET_CONTENT_TYPE: &str =
 const WORKSHEET_RELATIONSHIP_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet";
 
-pub(crate) fn append_worksheet<R>(mut source: R, donor: &DonorWorksheet) -> Result<Vec<u8>>
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum PackageRewriteStage {
+    Copy,
+    Finish,
+}
+
+pub(crate) fn append_worksheet<R>(source: R, donor: &DonorWorksheet) -> Result<Vec<u8>>
 where
     R: Read + Seek,
+{
+    let output = append_worksheet_to_writer(source, Cursor::new(Vec::new()), donor)?;
+    Ok(output.into_inner())
+}
+
+pub(crate) fn append_worksheet_to_writer<R, W>(
+    source: R,
+    destination: W,
+    donor: &DonorWorksheet,
+) -> Result<W>
+where
+    R: Read + Seek,
+    W: Write + Seek,
+{
+    append_worksheet_to_writer_with_hook(source, destination, donor, |_| Ok(()))
+}
+
+pub(super) fn append_worksheet_to_writer_with_hook<R, W, F>(
+    mut source: R,
+    destination: W,
+    donor: &DonorWorksheet,
+    mut checkpoint: F,
+) -> Result<W>
+where
+    R: Read + Seek,
+    W: Write + Seek,
+    F: FnMut(PackageRewriteStage) -> Result<()>,
 {
     let inventory = PackageInventory::inspect(&mut source)?;
     inventory.ensure_sheet_absent(&donor.sheet_name)?;
@@ -70,7 +103,14 @@ where
         (WORKBOOK_RELS_PATH.to_owned(), workbook_rels_xml),
         (styles_path, style_rebase.styles_xml),
     ]);
-    write_package(archive, &replacements, &allocation.package_path, &style_rebase.worksheet_xml)
+    write_package(
+        archive,
+        destination,
+        &replacements,
+        &allocation.package_path,
+        &style_rebase.worksheet_xml,
+        &mut checkpoint,
+    )
 }
 
 fn styles_path(inventory: &PackageInventory) -> Result<String> {
@@ -398,21 +438,26 @@ where
     Ok(bytes)
 }
 
-fn write_package<R>(
+fn write_package<R, W, F>(
     mut archive: ZipArchive<R>,
+    destination: W,
     replacements: &BTreeMap<String, Vec<u8>>,
     worksheet_path: &str,
     worksheet_xml: &[u8],
-) -> Result<Vec<u8>>
+    checkpoint: &mut F,
+) -> Result<W>
 where
     R: Read + Seek,
+    W: Write + Seek,
+    F: FnMut(PackageRewriteStage) -> Result<()>,
 {
     let comment = archive.comment().to_vec();
     let zip64_comment = archive.zip64_comment().map(<[u8]>::to_vec);
-    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let mut writer = ZipWriter::new(destination);
     writer.set_raw_comment(comment.into_boxed_slice());
     writer.set_raw_zip64_comment(zip64_comment.map(Vec::into_boxed_slice));
 
+    checkpoint(PackageRewriteStage::Copy)?;
     for index in 0..archive.len() {
         let entry = archive.by_index_raw(index).map_err(|error| {
             Error::insert_package(format!("cannot copy source ZIP entry: {error}"))
@@ -440,9 +485,9 @@ where
             Error::insert_package(format!("cannot create worksheet '{worksheet_path}': {error}"))
         })?;
     writer.write_all(worksheet_xml)?;
+    checkpoint(PackageRewriteStage::Finish)?;
     writer
         .finish()
-        .map(Cursor::into_inner)
         .map_err(|error| Error::insert_package(format!("cannot finish rewritten package: {error}")))
 }
 

@@ -70,6 +70,7 @@ enum ErrorKind {
     ExistingWorksheet(String),
 
     #[error("atomic workbook commit failed: {0}")]
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     AtomicCommit(String),
 
     #[error("failed to deserialize worksheet '{sheet}' at Excel row {row}: {source}")]
@@ -166,7 +167,7 @@ impl Error {
         ErrorKind::ExistingWorksheet(sheet_name.into()).into()
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn atomic_commit(message: impl Into<String>) -> Self {
         ErrorKind::AtomicCommit(message.into()).into()
     }

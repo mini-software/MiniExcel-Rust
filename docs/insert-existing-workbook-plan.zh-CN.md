@@ -239,19 +239,21 @@ Donor-workbook 方案复用经过测试的 `XlsxWriter`，避免重复实现 ser
 
 依赖 Task 4。
 
-- [ ] Path insert 写入同目录、使用 `create_new` 打开的唯一临时文件。
-- [ ] 完成 ZIP central directory、flush、sync 临时文件，并重新打开做结构验证。
-- [ ] 验证 workbook/rels/content-types 一致性、ID/target 唯一、worksheet 可访问，且至少一个 visible worksheet。
-- [ ] 使用安全的跨平台 replacement primitive。Workspace code 必须保持无 `unsafe`；先评估现有 `tempfile` API，只在必要时增加范围很窄的 dependency。
-- [ ] 可行时保留 source permission。
-- [ ] 所有 error path 清理临时 package 和 row spool。
-- [ ] 在 preflight、row generation、ZIP copy、ZIP finish、validation 和 commit 阶段加入 failure injection。
+- [x] Path insert 写入同目录、使用 `create_new` 打开的唯一临时文件。
+- [x] 完成 ZIP central directory、flush、sync 临时文件，并重新打开做结构验证。
+- [x] 验证 workbook/rels/content-types 一致性、ID/target 唯一、worksheet 可访问，且至少一个 visible worksheet。
+- [x] 使用安全的跨平台 replacement primitive。Workspace code 必须保持无 `unsafe`；先评估现有 `tempfile` API，只在必要时增加范围很窄的 dependency。
+- [x] 可行时保留 source permission。
+- [x] 所有 error path 清理临时 package 和 row spool。
+- [x] 在 preflight、row generation、ZIP copy、ZIP finish、validation 和 commit 阶段加入 failure injection。
+
+已于 2026-08-24 完成。聚焦测试：`cargo +1.85.0 test -p miniexcel insert::atomic::tests --lib --locked`。Windows replacement 使用安全的 `atomicwrites` wrapper 以保留 staged attribute；Unix mode-bit 覆盖在 CI 的 `cfg(unix)` 下执行。
 
 验收：
 
 - 每个 commit 前注入失败都保持原 workbook hash 不变。
 - Linux 与 Windows CI 上成功 replacement。
-- 聚焦命令：`cargo +1.85.0 test -p miniexcel --test insert atomic_commit --locked`。
+- 聚焦命令：`cargo +1.85.0 test -p miniexcel insert::atomic::tests --lib --locked`。
 
 ### Task 6：公共 Append API
 

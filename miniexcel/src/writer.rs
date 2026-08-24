@@ -4,7 +4,8 @@ use std::path::Path;
 
 use indexmap::IndexSet;
 use rust_xlsxwriter::{
-    CustomSerializeField, Format, FormatAlign, SerializeFieldOptions, Workbook, Worksheet,
+    Color, CustomSerializeField, Format, FormatAlign, FormatBorder, SerializeFieldOptions,
+    Workbook, Worksheet,
 };
 use serde::Serialize;
 
@@ -59,8 +60,9 @@ impl XlsxWriter {
 
         let mut output_row = 0_u32;
         if options.print_header() {
+            let header_format = header_format(options);
             for (column, header) in schema.iter().enumerate() {
-                worksheet.write_string(0, column as u16, header)?;
+                worksheet.write_string_with_format(0, column as u16, header, &header_format)?;
             }
             output_row = 1;
         }
@@ -121,7 +123,9 @@ impl XlsxWriter {
 
         let mut worksheet = new_worksheet(options)?;
         let custom_headers = serialized_field_options(first, options)?;
-        let mut header_options = SerializeFieldOptions::new().hide_headers(!options.print_header());
+        let mut header_options = SerializeFieldOptions::new()
+            .hide_headers(!options.print_header())
+            .set_header_format(header_format(options));
         if !custom_headers.is_empty() {
             header_options = header_options.set_custom_headers(&custom_headers);
         }
@@ -376,6 +380,30 @@ fn body_format(options: &WriteOptions, wrap: bool, number_format: Option<&str>) 
     }
     if let Some(number_format) = number_format {
         format = format.set_num_format(number_format);
+    }
+    format
+}
+
+fn header_format(options: &WriteOptions) -> Format {
+    let style = options.header_style();
+    let horizontal = match style.horizontal_alignment() {
+        HorizontalAlignment::Left => FormatAlign::General,
+        HorizontalAlignment::Center => FormatAlign::Center,
+        HorizontalAlignment::Right => FormatAlign::Right,
+    };
+    let vertical = match style.vertical_alignment() {
+        VerticalAlignment::Bottom => FormatAlign::Bottom,
+        VerticalAlignment::Center => FormatAlign::VerticalCenter,
+        VerticalAlignment::Top => FormatAlign::Top,
+    };
+    let mut format = Format::new()
+        .set_font_color(Color::White)
+        .set_background_color(Color::RGB(style.background_color().value()))
+        .set_border(FormatBorder::Thin)
+        .set_align(horizontal)
+        .set_align(vertical);
+    if style.wrap_text() {
+        format = format.set_text_wrap();
     }
     format
 }

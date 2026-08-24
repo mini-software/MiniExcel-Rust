@@ -27,6 +27,91 @@ pub enum VerticalAlignment {
     Top,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RgbColor {
+    red: u8,
+    green: u8,
+    blue: u8,
+}
+
+impl RgbColor {
+    #[must_use]
+    pub const fn new(red: u8, green: u8, blue: u8) -> Self {
+        Self { red, green, blue }
+    }
+
+    #[must_use]
+    pub const fn value(self) -> u32 {
+        ((self.red as u32) << 16) | ((self.green as u32) << 8) | self.blue as u32
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HeaderStyle {
+    wrap_text: bool,
+    background_color: RgbColor,
+    horizontal_alignment: HorizontalAlignment,
+    vertical_alignment: VerticalAlignment,
+}
+
+impl HeaderStyle {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            wrap_text: false,
+            background_color: RgbColor::new(0x44, 0x72, 0xC4),
+            horizontal_alignment: HorizontalAlignment::Left,
+            vertical_alignment: VerticalAlignment::Bottom,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_wrap_text(mut self, enabled: bool) -> Self {
+        self.wrap_text = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_background_color(mut self, color: RgbColor) -> Self {
+        self.background_color = color;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_horizontal_alignment(mut self, alignment: HorizontalAlignment) -> Self {
+        self.horizontal_alignment = alignment;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_vertical_alignment(mut self, alignment: VerticalAlignment) -> Self {
+        self.vertical_alignment = alignment;
+        self
+    }
+
+    pub(crate) const fn wrap_text(self) -> bool {
+        self.wrap_text
+    }
+
+    pub(crate) const fn background_color(self) -> RgbColor {
+        self.background_color
+    }
+
+    pub(crate) const fn horizontal_alignment(self) -> HorizontalAlignment {
+        self.horizontal_alignment
+    }
+
+    pub(crate) const fn vertical_alignment(self) -> VerticalAlignment {
+        self.vertical_alignment
+    }
+}
+
+impl Default for HeaderStyle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadOptions {
     sheet_name: Option<String>,
@@ -199,6 +284,7 @@ pub struct WriteOptions {
     wrap_cell_contents: bool,
     horizontal_alignment: HorizontalAlignment,
     vertical_alignment: VerticalAlignment,
+    header_style: HeaderStyle,
     min_width: f64,
     max_width: f64,
     freeze_row_count: u32,
@@ -268,6 +354,12 @@ impl WriteOptions {
     #[must_use]
     pub const fn with_vertical_alignment(mut self, alignment: VerticalAlignment) -> Self {
         self.vertical_alignment = alignment;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_header_style(mut self, style: HeaderStyle) -> Self {
+        self.header_style = style;
         self
     }
 
@@ -385,6 +477,11 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub(crate) const fn header_style(&self) -> HeaderStyle {
+        self.header_style
+    }
+
+    #[must_use]
     pub(crate) const fn min_width(&self) -> f64 {
         self.min_width
     }
@@ -455,6 +552,7 @@ impl Default for WriteOptions {
             wrap_cell_contents: false,
             horizontal_alignment: HorizontalAlignment::Left,
             vertical_alignment: VerticalAlignment::Bottom,
+            header_style: HeaderStyle::new(),
             min_width: 8.428_571_43,
             max_width: 200.0,
             freeze_row_count: 1,

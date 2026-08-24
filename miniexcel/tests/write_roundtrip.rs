@@ -1,7 +1,7 @@
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use miniexcel::{
-    CellValue, DynamicRow, HeaderMode, HorizontalAlignment, MiniExcel, ReadOptions,
-    SheetVisibility, VerticalAlignment, WriteOptions,
+    CellValue, DynamicRow, HeaderMode, HeaderStyle, HorizontalAlignment, MiniExcel, ReadOptions,
+    RgbColor, SheetVisibility, VerticalAlignment, WriteOptions,
 };
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -437,6 +437,71 @@ fn aligns_dynamic_and_typed_body_cells_without_aligning_headers() {
     .expect("write default alignment");
     let (horizontal, _) = style_alignment(&default, cell_style_index(&default, "B2"));
     assert_ne!(horizontal.as_deref(), Some("left"));
+}
+
+#[test]
+fn writes_default_and_custom_header_styles_for_dynamic_and_typed_exports() {
+    let rows = [dynamic_row("Ada", 1)];
+    let default_bytes =
+        MiniExcel::save_as_bytes(&rows, &WriteOptions::new()).expect("write default header style");
+    let default_styles = archive_xml(&default_bytes, "xl/styles.xml");
+    let default_header_style = cell_style_index(&default_bytes, "A1");
+    assert!(default_styles.contains("rgb=\"FF4472C4\""));
+    assert!(default_styles.contains("rgb=\"FFFFFFFF\""));
+    assert!(default_styles.contains("style=\"thin\""));
+    assert!(!wrapped_style_indexes(&default_bytes).contains(&default_header_style));
+    assert_eq!(style_alignment(&default_bytes, default_header_style), (None, None));
+    assert_ne!(default_header_style, cell_style_index(&default_bytes, "A2"));
+
+    let style = HeaderStyle::new()
+        .with_wrap_text(true)
+        .with_background_color(RgbColor::new(0x12, 0x34, 0x56))
+        .with_horizontal_alignment(HorizontalAlignment::Center)
+        .with_vertical_alignment(VerticalAlignment::Top);
+    let custom_bytes = MiniExcel::save_as_bytes(
+        &rows,
+        &WriteOptions::new().with_header_style(style).with_auto_filter(false),
+    )
+    .expect("write custom header style");
+    let custom_header_style = cell_style_index(&custom_bytes, "A1");
+    assert!(archive_xml(&custom_bytes, "xl/styles.xml").contains("rgb=\"FF123456\""));
+    assert!(wrapped_style_indexes(&custom_bytes).contains(&custom_header_style));
+    assert_eq!(
+        style_alignment(&custom_bytes, custom_header_style),
+        (Some("center".to_owned()), Some("top".to_owned()))
+    );
+    assert!(!wrapped_style_indexes(&custom_bytes).contains(&cell_style_index(&custom_bytes, "A2")));
+    assert!(!worksheet_xml(&custom_bytes).contains("<autoFilter"));
+
+    let temp_dir = tempfile::tempdir().expect("create temp directory");
+    let path = temp_dir.path().join("typed-header-style.xlsx");
+    let releases = [Release {
+        name: "MiniExcel".to_owned(),
+        version: 2,
+        released_on: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+        internal: false,
+    }];
+    MiniExcel::save_as_serialized_with_options(
+        &path,
+        &releases,
+        &WriteOptions::new().with_header_style(style),
+    )
+    .expect("write typed custom header style");
+    let typed_bytes = std::fs::read(path).unwrap();
+    let typed_header_style = cell_style_index(&typed_bytes, "A1");
+    assert!(archive_xml(&typed_bytes, "xl/styles.xml").contains("rgb=\"FF123456\""));
+    assert!(wrapped_style_indexes(&typed_bytes).contains(&typed_header_style));
+    assert_eq!(
+        style_alignment(&typed_bytes, typed_header_style),
+        (Some("center".to_owned()), Some("top".to_owned()))
+    );
+
+    let headerless = MiniExcel::save_as_bytes(
+        &rows,
+        &WriteOptions::new().with_print_header(false).with_header_style(style),
+    )
+    .expect("write without header");
+    assert_eq!(cell_style_index(&headerless, "A1"), cell_style_index(&headerless, "B1"));
 }
 
 #[test]

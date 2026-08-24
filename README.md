@@ -237,6 +237,8 @@ Use `with_wrap_cell_contents(true)` to wrap ordinary body values. Headers, dates
 
 Configure body-cell alignment with `with_horizontal_alignment()` and `with_vertical_alignment()`. Horizontal choices are left/general, center, and right; vertical choices are bottom, center, and top. Alignment composes with wrapping and number formats but does not affect headers.
 
+Headers use the MiniExcel v1 visual default: blue background (`#4472C4`), white text, thin borders, no wrapping, left/general horizontal alignment, and bottom vertical alignment. Customize wrapping, RGB background color, and alignment with `HeaderStyle` and `with_header_style()`. Rust emits opaque RGB (`FFRRGGBB`); v1's alpha byte is not preserved.
+
 Create multiple worksheets in input order with `MiniExcel::save_as_sheets()`. It returns one data-row count per worksheet:
 
 ```rust

@@ -178,19 +178,21 @@ Donor-workbook 方案复用经过测试的 `XlsxWriter`，避免重复实现 ser
 
 依赖 Task 1。
 
-- [ ] 新增内部 donor builder，调用当前 `XlsxWriter` 生成正好一个 sheet。
-- [ ] 提取 donor worksheet、style、shared string 和 AutoFilter defined-name metadata。
-- [ ] 使用结构化 XML parser 将 donor shared-string cell 转成 inline string。
-- [ ] 按原样保留 donor formula，不执行计算。
-- [ ] 内部结果包含 worksheet XML、数据 row count、donor style model 和可选 local defined name。
-- [ ] 增加 dynamic、显式 schema、Serde、header-only 和 empty/no-header donor 测试。
-- [ ] 为未来大 producer 增加 one-pass 显式 schema row spool；成功、iterator error 或 panic unwind 时都删除 spool。
+- [x] 新增内部 donor builder，调用当前 `XlsxWriter` 生成正好一个 sheet。
+- [x] 提取 donor worksheet、style、shared string 和 AutoFilter defined-name metadata。
+- [x] 使用结构化 XML parser 将 donor shared-string cell 转成 inline string。
+- [x] 按原样保留 donor formula，不执行计算。
+- [x] 内部结果包含 worksheet XML、数据 row count、donor style model 和可选 local defined name。
+- [x] 增加 dynamic、显式 schema、Serde、header-only 和 empty/no-header donor 测试。
+- [x] 为未来大 producer 增加 one-pass 显式 schema row spool；成功、iterator error 或 panic unwind 时都删除 spool。
+
+已于 2026-08-24 完成。聚焦测试：`cargo +1.85.0 test -p miniexcel insert::donor::tests --lib --locked`。
 
 验收：
 
 - Donor output 不依赖 donor `sharedStrings.xml`。
 - Row count 和全部当前 `WriteOptions` 行为与普通 `save_as` 一致。
-- 聚焦命令：`cargo +1.85.0 test -p miniexcel --test insert donor_sheet --locked`。
+- 聚焦命令：`cargo +1.85.0 test -p miniexcel insert::donor::tests --lib --locked`。
 
 ### Task 3：Append-only Style Rebase
 

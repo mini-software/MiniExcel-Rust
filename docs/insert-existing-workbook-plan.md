@@ -178,19 +178,21 @@ Acceptance:
 
 Depends on Task 1.
 
-- [ ] Add an internal donor builder that invokes the current `XlsxWriter` for exactly one sheet.
-- [ ] Extract the donor worksheet, styles, shared strings, and AutoFilter defined-name metadata.
-- [ ] Convert donor shared-string cells to inline strings using structured XML parsing.
-- [ ] Preserve formulas exactly as emitted; do not calculate them.
-- [ ] Expose an internal result containing worksheet XML, data-row count, donor style model, and optional local defined names.
-- [ ] Add dynamic, explicit-schema, Serde, header-only, and empty/no-header donor tests.
-- [ ] Add a one-pass explicit-schema row-spool path for future large producers. The spool must be deleted on success, iterator error, or panic unwinding.
+- [x] Add an internal donor builder that invokes the current `XlsxWriter` for exactly one sheet.
+- [x] Extract the donor worksheet, styles, shared strings, and AutoFilter defined-name metadata.
+- [x] Convert donor shared-string cells to inline strings using structured XML parsing.
+- [x] Preserve formulas exactly as emitted; do not calculate them.
+- [x] Expose an internal result containing worksheet XML, data-row count, donor style model, and optional local defined names.
+- [x] Add dynamic, explicit-schema, Serde, header-only, and empty/no-header donor tests.
+- [x] Add a one-pass explicit-schema row-spool path for future large producers. The spool must be deleted on success, iterator error, or panic unwinding.
+
+Completed on 2026-08-24. Focused test: `cargo +1.85.0 test -p miniexcel insert::donor::tests --lib --locked`.
 
 Acceptance:
 
 - Donor output has no dependency on donor `sharedStrings.xml`.
 - Row count and all current `WriteOptions` behavior match normal `save_as` output.
-- Focused command: `cargo +1.85.0 test -p miniexcel --test insert donor_sheet --locked`.
+- Focused command: `cargo +1.85.0 test -p miniexcel insert::donor::tests --lib --locked`.
 
 ### Task 3: Append-Only Style Rebase
 

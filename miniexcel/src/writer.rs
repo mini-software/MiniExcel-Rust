@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -53,9 +54,23 @@ impl XlsxWriter {
         rows: &[DynamicRow],
         options: &WriteOptions,
     ) -> Result<()> {
+        self.add_rows_iter_with_schema(schema, rows.iter().map(Ok::<_, Error>), rows.len(), options)
+    }
+
+    pub(crate) fn add_rows_iter_with_schema<I, R>(
+        &mut self,
+        schema: &[String],
+        rows: I,
+        row_count: usize,
+        options: &WriteOptions,
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = Result<R>>,
+        R: Borrow<DynamicRow>,
+    {
         validate_sheet_name(options.sheet_name(), &self.sheet_names)?;
         validate_schema(schema)?;
-        validate_dimensions(rows.len(), schema.len(), options.print_header())?;
+        validate_dimensions(row_count, schema.len(), options.print_header())?;
 
         let mut worksheet = new_worksheet(options)?;
 
@@ -71,6 +86,8 @@ impl XlsxWriter {
         let formats = CellFormats::new(options);
         let mut widths = AutoWidthCollector::new(schema, options)?;
         for row in rows {
+            let row = row?;
+            let row = row.borrow();
             for (column, header) in schema.iter().enumerate() {
                 let value = row.get(header).unwrap_or(&CellValue::Empty);
                 write_cell(&mut worksheet, output_row, column as u16, value, &formats)?;

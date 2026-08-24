@@ -104,6 +104,7 @@ impl PackageInventory {
         let entry_names = inspect_entries(&mut archive)?;
         let content_types =
             parse_content_types(&read_control_part(&mut archive, CONTENT_TYPES_PATH)?)?;
+        validate_content_type_uniqueness(&content_types)?;
         reject_unsupported_content_types(&content_types)?;
 
         let mut relationships = Vec::new();
@@ -129,7 +130,7 @@ impl PackageInventory {
         let mut ids = BTreeSet::new();
         let mut targets = BTreeSet::new();
         for (index, sheet) in sheet_elements.into_iter().enumerate() {
-            let normalized_name = sheet.name.to_lowercase();
+            let normalized_name = normalize_sheet_name(&sheet.name);
             if !names.insert(normalized_name) {
                 return Err(Error::unsafe_package(format!(
                     "worksheet name '{}' is duplicated case-insensitively",
@@ -189,7 +190,8 @@ impl PackageInventory {
     }
 
     pub(crate) fn find_sheet(&self, name: &str) -> Option<&WorkbookSheet> {
-        self.sheets.iter().find(|sheet| sheet.name.eq_ignore_ascii_case(name))
+        let normalized = normalize_sheet_name(name);
+        self.sheets.iter().find(|sheet| normalize_sheet_name(&sheet.name) == normalized)
     }
 
     pub(crate) fn ensure_sheet_absent(&self, name: &str) -> Result<()> {
@@ -485,6 +487,12 @@ fn parse_workbook(xml: &[u8]) -> Result<(Vec<SheetElement>, Vec<WorkbookView>, V
                     })?,
                 );
             }
+            Event::GeneralRef(reference) if current_defined_name.is_some() => {
+                append_xml_reference(
+                    &reference,
+                    &mut current_defined_name.as_mut().expect("defined-name state").formula,
+                )?;
+            }
             Event::End(event) if local_name(event.name().as_ref()) == b"definedName" => {
                 defined_names.push(current_defined_name.take().ok_or_else(|| {
                     Error::insert_package("definedName closing tag has no start tag")
@@ -513,6 +521,28 @@ fn reject_unsupported_content_types(content_types: &ContentTypes) -> Result<()> 
         if lowered.contains("digital-signature") {
             return Err(Error::unsupported_package_feature(format!(
                 "digital signature content type '{content_type}'"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_content_type_uniqueness(content_types: &ContentTypes) -> Result<()> {
+    let mut extensions = BTreeSet::new();
+    for entry in &content_types.defaults {
+        if !extensions.insert(entry.extension.to_lowercase()) {
+            return Err(Error::unsafe_package(format!(
+                "content-type default extension '{}' is duplicated",
+                entry.extension
+            )));
+        }
+    }
+    let mut part_names = BTreeSet::new();
+    for entry in &content_types.overrides {
+        if !part_names.insert(entry.part_name.to_lowercase()) {
+            return Err(Error::unsafe_package(format!(
+                "content-type override '{}' is duplicated",
+                entry.part_name
             )));
         }
     }
@@ -627,8 +657,37 @@ fn xml_attribute(event: &BytesStart<'_>, name: &[u8]) -> Result<Option<String>> 
     Ok(None)
 }
 
+fn append_xml_reference(
+    reference: &quick_xml::events::BytesRef<'_>,
+    target: &mut String,
+) -> Result<()> {
+    let decoded = reference
+        .decode()
+        .map_err(|error| Error::insert_package(format!("invalid XML reference: {error}")))?;
+    match decoded.as_ref() {
+        "lt" => target.push('<'),
+        "gt" => target.push('>'),
+        "amp" => target.push('&'),
+        "quot" => target.push('"'),
+        "apos" => target.push('\''),
+        _ => {
+            if let Some(value) = reference
+                .resolve_char_ref()
+                .map_err(|error| Error::insert_package(format!("invalid XML reference: {error}")))?
+            {
+                target.push(value);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn local_name(name: &[u8]) -> &[u8] {
     name.rsplit(|byte| *byte == b':').next().unwrap_or(name)
+}
+
+fn normalize_sheet_name(name: &str) -> String {
+    name.to_lowercase()
 }
 
 #[cfg(test)]
@@ -748,6 +807,34 @@ mod tests {
             ("xl/worksheets/sheet3.xml", "<worksheet/>"),
         ]);
         assert!(PackageInventory::inspect(Cursor::new(macro_package)).is_err());
+
+        let duplicate_types = TYPES.replace(
+            "</Types>",
+            "<Default Extension=\"XML\" ContentType=\"application/xml\"/></Types>",
+        );
+        let duplicate_types_package = zip_entries(&[
+            (CONTENT_TYPES_PATH, &duplicate_types),
+            (WORKBOOK_PATH, WORKBOOK),
+            (WORKBOOK_RELS_PATH, WORKBOOK_RELS),
+            ("xl/worksheets/data.xml", "<worksheet/>"),
+            ("xl/worksheets/sheet1.xml", "<worksheet/>"),
+            ("xl/worksheets/sheet3.xml", "<worksheet/>"),
+        ]);
+        assert!(PackageInventory::inspect(Cursor::new(duplicate_types_package)).is_err());
+
+        let duplicate_override_types = TYPES.replace(
+            "</Types>",
+            "<Override PartName=\"/XL/WORKBOOK.XML\" ContentType=\"application/xml\"/></Types>",
+        );
+        let duplicate_override_package = zip_entries(&[
+            (CONTENT_TYPES_PATH, &duplicate_override_types),
+            (WORKBOOK_PATH, WORKBOOK),
+            (WORKBOOK_RELS_PATH, WORKBOOK_RELS),
+            ("xl/worksheets/data.xml", "<worksheet/>"),
+            ("xl/worksheets/sheet1.xml", "<worksheet/>"),
+            ("xl/worksheets/sheet3.xml", "<worksheet/>"),
+        ]);
+        assert!(PackageInventory::inspect(Cursor::new(duplicate_override_package)).is_err());
 
         let malformed_rels = WORKBOOK_RELS.replace("Id=\"rId9\"", "Id=\"rId2\"");
         let malformed = zip_entries(&[

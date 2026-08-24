@@ -27,6 +27,7 @@ pub(crate) struct DonorStyleModel {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DonorWorksheet {
+    pub(crate) sheet_name: String,
     pub(crate) worksheet_xml: Vec<u8>,
     pub(crate) data_row_count: usize,
     pub(crate) styles: DonorStyleModel,
@@ -125,6 +126,7 @@ pub(super) fn extract_donor(bytes: Vec<u8>, data_row_count: usize) -> Result<Don
             inventory.sheets.len()
         )));
     }
+    let sheet_name = inventory.sheets[0].name.clone();
     let worksheet_path = inventory.sheets[0].target.clone();
     let local_defined_names =
         inventory.defined_names.into_iter().filter(|name| name.local_sheet_id == Some(0)).collect();
@@ -148,7 +150,7 @@ pub(super) fn extract_donor(bytes: Vec<u8>, data_row_count: usize) -> Result<Don
     };
     let worksheet_xml = inline_shared_strings(&worksheet_xml, &shared_strings)?;
 
-    Ok(DonorWorksheet { worksheet_xml, data_row_count, styles, local_defined_names })
+    Ok(DonorWorksheet { sheet_name, worksheet_xml, data_row_count, styles, local_defined_names })
 }
 
 fn read_part<R>(archive: &mut ZipArchive<R>, path: &str) -> Result<Vec<u8>>

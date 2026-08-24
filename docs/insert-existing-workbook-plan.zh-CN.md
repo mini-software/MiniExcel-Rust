@@ -218,20 +218,22 @@ Donor-workbook 方案复用经过测试的 `XlsxWriter`，避免重复实现 ser
 
 依赖 Task 1-3。
 
-- [ ] Raw-copy 每个未变 ZIP entry，并保留 compression 与 metadata。
-- [ ] 结构化 append `xl/workbook.xml` 的一个 `<sheet>`，不替换 workbook view、property、defined name、calculation setting 或 extension list。
-- [ ] 向 `xl/_rels/workbook.xml.rels` append 一个 worksheet relationship，不改变现有 ID 或非 sheet relationship。
-- [ ] 仅在缺失时向 `[Content_Types].xml` 增加 worksheet override。
-- [ ] 启用 AutoFilter 时增加或更新 local `_xlnm._FilterDatabase` defined name。
-- [ ] 将 rebased worksheet 写到无冲突 target。
-- [ ] 保持 `sharedStrings.xml`、未变 worksheet relationship、table、drawing、comment、external link、custom XML、theme 和 document property 原始字节不变。
+- [x] Raw-copy 每个未变 ZIP entry，并保留 compression 与 metadata。
+- [x] 结构化 append `xl/workbook.xml` 的一个 `<sheet>`，不替换 workbook view、property、defined name、calculation setting 或 extension list。
+- [x] 向 `xl/_rels/workbook.xml.rels` append 一个 worksheet relationship，不改变现有 ID 或非 sheet relationship。
+- [x] 仅在缺失时向 `[Content_Types].xml` 增加 worksheet override。
+- [x] 启用 AutoFilter 时增加或更新 local `_xlnm._FilterDatabase` defined name。
+- [x] 将 rebased worksheet 写到无冲突 target。
+- [x] 保持 `sharedStrings.xml`、未变 worksheet relationship、table、drawing、comment、external link、custom XML、theme 和 document property 原始字节不变。
+
+已于 2026-08-24 完成。聚焦测试：`cargo +1.85.0 test -p miniexcel insert::rewrite::tests --lib --locked`。
 
 验收：
 
 - 新 sheet 按 workbook 顺序 append，不改变 active sheet。
 - Package inventory 只在预期 control part、style addition 和新 worksheet 上有变化。
 - 现有 formula 与 cached value 不变。
-- 聚焦命令：`cargo +1.85.0 test -p miniexcel --test insert append_package --locked`。
+- 聚焦命令：`cargo +1.85.0 test -p miniexcel insert::rewrite::tests --lib --locked`。
 
 ### Task 5：Atomic Path Commit
 

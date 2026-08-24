@@ -218,20 +218,22 @@ Acceptance:
 
 Depends on Tasks 1-3.
 
-- [ ] Raw-copy every unchanged ZIP entry with its compression and metadata.
-- [ ] Structurally append one `<sheet>` to `xl/workbook.xml` without replacing workbook views, properties, defined names, calculation settings, or extension lists.
-- [ ] Append one worksheet relationship to `xl/_rels/workbook.xml.rels` without changing existing IDs or non-sheet relationships.
-- [ ] Add the worksheet override to `[Content_Types].xml` only when missing.
-- [ ] Add or update the local `_xlnm._FilterDatabase` defined name when AutoFilter is enabled.
-- [ ] Write the rebased worksheet to its collision-free target.
-- [ ] Keep `sharedStrings.xml`, untouched worksheet relationships, tables, drawings, comments, external links, custom XML, themes, and document properties byte-for-byte unchanged.
+- [x] Raw-copy every unchanged ZIP entry with its compression and metadata.
+- [x] Structurally append one `<sheet>` to `xl/workbook.xml` without replacing workbook views, properties, defined names, calculation settings, or extension lists.
+- [x] Append one worksheet relationship to `xl/_rels/workbook.xml.rels` without changing existing IDs or non-sheet relationships.
+- [x] Add the worksheet override to `[Content_Types].xml` only when missing.
+- [x] Add or update the local `_xlnm._FilterDatabase` defined name when AutoFilter is enabled.
+- [x] Write the rebased worksheet to its collision-free target.
+- [x] Keep `sharedStrings.xml`, untouched worksheet relationships, tables, drawings, comments, external links, custom XML, themes, and document properties byte-for-byte unchanged.
+
+Completed on 2026-08-24. Focused test: `cargo +1.85.0 test -p miniexcel insert::rewrite::tests --lib --locked`.
 
 Acceptance:
 
 - New sheet appends in workbook order and does not change the active sheet.
 - Package inventory differs only in the expected control parts, style additions, and new worksheet.
 - Existing formulas and cached values remain unchanged.
-- Focused command: `cargo +1.85.0 test -p miniexcel --test insert append_package --locked`.
+- Focused command: `cargo +1.85.0 test -p miniexcel insert::rewrite::tests --lib --locked`.
 
 ### Task 5: Atomic Path Commit
 

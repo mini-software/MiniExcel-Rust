@@ -221,6 +221,11 @@ impl StyleDocument {
                         if local_name(start.name().as_ref()) != b"styleSheet" {
                             return Err(Error::insert_package("styles XML root is not styleSheet"));
                         }
+                        if start.name().as_ref().contains(&b':') {
+                            return Err(Error::unsupported_package_feature(
+                                "prefixed styles XML namespace layout",
+                            ));
+                        }
                         style_sheet_seen = true;
                     }
                     if let Some(section) = section {
@@ -794,6 +799,7 @@ mod tests {
         let (donor, _) = formatted_donor();
         let first = rebase_styles(target_styles().as_bytes(), &donor).unwrap();
         let donor_again = DonorWorksheet {
+            sheet_name: donor.sheet_name.clone(),
             worksheet_xml: donor.worksheet_xml.clone(),
             data_row_count: donor.data_row_count,
             styles: super::super::donor::DonorStyleModel {
@@ -861,6 +867,13 @@ mod tests {
         assert!(validate_limits(1, 1, 2, MAX_BORDERS + 1, 1, 1).is_err());
         assert!(validate_limits(1, 1, 2, 1, MAX_CELL_STYLES + 1, 1).is_err());
         assert!(validate_limits(1, 1, 2, 1, 1, MAX_CELL_STYLES + 1).is_err());
+        let prefixed = target_styles()
+            .replace("<styleSheet ", "<x:styleSheet ")
+            .replace("</styleSheet>", "</x:styleSheet>");
+        assert!(
+            rebase_style_xml(prefixed.as_bytes(), target_styles().as_bytes(), b"<worksheet/>")
+                .is_err()
+        );
     }
 
     #[test]

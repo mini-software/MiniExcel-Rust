@@ -239,6 +239,8 @@ AutoFilter 下拉菜单默认覆盖完整写入范围，包括只有 header 的�
 
 Header 使用 MiniExcel v1 的默认视觉样式：蓝色背景（`#4472C4`）、白字、细边框、不换行、left/general 水平对齐和 bottom 垂直对齐。可通过 `HeaderStyle` 与 `with_header_style()` 自定义换行、RGB 背景色和对齐。Rust 输出不透明 RGB（`FFRRGGBB`），不保留 v1 的 alpha byte。
 
+`TableStyle::Default` 是默认 cell-style 模式，会应用细边框及 header/body 选项。`TableStyle::None` 会移除 header 和 body 的视觉样式，但保留 date/time/custom number format 与 AutoFilter。此选项不会创建 Excel table 或 `xl/tables` package part。
+
 使用 `MiniExcel::save_as_sheets()` 可按输入顺序创建多个工作表；返回值是每张工作表的数据行数：
 
 ```rust

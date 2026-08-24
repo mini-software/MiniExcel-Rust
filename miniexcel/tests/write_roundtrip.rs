@@ -1,7 +1,7 @@
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use miniexcel::{
     CellValue, DynamicRow, HeaderMode, HeaderStyle, HorizontalAlignment, MiniExcel, ReadOptions,
-    RgbColor, SheetVisibility, VerticalAlignment, WriteOptions,
+    RgbColor, SheetVisibility, TableStyle, VerticalAlignment, WriteOptions,
 };
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -136,6 +136,44 @@ fn style_alignment(bytes: &[u8], style_index: usize) -> (Option<String>, Option<
             }
             Event::End(event) if event.name().as_ref() == b"xf" => current = None,
             Event::Eof => return (None, None),
+            _ => {}
+        }
+    }
+}
+
+fn style_component_ids(bytes: &[u8], style_index: usize) -> (usize, usize, usize, usize) {
+    let xml = archive_xml(bytes, "xl/styles.xml");
+    let mut reader = Reader::from_str(&xml);
+    let mut in_cell_xfs = false;
+    let mut next_index = 0;
+    loop {
+        match reader.read_event().expect("parse styles XML") {
+            Event::Start(event) if event.name().as_ref() == b"cellXfs" => in_cell_xfs = true,
+            Event::End(event) if event.name().as_ref() == b"cellXfs" => in_cell_xfs = false,
+            Event::Start(event) | Event::Empty(event)
+                if in_cell_xfs && event.name().as_ref() == b"xf" =>
+            {
+                let index = next_index;
+                next_index += 1;
+                if index == style_index {
+                    let mut num_format = 0;
+                    let mut font = 0;
+                    let mut fill = 0;
+                    let mut border = 0;
+                    for attribute in event.attributes().flatten() {
+                        let value = String::from_utf8_lossy(&attribute.value).parse().unwrap();
+                        match attribute.key.as_ref() {
+                            b"numFmtId" => num_format = value,
+                            b"fontId" => font = value,
+                            b"fillId" => fill = value,
+                            b"borderId" => border = value,
+                            _ => {}
+                        }
+                    }
+                    return (num_format, font, fill, border);
+                }
+            }
+            Event::Eof => panic!("style {style_index} not found"),
             _ => {}
         }
     }
@@ -502,6 +540,74 @@ fn writes_default_and_custom_header_styles_for_dynamic_and_typed_exports() {
     )
     .expect("write without header");
     assert_eq!(cell_style_index(&headerless, "A1"), cell_style_index(&headerless, "B1"));
+}
+
+#[test]
+fn writes_default_and_minimal_table_styles() {
+    let date = NaiveDate::from_ymd_opt(2026, 8, 24).unwrap();
+    let mut row = DynamicRow::new();
+    row.insert("Text".to_owned(), CellValue::String("line 1\nline 2".to_owned()));
+    row.insert("Date".to_owned(), CellValue::Date(date));
+    let styled_options = WriteOptions::new()
+        .with_wrap_cell_contents(true)
+        .with_horizontal_alignment(HorizontalAlignment::Center)
+        .with_header_style(
+            HeaderStyle::new()
+                .with_wrap_text(true)
+                .with_background_color(RgbColor::new(0x12, 0x34, 0x56)),
+        );
+
+    let default_bytes = MiniExcel::save_as_bytes(
+        &[row.clone()],
+        &styled_options.clone().with_table_style(TableStyle::Default),
+    )
+    .expect("write default table style");
+    for address in ["A1", "A2", "B2"] {
+        let (_, _, _, border) =
+            style_component_ids(&default_bytes, cell_style_index(&default_bytes, address));
+        assert_ne!(border, 0);
+    }
+
+    let minimal_bytes =
+        MiniExcel::save_as_bytes(&[row], &styled_options.with_table_style(TableStyle::None))
+            .expect("write minimal table style");
+    for address in ["A1", "A2"] {
+        let (_, font, fill, border) =
+            style_component_ids(&minimal_bytes, cell_style_index(&minimal_bytes, address));
+        assert_eq!((font, fill, border), (0, 0, 0));
+        assert_eq!(
+            style_alignment(&minimal_bytes, cell_style_index(&minimal_bytes, address)),
+            (None, None)
+        );
+        assert!(
+            !wrapped_style_indexes(&minimal_bytes)
+                .contains(&cell_style_index(&minimal_bytes, address))
+        );
+    }
+    let (date_format, _, _, date_border) =
+        style_component_ids(&minimal_bytes, cell_style_index(&minimal_bytes, "B2"));
+    assert_ne!(date_format, 0);
+    assert_eq!(date_border, 0);
+    assert!(worksheet_xml(&minimal_bytes).contains("<autoFilter"));
+    let archive = ZipArchive::new(Cursor::new(&minimal_bytes)).unwrap();
+    assert!(archive.file_names().all(|name| !name.starts_with("xl/tables/")));
+
+    let temp_dir = tempfile::tempdir().expect("create temp directory");
+    let path = temp_dir.path().join("typed-minimal-style.xlsx");
+    let releases =
+        [Release { name: "Minimal".to_owned(), version: 2, released_on: date, internal: false }];
+    MiniExcel::save_as_serialized_with_options(
+        &path,
+        &releases,
+        &WriteOptions::new()
+            .with_table_style(TableStyle::None)
+            .with_column_format("ReleasedOn", "dd.mm.yyyy"),
+    )
+    .expect("write typed minimal style");
+    let typed = std::fs::read(path).unwrap();
+    let (num_format, _, _, border) = style_component_ids(&typed, cell_style_index(&typed, "C2"));
+    assert_ne!(num_format, 0);
+    assert_eq!(border, 0);
 }
 
 #[test]

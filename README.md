@@ -239,6 +239,8 @@ Configure body-cell alignment with `with_horizontal_alignment()` and `with_verti
 
 Headers use the MiniExcel v1 visual default: blue background (`#4472C4`), white text, thin borders, no wrapping, left/general horizontal alignment, and bottom vertical alignment. Customize wrapping, RGB background color, and alignment with `HeaderStyle` and `with_header_style()`. Rust emits opaque RGB (`FFRRGGBB`); v1's alpha byte is not preserved.
 
+`TableStyle::Default` is the default cell-style mode and applies thin borders plus header/body options. `TableStyle::None` removes header and body visual styling while retaining date/time/custom number formats and AutoFilter. This option does not create an Excel table or `xl/tables` package parts.
+
 Create multiple worksheets in input order with `MiniExcel::save_as_sheets()`. It returns one data-row count per worksheet:
 
 ```rust

@@ -10,8 +10,8 @@ use rust_xlsxwriter::{
 use serde::Serialize;
 
 use crate::{
-    CellValue, DynamicRow, Error, HorizontalAlignment, Result, SheetVisibility, VerticalAlignment,
-    WriteOptions,
+    CellValue, DynamicRow, Error, HorizontalAlignment, Result, SheetVisibility, TableStyle,
+    VerticalAlignment, WriteOptions,
 };
 
 const MAX_EXCEL_ROWS: usize = 1_048_576;
@@ -364,6 +364,10 @@ impl CellFormats {
 }
 
 fn body_format(options: &WriteOptions, wrap: bool, number_format: Option<&str>) -> Format {
+    if options.table_style() == TableStyle::None {
+        return number_format
+            .map_or_else(Format::new, |format| Format::new().set_num_format(format));
+    }
     let horizontal = match options.horizontal_alignment() {
         HorizontalAlignment::Left => FormatAlign::General,
         HorizontalAlignment::Center => FormatAlign::Center,
@@ -374,7 +378,8 @@ fn body_format(options: &WriteOptions, wrap: bool, number_format: Option<&str>) 
         VerticalAlignment::Center => FormatAlign::VerticalCenter,
         VerticalAlignment::Top => FormatAlign::Top,
     };
-    let mut format = Format::new().set_align(horizontal).set_align(vertical);
+    let mut format =
+        Format::new().set_border(FormatBorder::Thin).set_align(horizontal).set_align(vertical);
     if wrap {
         format = format.set_text_wrap();
     }
@@ -385,6 +390,9 @@ fn body_format(options: &WriteOptions, wrap: bool, number_format: Option<&str>) 
 }
 
 fn header_format(options: &WriteOptions) -> Format {
+    if options.table_style() == TableStyle::None {
+        return Format::new();
+    }
     let style = options.header_style();
     let horizontal = match style.horizontal_alignment() {
         HorizontalAlignment::Left => FormatAlign::General,

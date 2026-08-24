@@ -27,6 +27,13 @@ pub enum VerticalAlignment {
     Top,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TableStyle {
+    None,
+    #[default]
+    Default,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RgbColor {
     red: u8,
@@ -285,6 +292,7 @@ pub struct WriteOptions {
     horizontal_alignment: HorizontalAlignment,
     vertical_alignment: VerticalAlignment,
     header_style: HeaderStyle,
+    table_style: TableStyle,
     min_width: f64,
     max_width: f64,
     freeze_row_count: u32,
@@ -360,6 +368,12 @@ impl WriteOptions {
     #[must_use]
     pub const fn with_header_style(mut self, style: HeaderStyle) -> Self {
         self.header_style = style;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_table_style(mut self, style: TableStyle) -> Self {
+        self.table_style = style;
         self
     }
 
@@ -482,6 +496,11 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub(crate) const fn table_style(&self) -> TableStyle {
+        self.table_style
+    }
+
+    #[must_use]
     pub(crate) const fn min_width(&self) -> f64 {
         self.min_width
     }
@@ -553,6 +572,7 @@ impl Default for WriteOptions {
             horizontal_alignment: HorizontalAlignment::Left,
             vertical_alignment: VerticalAlignment::Bottom,
             header_style: HeaderStyle::new(),
+            table_style: TableStyle::Default,
             min_width: 8.428_571_43,
             max_width: 200.0,
             freeze_row_count: 1,

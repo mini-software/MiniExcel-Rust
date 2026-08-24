@@ -233,6 +233,8 @@ Use `WriteOptions::with_right_to_left(true)` to display a worksheet from right t
 
 Enable MiniExcel v1-style fixed column sizing with `with_auto_width(true)`. Data payloads are measured without headers, bounded by `with_min_width()` and `with_max_width()` (defaults `8.42857143` and `200`), and written as fixed widths without `bestFit`. Typed rows perform one additional lightweight Serde pass when this option is enabled. Unlike .NET v1, Rust does not require a separate fast mode.
 
+Use `with_wrap_cell_contents(true)` to wrap ordinary body values. Headers, dates, times, durations, and fields with explicit number formats remain unwrapped, matching the MiniExcel v1 style boundary.
+
 Create multiple worksheets in input order with `MiniExcel::save_as_sheets()`. It returns one data-row count per worksheet:
 
 ```rust

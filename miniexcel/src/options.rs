@@ -180,6 +180,7 @@ pub struct WriteOptions {
     auto_filter: bool,
     right_to_left: bool,
     auto_width: bool,
+    wrap_cell_contents: bool,
     min_width: f64,
     max_width: f64,
     freeze_row_count: u32,
@@ -231,6 +232,12 @@ impl WriteOptions {
     #[must_use]
     pub const fn with_auto_width(mut self, enabled: bool) -> Self {
         self.auto_width = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_wrap_cell_contents(mut self, enabled: bool) -> Self {
+        self.wrap_cell_contents = enabled;
         self
     }
 
@@ -333,6 +340,11 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub(crate) const fn wrap_cell_contents(&self) -> bool {
+        self.wrap_cell_contents
+    }
+
+    #[must_use]
     pub(crate) const fn min_width(&self) -> f64 {
         self.min_width
     }
@@ -400,6 +412,7 @@ impl Default for WriteOptions {
             auto_filter: true,
             right_to_left: false,
             auto_width: false,
+            wrap_cell_contents: false,
             min_width: 8.428_571_43,
             max_width: 200.0,
             freeze_row_count: 1,

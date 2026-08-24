@@ -233,6 +233,8 @@ AutoFilter 下拉菜单默认覆盖完整写入范围，包括只有 header 的�
 
 使用 `with_auto_width(true)` 可启用 MiniExcel v1 风格的固定列宽。它只测量数据 payload，不测量 header，并受 `with_min_width()` 与 `with_max_width()` 限制（默认 `8.42857143` 和 `200`）；输出固定 width，不使用 `bestFit`。类型化 row 启用该选项时会额外执行一次轻量 Serde 测宽。与 .NET v1 不同，Rust 不需要单独开启 fast mode。
 
+使用 `with_wrap_cell_contents(true)` 可让普通 body value 自动换行。Header、date、time、duration 及设置了 explicit number format 的字段保持不换行，与 MiniExcel v1 的 style 边界一致。
+
 使用 `MiniExcel::save_as_sheets()` 可按输入顺序创建多个工作表；返回值是每张工作表的数据行数：
 
 ```rust

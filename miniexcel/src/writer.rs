@@ -115,14 +115,7 @@ impl XlsxWriter {
         };
 
         let mut worksheet = new_worksheet(options)?;
-        let custom_headers: Vec<CustomSerializeField> = options
-            .column_formats()
-            .iter()
-            .map(|(field_name, number_format)| {
-                CustomSerializeField::new(field_name)
-                    .set_value_format(Format::new().set_num_format(number_format))
-            })
-            .collect();
+        let custom_headers = serialized_field_options(first, options)?;
         let mut header_options = SerializeFieldOptions::new().hide_headers(!options.print_header());
         if !custom_headers.is_empty() {
             header_options = header_options.set_custom_headers(&custom_headers);
@@ -212,6 +205,7 @@ fn new_worksheet(options: &WriteOptions) -> Result<Worksheet> {
 
 struct CellFormats {
     blank: Format,
+    ordinary: Option<Format>,
     date: Format,
     time: Format,
     datetime: Format,
@@ -351,6 +345,7 @@ impl CellFormats {
     fn new(options: &WriteOptions) -> Self {
         Self {
             blank: Format::new().set_num_format("@"),
+            ordinary: options.wrap_cell_contents().then(|| Format::new().set_text_wrap()),
             date: Format::new().set_num_format(options.date_format()),
             time: Format::new().set_num_format(options.time_format()),
             datetime: Format::new().set_num_format(options.datetime_format()),
@@ -371,16 +366,32 @@ fn write_cell(
             worksheet.write_blank(row, column, &formats.blank)?;
         }
         CellValue::Bool(value) => {
-            worksheet.write_boolean(row, column, *value)?;
+            if let Some(format) = &formats.ordinary {
+                worksheet.write_boolean_with_format(row, column, *value, format)?;
+            } else {
+                worksheet.write_boolean(row, column, *value)?;
+            }
         }
         CellValue::Int(value) => {
-            worksheet.write(row, column, *value)?;
+            if let Some(format) = &formats.ordinary {
+                worksheet.write_with_format(row, column, *value, format)?;
+            } else {
+                worksheet.write(row, column, *value)?;
+            }
         }
         CellValue::Float(value) => {
-            worksheet.write_number(row, column, *value)?;
+            if let Some(format) = &formats.ordinary {
+                worksheet.write_number_with_format(row, column, *value, format)?;
+            } else {
+                worksheet.write_number(row, column, *value)?;
+            }
         }
         CellValue::String(value) | CellValue::Error(value) => {
-            worksheet.write_string(row, column, value)?;
+            if let Some(format) = &formats.ordinary {
+                worksheet.write_string_with_format(row, column, value, format)?;
+            } else {
+                worksheet.write_string(row, column, value)?;
+            }
         }
         CellValue::Date(value) => {
             worksheet.write_datetime_with_format(row, column, value, &formats.date)?;
@@ -397,6 +408,35 @@ fn write_cell(
         }
     }
     Ok(())
+}
+
+fn serialized_field_options<T>(
+    first: &T,
+    options: &WriteOptions,
+) -> Result<Vec<CustomSerializeField>>
+where
+    T: Serialize,
+{
+    let value = serde_json::to_value(first).map_err(|error| {
+        Error::invalid_write_options(format!("cannot inspect serialized row fields: {error}"))
+    })?;
+    let fields = value.as_object().ok_or_else(|| {
+        Error::invalid_write_options("typed writing requires rows serialized as structs")
+    })?;
+    let wrap_format = Format::new().set_text_wrap();
+    Ok(fields
+        .keys()
+        .map(|field_name| {
+            let mut field = CustomSerializeField::new(field_name);
+            if options.wrap_cell_contents() {
+                field = field.set_value_format(&wrap_format);
+            }
+            if let Some(number_format) = options.column_formats().get(field_name) {
+                field = field.set_value_format(Format::new().set_num_format(number_format));
+            }
+            field
+        })
+        .collect())
 }
 
 fn validate_sheet_name(name: &str, existing_names: &HashSet<String>) -> Result<()> {

@@ -2,7 +2,10 @@ use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use miniexcel::{
     CellValue, DynamicRow, HeaderMode, MiniExcel, ReadOptions, SheetVisibility, WriteOptions,
 };
+use quick_xml::Reader;
+use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
 
@@ -37,6 +40,66 @@ fn archive_xml(bytes: &[u8], path: &str) -> String {
 
 fn worksheet_xml(bytes: &[u8]) -> String {
     archive_xml(bytes, "xl/worksheets/sheet1.xml")
+}
+
+fn cell_style_index(bytes: &[u8], address: &str) -> usize {
+    let xml = worksheet_xml(bytes);
+    let mut reader = Reader::from_str(&xml);
+    loop {
+        match reader.read_event().expect("parse worksheet XML") {
+            Event::Start(cell) | Event::Empty(cell) if cell.name().as_ref() == b"c" => {
+                let mut cell_address = None;
+                let mut style = 0;
+                for attribute in cell.attributes().flatten() {
+                    if attribute.key.as_ref() == b"r" {
+                        cell_address = Some(String::from_utf8_lossy(&attribute.value).into_owned());
+                    } else if attribute.key.as_ref() == b"s" {
+                        style = String::from_utf8_lossy(&attribute.value).parse().unwrap();
+                    }
+                }
+                if cell_address.as_deref() == Some(address) {
+                    return style;
+                }
+            }
+            Event::Eof => panic!("cell {address} not found"),
+            _ => {}
+        }
+    }
+}
+
+fn wrapped_style_indexes(bytes: &[u8]) -> HashSet<usize> {
+    let xml = archive_xml(bytes, "xl/styles.xml");
+    let mut reader = Reader::from_str(&xml);
+    let mut in_cell_xfs = false;
+    let mut next_index = 0;
+    let mut current = None;
+    let mut wrapped = HashSet::new();
+    loop {
+        match reader.read_event().expect("parse styles XML") {
+            Event::Start(event) if event.name().as_ref() == b"cellXfs" => in_cell_xfs = true,
+            Event::End(event) if event.name().as_ref() == b"cellXfs" => in_cell_xfs = false,
+            Event::Start(event) if in_cell_xfs && event.name().as_ref() == b"xf" => {
+                current = Some(next_index);
+                next_index += 1;
+            }
+            Event::Empty(event) if in_cell_xfs && event.name().as_ref() == b"xf" => {
+                next_index += 1;
+            }
+            Event::Start(event) | Event::Empty(event)
+                if current.is_some() && event.name().as_ref() == b"alignment" =>
+            {
+                if event.attributes().flatten().any(|attribute| {
+                    attribute.key.as_ref() == b"wrapText" && attribute.value.as_ref() == b"1"
+                }) {
+                    wrapped.insert(current.expect("current cell format"));
+                }
+            }
+            Event::End(event) if event.name().as_ref() == b"xf" => current = None,
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    wrapped
 }
 
 #[test]
@@ -225,6 +288,54 @@ fn writes_v1_compatible_auto_widths() {
     ] {
         assert!(MiniExcel::save_as_bytes(&[dynamic_row("Ada", 1)], &options).is_err());
     }
+}
+
+#[test]
+fn wraps_ordinary_body_cells_without_wrapping_headers_or_formatted_values() {
+    let date = NaiveDate::from_ymd_opt(2026, 8, 24).unwrap();
+    let mut row = DynamicRow::new();
+    row.insert("Text".to_owned(), CellValue::String("line 1\nline 2".to_owned()));
+    row.insert("Count".to_owned(), CellValue::Int(42));
+    row.insert("Active".to_owned(), CellValue::Bool(true));
+    row.insert("Date".to_owned(), CellValue::Date(date));
+
+    let default_bytes = MiniExcel::save_as_bytes(&[row.clone()], &WriteOptions::new())
+        .expect("write default cells");
+    let default_wrapped = wrapped_style_indexes(&default_bytes);
+    assert!(!default_wrapped.contains(&cell_style_index(&default_bytes, "A2")));
+
+    let wrapped_bytes =
+        MiniExcel::save_as_bytes(&[row], &WriteOptions::new().with_wrap_cell_contents(true))
+            .expect("write wrapped cells");
+    let wrapped = wrapped_style_indexes(&wrapped_bytes);
+    for address in ["A2", "B2", "C2"] {
+        assert!(wrapped.contains(&cell_style_index(&wrapped_bytes, address)));
+    }
+    assert!(!wrapped.contains(&cell_style_index(&wrapped_bytes, "A1")));
+    assert!(!wrapped.contains(&cell_style_index(&wrapped_bytes, "D2")));
+
+    let temp_dir = tempfile::tempdir().expect("create temp directory");
+    let path = temp_dir.path().join("typed-wrap.xlsx");
+    let releases = [Release {
+        name: "line 1\nline 2".to_owned(),
+        version: 2,
+        released_on: date,
+        internal: false,
+    }];
+    MiniExcel::save_as_serialized_with_options(
+        &path,
+        &releases,
+        &WriteOptions::new()
+            .with_wrap_cell_contents(true)
+            .with_column_format("ReleasedOn", "yyyy-mm-dd"),
+    )
+    .expect("write typed wrapped cells");
+    let typed_bytes = std::fs::read(path).unwrap();
+    let typed_wrapped = wrapped_style_indexes(&typed_bytes);
+    assert!(typed_wrapped.contains(&cell_style_index(&typed_bytes, "A2")));
+    assert!(typed_wrapped.contains(&cell_style_index(&typed_bytes, "B2")));
+    assert!(!typed_wrapped.contains(&cell_style_index(&typed_bytes, "A1")));
+    assert!(!typed_wrapped.contains(&cell_style_index(&typed_bytes, "C2")));
 }
 
 #[test]

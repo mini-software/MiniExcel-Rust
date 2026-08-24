@@ -298,12 +298,14 @@ Acceptance:
 
 Depends on Task 7.
 
-- [ ] For append of a formula-free donor, preserve `calcChain.xml`, its relationship, and calculation properties unchanged.
-- [ ] For overwrite, remove stale calc-chain entries safely or remove the complete chain part, relationship, and content-type override.
-- [ ] Set workbook calculation properties to force full recalculation on next open after replacement.
-- [ ] Preserve workbook-scoped and unrelated sheet-scoped defined names.
-- [ ] Update or remove only the target sheet's AutoFilter local defined name.
-- [ ] Add cross-sheet formula fixtures and assert that formula text is not rewritten or evaluated.
+- [x] For append of a formula-free donor, preserve `calcChain.xml`, its relationship, and calculation properties unchanged.
+- [x] For overwrite, remove stale calc-chain entries safely or remove the complete chain part, relationship, and content-type override.
+- [x] Set workbook calculation properties to force full recalculation on next open after replacement.
+- [x] Preserve workbook-scoped and unrelated sheet-scoped defined names.
+- [x] Update or remove only the target sheet's AutoFilter local defined name.
+- [x] Add cross-sheet formula fixtures and assert that formula text is not rewritten or evaluated.
+
+Completed on 2026-08-25. Focused test: `cargo +1.85.0 test -p miniexcel --test insert calculation_policy --locked`.
 
 Acceptance:
 

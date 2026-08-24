@@ -298,12 +298,14 @@ Donor-workbook 方案复用经过测试的 `XlsxWriter`，避免重复实现 ser
 
 依赖 Task 7。
 
-- [ ] Append formula-free donor 时原样保留 `calcChain.xml`、relationship 和 calculation property。
-- [ ] Overwrite 时安全删除 stale calc-chain entry，或删除完整 chain part、relationship 和 content-type override。
-- [ ] Replacement 后设置 workbook calculation property，要求下次打开执行 full recalculation。
-- [ ] 保留 workbook-scope 与无关 sheet-scope defined name。
-- [ ] 只更新或删除目标 sheet 的 AutoFilter local defined name。
-- [ ] 增加 cross-sheet formula fixture，并断言 formula text 不重写、不计算。
+- [x] Append formula-free donor 时原样保留 `calcChain.xml`、relationship 和 calculation property。
+- [x] Overwrite 时安全删除 stale calc-chain entry，或删除完整 chain part、relationship 和 content-type override。
+- [x] Replacement 后设置 workbook calculation property，要求下次打开执行 full recalculation。
+- [x] 保留 workbook-scope 与无关 sheet-scope defined name。
+- [x] 只更新或删除目标 sheet 的 AutoFilter local defined name。
+- [x] 增加 cross-sheet formula fixture，并断言 formula text 不重写、不计算。
+
+已于 2026-08-25 完成。聚焦测试：`cargo +1.85.0 test -p miniexcel --test insert calculation_policy --locked`。
 
 验收：
 

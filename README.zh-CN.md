@@ -293,6 +293,8 @@ assert_eq!(count, 1);
 
 默认的 `ExistingSheetPolicy::Reject` 会不区分大小写地拒绝重复 worksheet name。使用 `ExistingSheetPolicy::Replace` 可原位替换 worksheet，并保留其 workbook 顺序、ID、relationship/path、visibility 与 active state。默认 `TargetRelationshipPolicy::Reject` 只接受没有 worksheet relationship 的 plain target。`RemoveSupported` 可删除 target-owned table、drawing 及其独占 image、comment、VML drawing 和 external hyperlink；pivot、external link、未知 relationship 与 shared/global part 会被拒绝或保守保留。Insert 写入 XLSX package，拒绝 macro-enabled `.xlsm` path，并拒绝 `WriteOptions::with_overwrite_file(true)`，因为 workbook replacement 由 Insert policy 控制。
 
+追加 formula-free worksheet 时会保留已有 calculation chain 与 workbook calculation property。Replacement 会完整删除 stale `calcChain` part、relationship 和 content-type override，并设置 `fullCalcOnLoad` 与 `forceFullCalc`，让 Excel 下次打开时重算。MiniExcel 不执行或改写公式；未修改 worksheet 中的 formula 与 cached value 保持原始字节。
+
 ## 类型化写入
 
 ```rust

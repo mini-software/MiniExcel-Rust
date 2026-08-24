@@ -174,7 +174,7 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | 带地址 JSONL/Markdown/manifest RAG 导出 | Rust 研究扩展 | 否 |
 | Async API、DataReader、stream ownership | 延后 | 否 |
 | 向现有 `.xlsx` workbook 追加 worksheet | 已实现并原子提交 | Rust 测试；共享 parity contract 尚未扩展 |
-| 严格 worksheet replacement | 已支持 plain target 与受支持的 target-owned closure | Rust 测试；calculation policy 仍延后 |
+| 严格 worksheet replacement | 已支持 plain target 与受支持的 target-owned closure | Rust 测试；删除 stale calcChain 并要求 full recalculation |
 | CSV 和旧格式 | 延后 | 否 |
 | 高级 template、picture、merge、comment | 延后 | 否 |
 
@@ -182,4 +182,4 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 
 ## 延后工作
 
-SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、CSV provider、旧 Excel 格式、高级 template 指令与 sheet 克隆、image authoring、merged-cell API、公式计算/依赖展开、公式编写、通用 style、replacement calculation-chain policy、async I/O，以及从调用方拥有的 reader 流式读取，都需要独立的设计与验收里程碑。
+SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、CSV provider、旧 Excel 格式、高级 template 指令与 sheet 克隆、image authoring、merged-cell API、公式计算/依赖展开、公式编写、通用 style、async I/O，以及从调用方拥有的 reader 流式读取，都需要独立的设计与验收里程碑。

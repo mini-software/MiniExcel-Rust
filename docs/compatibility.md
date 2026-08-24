@@ -174,7 +174,7 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | Addressed JSONL/Markdown/manifest RAG export | Rust research extension | No |
 | Async APIs, DataReader, stream ownership | Deferred | No |
 | Append worksheet to existing `.xlsx` workbook | Implemented and atomically committed | Rust tests; shared parity contract not yet extended |
-| Strict worksheet replacement | Implemented for plain targets and supported target-owned closures | Rust tests; calculation policy remains deferred |
+| Strict worksheet replacement | Implemented for plain targets and supported target-owned closures | Rust tests; stale calcChain removed and full recalculation requested |
 | CSV and legacy formats | Deferred | No |
 | Advanced templates, pictures, merges, comments | Deferred | No |
 
@@ -182,4 +182,4 @@ This matrix is the coverage claim: Rust does not yet provide complete API parity
 
 ## Deferred Work
 
-SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, advanced template directives and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, replacement calculation-chain policy, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.
+SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, advanced template directives and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.

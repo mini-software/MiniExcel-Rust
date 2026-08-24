@@ -293,6 +293,8 @@ assert_eq!(count, 1);
 
 The default `ExistingSheetPolicy::Reject` rejects duplicate worksheet names case-insensitively. Use `ExistingSheetPolicy::Replace` to replace a worksheet in place while preserving its workbook order, ID, relationship/path, visibility, and active state. The default `TargetRelationshipPolicy::Reject` accepts only a plain target with no worksheet relationships. `RemoveSupported` can remove target-owned tables, drawings with exclusively owned images, comments, VML drawings, and external hyperlinks; pivots, external links, unknown relationships, and shared/global parts are rejected or preserved conservatively. Insert writes XLSX packages, rejects macro-enabled `.xlsm` paths, and rejects `WriteOptions::with_overwrite_file(true)` because workbook replacement is controlled by the insert policy.
 
+Appending a formula-free worksheet preserves an existing calculation chain and workbook calculation properties. Replacement removes the complete stale `calcChain` part, relationship, and content-type override, then sets `fullCalcOnLoad` and `forceFullCalc` so Excel recalculates on the next open. MiniExcel does not evaluate or rewrite formulas; formulas and cached values in untouched worksheets remain byte-identical.
+
 ## Typed Writing
 
 ```rust

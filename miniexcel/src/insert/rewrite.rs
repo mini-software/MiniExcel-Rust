@@ -18,6 +18,8 @@ const WORKSHEET_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
 const WORKSHEET_RELATIONSHIP_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet";
+const CALC_CHAIN_CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum PackageRewriteStage {
@@ -30,6 +32,7 @@ pub(super) struct ReplacementPlan {
     target: WorkbookSheet,
     styles_path: String,
     removed_entries: BTreeSet<String>,
+    calc_chain_relationship_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -173,7 +176,73 @@ pub(super) fn plan_replacement(
         }
     }
 
-    Ok(ReplacementPlan { target, styles_path: styles_path(inventory)?, removed_entries })
+    let mut calc_chain_relationships = inventory.relationships.iter().filter(|relationship| {
+        relationship.source.as_deref() == Some(WORKBOOK_PATH)
+            && is_calculation_chain_relationship(&relationship.relationship_type)
+    });
+    let calc_chain = calc_chain_relationships.next();
+    if calc_chain_relationships.next().is_some() {
+        return Err(Error::unsafe_package("workbook has multiple calculation-chain relationships"));
+    }
+    let calc_chain_relationship_id = if let Some(relationship) = calc_chain {
+        let path = relationship.normalized_target.clone().ok_or_else(|| {
+            Error::unsupported_package_feature("calculation-chain relationship cannot be external")
+        })?;
+        if !inventory.entry_names.contains(&path) {
+            return Err(Error::insert_package(format!(
+                "calculation-chain part '{path}' is missing"
+            )));
+        }
+        let content_type = inventory
+            .content_types
+            .overrides
+            .iter()
+            .find(|entry| entry.part_name == path)
+            .ok_or_else(|| {
+                Error::insert_package(format!(
+                    "calculation-chain part '{path}' has no content-type override"
+                ))
+            })?;
+        if content_type.content_type != CALC_CHAIN_CONTENT_TYPE {
+            return Err(Error::unsupported_package_feature(format!(
+                "calculation-chain relationship target '{path}' has incompatible content type '{}'",
+                content_type.content_type
+            )));
+        }
+        if inventory.relationships.iter().any(|candidate| {
+            candidate.normalized_target.as_deref() == Some(path.as_str())
+                && !(candidate.source.as_deref() == Some(WORKBOOK_PATH)
+                    && candidate.id == relationship.id)
+        }) {
+            return Err(Error::unsupported_package_feature(format!(
+                "calculation-chain part '{path}' is referenced by another relationship"
+            )));
+        }
+        if inventory
+            .relationships
+            .iter()
+            .any(|candidate| candidate.source.as_deref() == Some(path.as_str()))
+        {
+            return Err(Error::unsupported_package_feature(
+                "calculation-chain part owns relationships",
+            ));
+        }
+        removed_entries.insert(path.clone());
+        let relationship_part = relationship_part_path(&path)?;
+        if inventory.entry_names.contains(&relationship_part) {
+            removed_entries.insert(relationship_part);
+        }
+        Some(relationship.id.clone())
+    } else {
+        None
+    };
+
+    Ok(ReplacementPlan {
+        target,
+        styles_path: styles_path(inventory)?,
+        removed_entries,
+        calc_chain_relationship_id,
+    })
 }
 
 pub(crate) fn append_worksheet<R>(source: R, donor: &DonorWorksheet) -> Result<Vec<u8>>
@@ -281,12 +350,16 @@ where
         Error::insert_package(format!("cannot reopen source workbook: {error}"))
     })?;
     let workbook_xml = read_part(&mut archive, WORKBOOK_PATH)?;
+    let workbook_rels_xml = read_part(&mut archive, WORKBOOK_RELS_PATH)?;
     let content_types_xml = read_part(&mut archive, CONTENT_TYPES_PATH)?;
     let styles_xml = read_part(&mut archive, &plan.styles_path)?;
     let target_worksheet_xml = read_part(&mut archive, &plan.target.target)?;
     let style_rebase = rebase_styles(&styles_xml, donor)?;
     let worksheet_xml = preserve_tab_selected(&style_rebase.worksheet_xml, &target_worksheet_xml)?;
-    let patched_workbook = replace_target_filter_defined_name(&workbook_xml, plan, donor)?;
+    let patched_workbook =
+        force_full_calculation(&replace_target_filter_defined_name(&workbook_xml, plan, donor)?)?;
+    let patched_workbook_rels =
+        remove_relationship_by_id(&workbook_rels_xml, plan.calc_chain_relationship_id.as_deref())?;
     let patched_content_types =
         remove_content_type_overrides(&content_types_xml, &plan.removed_entries)?;
 
@@ -297,10 +370,21 @@ where
     if patched_workbook != workbook_xml {
         replacements.insert(WORKBOOK_PATH.to_owned(), patched_workbook);
     }
+    if patched_workbook_rels != workbook_rels_xml {
+        replacements.insert(WORKBOOK_RELS_PATH.to_owned(), patched_workbook_rels);
+    }
     if patched_content_types != content_types_xml {
         replacements.insert(CONTENT_TYPES_PATH.to_owned(), patched_content_types);
     }
     write_package(archive, destination, &replacements, &plan.removed_entries, None, &mut checkpoint)
+}
+
+fn is_calculation_chain_relationship(relationship_type: &str) -> bool {
+    const TYPES: [&str; 2] = [
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain",
+        "http://purl.oclc.org/ooxml/officeDocument/relationships/calcChain",
+    ];
+    TYPES.contains(&relationship_type)
 }
 
 fn replacement_relationship_kind(relationship_type: &str) -> Option<ReplacementRelationshipKind> {
@@ -453,7 +537,7 @@ fn append_workbook(
     local_sheet_id: usize,
     local_defined_names: &[DefinedName],
 ) -> Result<Vec<u8>> {
-    let has_defined_names = contains_element(xml, b"definedNames")?;
+    let has_defined_names = has_direct_workbook_child(xml, b"definedNames")?;
     let relationship_prefix = workbook_relationship_prefix(xml)?;
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -541,6 +625,60 @@ fn append_workbook_relationship(xml: &[u8], allocation: &WorksheetAllocation) ->
     })
 }
 
+fn remove_relationship_by_id(xml: &[u8], relationship_id: Option<&str>) -> Result<Vec<u8>> {
+    let Some(relationship_id) = relationship_id else {
+        return Ok(xml.to_vec());
+    };
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(Vec::with_capacity(xml.len()));
+    let mut removed = 0;
+    let mut skip_depth = 0_usize;
+    loop {
+        let event = reader.read_event().map_err(|error| {
+            Error::insert_package(format!("invalid workbook relationships XML: {error}"))
+        })?;
+        if skip_depth > 0 {
+            match event {
+                Event::Start(_) => skip_depth += 1,
+                Event::End(_) => skip_depth -= 1,
+                Event::Eof => {
+                    return Err(Error::insert_package(
+                        "unterminated removed workbook relationship",
+                    ));
+                }
+                _ => {}
+            }
+            continue;
+        }
+        match event {
+            Event::Start(start) if local_name(start.name().as_ref()) == b"Relationship" => {
+                if xml_attribute(&start, b"Id")?.as_deref() == Some(relationship_id) {
+                    removed += 1;
+                    skip_depth = 1;
+                } else {
+                    write_event(&mut writer, Event::Start(start))?;
+                }
+            }
+            Event::Empty(empty) if local_name(empty.name().as_ref()) == b"Relationship" => {
+                if xml_attribute(&empty, b"Id")?.as_deref() == Some(relationship_id) {
+                    removed += 1;
+                } else {
+                    write_event(&mut writer, Event::Empty(empty))?;
+                }
+            }
+            Event::Eof => break,
+            event => write_event(&mut writer, event)?,
+        }
+    }
+    if removed != 1 {
+        return Err(Error::insert_package(format!(
+            "workbook contains {removed} relationships with ID '{relationship_id}'"
+        )));
+    }
+    Ok(writer.into_inner())
+}
+
 fn append_content_type_override(
     xml: &[u8],
     allocation: &WorksheetAllocation,
@@ -616,7 +754,7 @@ fn replace_target_filter_defined_name(
     donor: &DonorWorksheet,
 ) -> Result<Vec<u8>> {
     const FILTER_NAME: &str = "_xlnm._FilterDatabase";
-    let has_defined_names = contains_element(xml, b"definedNames")?;
+    let has_defined_names = has_direct_workbook_child(xml, b"definedNames")?;
     let retained_names = count_retained_defined_names(xml, plan.target.index)?;
     let donor_names = donor
         .local_defined_names
@@ -740,19 +878,157 @@ fn replace_target_filter_defined_name(
     Ok(writer.into_inner())
 }
 
-fn count_retained_defined_names(xml: &[u8], target_index: usize) -> Result<usize> {
+fn force_full_calculation(xml: &[u8]) -> Result<Vec<u8>> {
+    let has_calc_pr = has_direct_workbook_child(xml, b"calcPr")?;
     let mut reader = Reader::from_reader(xml);
-    let mut count = 0;
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(Vec::with_capacity(xml.len() + 96));
+    let mut depth = 0_usize;
+    let mut calc_pr_count = 0_usize;
+    let mut workbook_prefix = String::new();
+    let mut inserted = false;
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|error| Error::insert_package(format!("invalid workbook XML: {error}")))?;
+        if !has_calc_pr && !inserted && is_direct_child_after_calc_pr(&event, depth) {
+            write_calc_pr(&mut writer, &workbook_prefix)?;
+            inserted = true;
+        }
+        match event {
+            Event::Start(start)
+                if depth == 0 && local_name(start.name().as_ref()) == b"workbook" =>
+            {
+                workbook_prefix = element_prefix(start.name().as_ref())?;
+                write_event(&mut writer, Event::Start(start))?;
+                depth += 1;
+            }
+            Event::Start(start) if depth == 1 && local_name(start.name().as_ref()) == b"calcPr" => {
+                write_event(&mut writer, Event::Start(force_calc_attributes(&start)?))?;
+                calc_pr_count += 1;
+                depth += 1;
+            }
+            Event::Empty(empty) if depth == 1 && local_name(empty.name().as_ref()) == b"calcPr" => {
+                write_event(&mut writer, Event::Empty(force_calc_attributes(&empty)?))?;
+                calc_pr_count += 1;
+            }
+            Event::Start(start) => {
+                write_event(&mut writer, Event::Start(start))?;
+                depth += 1;
+            }
+            Event::End(end) => {
+                write_event(&mut writer, Event::End(end))?;
+                depth = depth.saturating_sub(1);
+            }
+            Event::Eof => break,
+            event => write_event(&mut writer, event)?,
+        }
+    }
+    if has_calc_pr && calc_pr_count != 1 {
+        return Err(Error::unsafe_package(format!(
+            "workbook contains {calc_pr_count} calcPr elements"
+        )));
+    }
+    if !has_calc_pr && !inserted {
+        return Err(Error::insert_package("workbook ended before calcPr could be inserted"));
+    }
+    Ok(writer.into_inner())
+}
+
+fn has_direct_workbook_child(xml: &[u8], child_name: &[u8]) -> Result<bool> {
+    let mut reader = Reader::from_reader(xml);
+    let mut depth = 0_usize;
     loop {
         match reader
             .read_event()
             .map_err(|error| Error::insert_package(format!("invalid workbook XML: {error}")))?
         {
-            Event::Start(start) | Event::Empty(start)
-                if local_name(start.name().as_ref()) == b"definedName" =>
+            Event::Start(start) => {
+                if depth == 1 && local_name(start.name().as_ref()) == child_name {
+                    return Ok(true);
+                }
+                depth += 1;
+            }
+            Event::Empty(empty)
+                if depth == 1 && local_name(empty.name().as_ref()) == child_name =>
             {
-                if !defined_name_is_target_filter(&start, target_index)? {
+                return Ok(true);
+            }
+            Event::End(_) => depth = depth.saturating_sub(1),
+            Event::Eof => return Ok(false),
+            _ => {}
+        }
+    }
+}
+
+fn force_calc_attributes(element: &BytesStart<'_>) -> Result<BytesStart<'static>> {
+    let full_calc = replace_optional_attribute(element, b"fullCalcOnLoad", Some("1"))?;
+    replace_optional_attribute(&full_calc, b"forceFullCalc", Some("1"))
+}
+
+fn write_calc_pr(writer: &mut Writer<Vec<u8>>, element_prefix: &str) -> Result<()> {
+    let mut calc_pr = BytesStart::new(qualify(element_prefix, "calcPr"));
+    calc_pr.push_attribute(("fullCalcOnLoad", "1"));
+    calc_pr.push_attribute(("forceFullCalc", "1"));
+    write_event(writer, Event::Empty(calc_pr))
+}
+
+fn is_direct_child_after_calc_pr(event: &Event<'_>, depth: usize) -> bool {
+    if depth != 1 {
+        return false;
+    }
+    match event {
+        Event::Start(start) | Event::Empty(start) => matches!(
+            local_name(start.name().as_ref()),
+            b"oleSize"
+                | b"customWorkbookViews"
+                | b"pivotCaches"
+                | b"smartTagPr"
+                | b"smartTagTypes"
+                | b"webPublishing"
+                | b"fileRecoveryPr"
+                | b"webPublishObjects"
+                | b"extLst"
+        ),
+        Event::End(end) => local_name(end.name().as_ref()) == b"workbook",
+        _ => false,
+    }
+}
+
+fn count_retained_defined_names(xml: &[u8], target_index: usize) -> Result<usize> {
+    let mut reader = Reader::from_reader(xml);
+    let mut count = 0;
+    let mut depth = 0_usize;
+    let mut defined_names_depth = None;
+    loop {
+        match reader
+            .read_event()
+            .map_err(|error| Error::insert_package(format!("invalid workbook XML: {error}")))?
+        {
+            Event::Start(start) => {
+                if depth == 1 && local_name(start.name().as_ref()) == b"definedNames" {
+                    defined_names_depth = Some(depth + 1);
+                } else if defined_names_depth == Some(depth)
+                    && local_name(start.name().as_ref()) == b"definedName"
+                    && !defined_name_is_target_filter(&start, target_index)?
+                {
                     count += 1;
+                }
+                depth += 1;
+            }
+            Event::Empty(empty)
+                if defined_names_depth == Some(depth)
+                    && local_name(empty.name().as_ref()) == b"definedName"
+                    && !defined_name_is_target_filter(&empty, target_index)? =>
+            {
+                count += 1;
+            }
+            Event::End(end) => {
+                depth = depth.saturating_sub(1);
+                if defined_names_depth == Some(depth + 1)
+                    && local_name(end.name().as_ref()) == b"definedNames"
+                {
+                    defined_names_depth = None;
                 }
             }
             Event::Eof => break,
@@ -1200,6 +1476,55 @@ mod tests {
             plan_replacement(&external_image, "Target", TargetRelationshipPolicy::RemoveSupported,)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn replacement_plan_rejects_calc_chain_relationship_to_non_chain_part() {
+        let mut inventory = PackageInventory {
+            entry_names: BTreeSet::from([
+                "xl/styles.xml".to_owned(),
+                "xl/worksheets/target.xml".to_owned(),
+            ]),
+            content_types: ContentTypes {
+                defaults: Vec::new(),
+                overrides: vec![super::super::package::ContentTypeOverride {
+                    part_name: "xl/styles.xml".to_owned(),
+                    content_type:
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"
+                            .to_owned(),
+                }],
+            },
+            relationships: vec![
+                relationship("xl/workbook.xml", "rIdStyles", "styles", "xl/styles.xml"),
+                relationship("xl/workbook.xml", "rIdCalc", "calcChain", "xl/styles.xml"),
+            ],
+            sheets: vec![worksheet("Target", "xl/worksheets/target.xml", 0)],
+            views: Vec::new(),
+            defined_names: Vec::new(),
+        };
+        assert!(plan_replacement(&inventory, "Target", TargetRelationshipPolicy::Reject).is_err());
+
+        inventory.content_types.overrides[0].content_type = CALC_CHAIN_CONTENT_TYPE.to_owned();
+        assert!(plan_replacement(&inventory, "Target", TargetRelationshipPolicy::Reject).is_err());
+    }
+
+    #[test]
+    fn full_calculation_patch_preserves_attributes_and_inserts_direct_child() {
+        let existing = br#"<workbook><calcPr calcId="77" calcMode="manual" fullCalcOnLoad="0" forceFullCalc="0"/><extLst/></workbook>"#;
+        let patched = String::from_utf8(force_full_calculation(existing).unwrap()).unwrap();
+        assert!(patched.contains("calcId=\"77\""));
+        assert!(patched.contains("calcMode=\"manual\""));
+        assert!(patched.contains("fullCalcOnLoad=\"1\""));
+        assert!(patched.contains("forceFullCalc=\"1\""));
+        assert_eq!(patched.matches("<calcPr ").count(), 1);
+
+        let missing = br#"<workbook><sheets/><extLst><calcPr foreign="1"/></extLst></workbook>"#;
+        let patched = String::from_utf8(force_full_calculation(missing).unwrap()).unwrap();
+        assert_eq!(patched.matches("<calcPr ").count(), 2);
+        let direct = patched.find("fullCalcOnLoad=\"1\"").unwrap();
+        let ext = patched.find("<extLst>").unwrap();
+        assert!(direct < ext);
+        assert!(patched.contains("<calcPr foreign=\"1\"/>"));
     }
 
     fn relationship(

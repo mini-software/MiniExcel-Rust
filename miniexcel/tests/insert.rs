@@ -815,6 +815,124 @@ fn replace_sheet_remove_supported_deletes_only_target_owned_closure() {
     assert_eq!(rows[0]["Version"], CellValue::Int(9));
 }
 
+#[test]
+fn calculation_policy_append_preserves_chain_relationship_and_calc_properties() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("append-calc-chain.xlsx");
+    let source = calculation_fixture();
+    std::fs::write(&path, &source).unwrap();
+    let calc_chain = read_entry(&source, "xl/calcChain.xml");
+    let calc_chain_relationship = xml_element_by_attribute(
+        &read_entry(&source, "xl/_rels/workbook.xml.rels"),
+        b"Relationship",
+        b"Type",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain",
+    );
+    let calc_chain_override = xml_element_by_attribute(
+        &read_entry(&source, "[Content_Types].xml"),
+        b"Override",
+        b"PartName",
+        "/xl/calcChain.xml",
+    );
+    let calc_pr = xml_element_bytes(&read_entry(&source, "xl/workbook.xml"), b"calcPr");
+
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Appended", 10)],
+        &InsertOptions::new().with_sheet_name("Appended"),
+    )
+    .unwrap();
+
+    let output = std::fs::read(&path).unwrap();
+    assert_eq!(read_entry(&output, "xl/calcChain.xml"), calc_chain);
+    assert_eq!(
+        xml_element_by_attribute(
+            &read_entry(&output, "xl/_rels/workbook.xml.rels"),
+            b"Relationship",
+            b"Type",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain",
+        ),
+        calc_chain_relationship
+    );
+    assert_eq!(
+        xml_element_by_attribute(
+            &read_entry(&output, "[Content_Types].xml"),
+            b"Override",
+            b"PartName",
+            "/xl/calcChain.xml",
+        ),
+        calc_chain_override
+    );
+    assert_eq!(xml_element_bytes(&read_entry(&output, "xl/workbook.xml"), b"calcPr"), calc_pr);
+}
+
+#[test]
+fn calculation_policy_replace_removes_chain_and_preserves_unrelated_formulas_and_names() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("replace-calc-chain.xlsx");
+    let source = calculation_fixture();
+    let before = package_inventory(&source);
+    let hidden_sheet = read_entry(&source, "xl/worksheets/sheet7.xml");
+    let archive_sheet = read_entry(&source, "xl/worksheets/archive.xml");
+    std::fs::write(&path, &source).unwrap();
+
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Replacement", 11)],
+        &InsertOptions::new()
+            .with_write_options(WriteOptions::new().with_sheet_name("Data").with_auto_filter(false))
+            .with_existing_sheet_policy(ExistingSheetPolicy::Replace)
+            .with_target_relationship_policy(TargetRelationshipPolicy::RemoveSupported),
+    )
+    .unwrap();
+
+    let output = std::fs::read(&path).unwrap();
+    let after = package_inventory(&output);
+    assert!(!after.entries.contains_key("xl/calcChain.xml"));
+    assert!(!entry_text(&output, "xl/_rels/workbook.xml.rels").contains("calcChain"));
+    assert!(!entry_text(&output, "[Content_Types].xml").contains("calcChain"));
+    let workbook = entry_text(&output, "xl/workbook.xml");
+    let calc_pr = String::from_utf8(xml_element_bytes(workbook.as_bytes(), b"calcPr")).unwrap();
+    assert!(calc_pr.contains("calcId=\"191029\""));
+    assert!(calc_pr.contains("fullCalcOnLoad=\"1\""));
+    assert!(calc_pr.contains("forceFullCalc=\"1\""));
+
+    assert_eq!(read_entry(&output, "xl/worksheets/sheet7.xml"), hidden_sheet);
+    assert_eq!(read_entry(&output, "xl/worksheets/archive.xml"), archive_sheet);
+    assert!(entry_text(&output, "xl/worksheets/sheet7.xml").contains("<f>'Data'!C2</f>"));
+    assert!(entry_text(&output, "xl/worksheets/archive.xml").contains("<f>'Data'!B2+1</f>"));
+    assert_eq!(after.sheets, before.sheets);
+    assert!(
+        after
+            .defined_names
+            .iter()
+            .any(|name| { name.name == "GlobalTotal" && name.formula == "'Data'!$C$2" })
+    );
+    assert!(
+        after
+            .defined_names
+            .iter()
+            .any(|name| { name.name == "_xlnm.Print_Area" && name.formula == "'Data'!$A$1:$C$2" })
+    );
+    assert!(
+        after
+            .defined_names
+            .iter()
+            .any(|name| { name.name == "HiddenFormula" && name.formula == "'HiddenCalc'!$A$2" })
+    );
+    assert!(
+        !after
+            .defined_names
+            .iter()
+            .any(|name| { name.name == "_xlnm._FilterDatabase" && name.local_sheet_id == Some(0) })
+    );
+    assert!(after.defined_names.iter().any(|name| {
+        name.name == "_xlnm._FilterDatabase"
+            && name.local_sheet_id == Some(1)
+            && name.formula == "'HiddenCalc'!$A$1:$A$2"
+    }));
+}
+
 fn dynamic_insert_row(name: &str, version: i64) -> DynamicRow {
     let mut row = DynamicRow::new();
     row.insert("Name".to_owned(), CellValue::String(name.to_owned()));
@@ -824,6 +942,145 @@ fn dynamic_insert_row(name: &str, version: i64) -> DynamicRow {
 
 fn rows_for_macro() -> [DynamicRow; 1] {
     [dynamic_insert_row("MiniExcel", 1)]
+}
+
+fn calculation_fixture() -> Vec<u8> {
+    let source = complex_fixture();
+    let mut archive = ZipArchive::new(Cursor::new(&source)).unwrap();
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        if name == "xl/_rels/workbook.xml.rels" {
+            let options = entry.options();
+            let mut xml = String::new();
+            entry.read_to_string(&mut xml).unwrap();
+            let xml = xml.replace(
+                "</Relationships>",
+                r#"<Relationship Id="rId30" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain" Target="calcChain.xml"/></Relationships>"#,
+            );
+            writer.start_file(name, options).unwrap();
+            writer.write_all(xml.as_bytes()).unwrap();
+        } else if name == "[Content_Types].xml" {
+            let options = entry.options();
+            let mut xml = String::new();
+            entry.read_to_string(&mut xml).unwrap();
+            let xml = xml.replace(
+                "</Types>",
+                r#"<Override PartName="/xl/calcChain.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"/></Types>"#,
+            );
+            writer.start_file(name, options).unwrap();
+            writer.write_all(xml.as_bytes()).unwrap();
+        } else if name == "xl/workbook.xml" {
+            let options = entry.options();
+            let mut xml = String::new();
+            entry.read_to_string(&mut xml).unwrap();
+            let xml = xml.replace(
+                "</definedNames>",
+                "<definedName name=\"_xlnm._FilterDatabase\" localSheetId=\"0\" hidden=\"1\">'Data'!$A$1:$C$2</definedName><definedName name=\"_xlnm._FilterDatabase\" localSheetId=\"1\" hidden=\"1\">'HiddenCalc'!$A$1:$A$2</definedName></definedNames>",
+            );
+            writer.start_file(name, options).unwrap();
+            writer.write_all(xml.as_bytes()).unwrap();
+        } else {
+            writer.raw_copy_file(entry).unwrap();
+        }
+    }
+    writer
+        .start_file(
+            "xl/calcChain.xml",
+            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+        )
+        .unwrap();
+    writer
+        .write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?><calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><c r="C2" i="1"/><c r="A2" i="2"/><c r="A1" i="3"/></calcChain>"#,
+        )
+        .unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+fn xml_element_bytes(xml: &[u8], name: &[u8]) -> Vec<u8> {
+    let mut reader = Reader::from_reader(xml);
+    let mut writer = quick_xml::Writer::new(Vec::new());
+    let mut depth = 0;
+    loop {
+        let event = reader.read_event().unwrap();
+        if depth == 0 {
+            match &event {
+                Event::Start(start) if local_name(start.name().as_ref()) == name => depth = 1,
+                Event::Empty(empty) if local_name(empty.name().as_ref()) == name => {
+                    writer.write_event(event).unwrap();
+                    break;
+                }
+                Event::Eof => panic!("XML element '{}' not found", String::from_utf8_lossy(name)),
+                _ => continue,
+            }
+        } else {
+            match &event {
+                Event::Start(_) => depth += 1,
+                Event::End(_) => depth -= 1,
+                Event::Eof => {
+                    panic!("XML element '{}' is incomplete", String::from_utf8_lossy(name))
+                }
+                _ => {}
+            }
+        }
+        writer.write_event(event).unwrap();
+        if depth == 0 {
+            break;
+        }
+    }
+    writer.into_inner()
+}
+
+fn xml_element_by_attribute(
+    xml: &[u8],
+    name: &[u8],
+    attribute_name: &[u8],
+    expected_value: &str,
+) -> Vec<u8> {
+    let mut reader = Reader::from_reader(xml);
+    loop {
+        let event = reader.read_event().unwrap();
+        match event {
+            Event::Empty(element)
+                if local_name(element.name().as_ref()) == name
+                    && attribute(&element, attribute_name).as_deref() == Some(expected_value) =>
+            {
+                let mut writer = quick_xml::Writer::new(Vec::new());
+                writer.write_event(Event::Empty(element)).unwrap();
+                return writer.into_inner();
+            }
+            Event::Start(element)
+                if local_name(element.name().as_ref()) == name
+                    && attribute(&element, attribute_name).as_deref() == Some(expected_value) =>
+            {
+                let mut writer = quick_xml::Writer::new(Vec::new());
+                writer.write_event(Event::Start(element)).unwrap();
+                let mut depth = 1;
+                while depth > 0 {
+                    let event = reader.read_event().unwrap();
+                    match &event {
+                        Event::Start(_) => depth += 1,
+                        Event::End(_) => depth -= 1,
+                        Event::Eof => {
+                            panic!("XML element '{}' is incomplete", String::from_utf8_lossy(name))
+                        }
+                        _ => {}
+                    }
+                    writer.write_event(event).unwrap();
+                }
+                return writer.into_inner();
+            }
+            Event::Eof => panic!(
+                "XML element '{}' with attribute '{}'='{}' not found",
+                String::from_utf8_lossy(name),
+                String::from_utf8_lossy(attribute_name),
+                expected_value
+            ),
+            _ => {}
+        }
+    }
 }
 
 fn complex_fixture() -> Vec<u8> {

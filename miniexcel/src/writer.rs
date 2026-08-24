@@ -3,10 +3,15 @@ use std::fs::OpenOptions;
 use std::path::Path;
 
 use indexmap::IndexSet;
-use rust_xlsxwriter::{CustomSerializeField, Format, SerializeFieldOptions, Workbook, Worksheet};
+use rust_xlsxwriter::{
+    CustomSerializeField, Format, FormatAlign, SerializeFieldOptions, Workbook, Worksheet,
+};
 use serde::Serialize;
 
-use crate::{CellValue, DynamicRow, Error, Result, SheetVisibility, WriteOptions};
+use crate::{
+    CellValue, DynamicRow, Error, HorizontalAlignment, Result, SheetVisibility, VerticalAlignment,
+    WriteOptions,
+};
 
 const MAX_EXCEL_ROWS: usize = 1_048_576;
 const MAX_EXCEL_COLUMNS: usize = 16_384;
@@ -205,7 +210,7 @@ fn new_worksheet(options: &WriteOptions) -> Result<Worksheet> {
 
 struct CellFormats {
     blank: Format,
-    ordinary: Option<Format>,
+    ordinary: Format,
     date: Format,
     time: Format,
     datetime: Format,
@@ -345,13 +350,34 @@ impl CellFormats {
     fn new(options: &WriteOptions) -> Self {
         Self {
             blank: Format::new().set_num_format("@"),
-            ordinary: options.wrap_cell_contents().then(|| Format::new().set_text_wrap()),
-            date: Format::new().set_num_format(options.date_format()),
-            time: Format::new().set_num_format(options.time_format()),
-            datetime: Format::new().set_num_format(options.datetime_format()),
-            duration: Format::new().set_num_format(options.duration_format()),
+            ordinary: body_format(options, options.wrap_cell_contents(), None),
+            date: body_format(options, false, Some(options.date_format())),
+            time: body_format(options, false, Some(options.time_format())),
+            datetime: body_format(options, false, Some(options.datetime_format())),
+            duration: body_format(options, false, Some(options.duration_format())),
         }
     }
+}
+
+fn body_format(options: &WriteOptions, wrap: bool, number_format: Option<&str>) -> Format {
+    let horizontal = match options.horizontal_alignment() {
+        HorizontalAlignment::Left => FormatAlign::General,
+        HorizontalAlignment::Center => FormatAlign::Center,
+        HorizontalAlignment::Right => FormatAlign::Right,
+    };
+    let vertical = match options.vertical_alignment() {
+        VerticalAlignment::Bottom => FormatAlign::Bottom,
+        VerticalAlignment::Center => FormatAlign::VerticalCenter,
+        VerticalAlignment::Top => FormatAlign::Top,
+    };
+    let mut format = Format::new().set_align(horizontal).set_align(vertical);
+    if wrap {
+        format = format.set_text_wrap();
+    }
+    if let Some(number_format) = number_format {
+        format = format.set_num_format(number_format);
+    }
+    format
 }
 
 fn write_cell(
@@ -366,32 +392,16 @@ fn write_cell(
             worksheet.write_blank(row, column, &formats.blank)?;
         }
         CellValue::Bool(value) => {
-            if let Some(format) = &formats.ordinary {
-                worksheet.write_boolean_with_format(row, column, *value, format)?;
-            } else {
-                worksheet.write_boolean(row, column, *value)?;
-            }
+            worksheet.write_boolean_with_format(row, column, *value, &formats.ordinary)?;
         }
         CellValue::Int(value) => {
-            if let Some(format) = &formats.ordinary {
-                worksheet.write_with_format(row, column, *value, format)?;
-            } else {
-                worksheet.write(row, column, *value)?;
-            }
+            worksheet.write_with_format(row, column, *value, &formats.ordinary)?;
         }
         CellValue::Float(value) => {
-            if let Some(format) = &formats.ordinary {
-                worksheet.write_number_with_format(row, column, *value, format)?;
-            } else {
-                worksheet.write_number(row, column, *value)?;
-            }
+            worksheet.write_number_with_format(row, column, *value, &formats.ordinary)?;
         }
         CellValue::String(value) | CellValue::Error(value) => {
-            if let Some(format) = &formats.ordinary {
-                worksheet.write_string_with_format(row, column, value, format)?;
-            } else {
-                worksheet.write_string(row, column, value)?;
-            }
+            worksheet.write_string_with_format(row, column, value, &formats.ordinary)?;
         }
         CellValue::Date(value) => {
             worksheet.write_datetime_with_format(row, column, value, &formats.date)?;
@@ -423,18 +433,16 @@ where
     let fields = value.as_object().ok_or_else(|| {
         Error::invalid_write_options("typed writing requires rows serialized as structs")
     })?;
-    let wrap_format = Format::new().set_text_wrap();
     Ok(fields
         .keys()
         .map(|field_name| {
-            let mut field = CustomSerializeField::new(field_name);
-            if options.wrap_cell_contents() {
-                field = field.set_value_format(&wrap_format);
-            }
-            if let Some(number_format) = options.column_formats().get(field_name) {
-                field = field.set_value_format(Format::new().set_num_format(number_format));
-            }
-            field
+            let number_format = options.column_formats().get(field_name).map(String::as_str);
+            let wrap = options.wrap_cell_contents() && number_format.is_none();
+            CustomSerializeField::new(field_name).set_value_format(body_format(
+                options,
+                wrap,
+                number_format,
+            ))
         })
         .collect())
 }

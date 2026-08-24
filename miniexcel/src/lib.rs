@@ -22,7 +22,9 @@ pub use analytics::{
 pub use cell::{CellReference, CellValue, DynamicRow, ExcelRange, StructuredCell, StructuredRow};
 pub use error::{Error, Result};
 pub use facade::MiniExcel;
-pub use options::{HeaderMode, ReadOptions, TemplateOptions, WriteOptions};
+pub use options::{
+    HeaderMode, HorizontalAlignment, ReadOptions, TemplateOptions, VerticalAlignment, WriteOptions,
+};
 pub use rag::{
     FormulaCalculationStatus, RagCell, RagChunk, RagExport, RagExportOptions, RagManifest, RagRow,
     RagValue,

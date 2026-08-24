@@ -1,6 +1,7 @@
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use miniexcel::{
-    CellValue, DynamicRow, HeaderMode, MiniExcel, ReadOptions, SheetVisibility, WriteOptions,
+    CellValue, DynamicRow, HeaderMode, HorizontalAlignment, MiniExcel, ReadOptions,
+    SheetVisibility, VerticalAlignment, WriteOptions,
 };
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -100,6 +101,44 @@ fn wrapped_style_indexes(bytes: &[u8]) -> HashSet<usize> {
         }
     }
     wrapped
+}
+
+fn style_alignment(bytes: &[u8], style_index: usize) -> (Option<String>, Option<String>) {
+    let xml = archive_xml(bytes, "xl/styles.xml");
+    let mut reader = Reader::from_str(&xml);
+    let mut in_cell_xfs = false;
+    let mut next_index = 0;
+    let mut current = None;
+    loop {
+        match reader.read_event().expect("parse styles XML") {
+            Event::Start(event) if event.name().as_ref() == b"cellXfs" => in_cell_xfs = true,
+            Event::End(event) if event.name().as_ref() == b"cellXfs" => in_cell_xfs = false,
+            Event::Start(event) if in_cell_xfs && event.name().as_ref() == b"xf" => {
+                current = Some(next_index);
+                next_index += 1;
+            }
+            Event::Empty(event) if in_cell_xfs && event.name().as_ref() == b"xf" => {
+                next_index += 1;
+            }
+            Event::Start(event) | Event::Empty(event)
+                if current == Some(style_index) && event.name().as_ref() == b"alignment" =>
+            {
+                let mut horizontal = None;
+                let mut vertical = None;
+                for attribute in event.attributes().flatten() {
+                    if attribute.key.as_ref() == b"horizontal" {
+                        horizontal = Some(String::from_utf8_lossy(&attribute.value).into_owned());
+                    } else if attribute.key.as_ref() == b"vertical" {
+                        vertical = Some(String::from_utf8_lossy(&attribute.value).into_owned());
+                    }
+                }
+                return (horizontal, vertical);
+            }
+            Event::End(event) if event.name().as_ref() == b"xf" => current = None,
+            Event::Eof => return (None, None),
+            _ => {}
+        }
+    }
 }
 
 #[test]
@@ -336,6 +375,68 @@ fn wraps_ordinary_body_cells_without_wrapping_headers_or_formatted_values() {
     assert!(typed_wrapped.contains(&cell_style_index(&typed_bytes, "B2")));
     assert!(!typed_wrapped.contains(&cell_style_index(&typed_bytes, "A1")));
     assert!(!typed_wrapped.contains(&cell_style_index(&typed_bytes, "C2")));
+}
+
+#[test]
+fn aligns_dynamic_and_typed_body_cells_without_aligning_headers() {
+    let date = NaiveDate::from_ymd_opt(2026, 8, 24).unwrap();
+    let time = NaiveTime::from_hms_opt(10, 30, 0).unwrap();
+    let mut row = DynamicRow::new();
+    row.insert("Text".to_owned(), CellValue::String("centered".to_owned()));
+    row.insert("Count".to_owned(), CellValue::Int(42));
+    row.insert("Date".to_owned(), CellValue::Date(date));
+    row.insert("Time".to_owned(), CellValue::Time(time));
+
+    let bytes = MiniExcel::save_as_bytes(
+        &[row],
+        &WriteOptions::new()
+            .with_wrap_cell_contents(true)
+            .with_horizontal_alignment(HorizontalAlignment::Center)
+            .with_vertical_alignment(VerticalAlignment::Top),
+    )
+    .expect("write aligned dynamic cells");
+    for address in ["A2", "B2", "C2", "D2"] {
+        assert_eq!(
+            style_alignment(&bytes, cell_style_index(&bytes, address)),
+            (Some("center".to_owned()), Some("top".to_owned()))
+        );
+    }
+    assert_eq!(style_alignment(&bytes, cell_style_index(&bytes, "A1")), (None, None));
+    let wrapped = wrapped_style_indexes(&bytes);
+    assert!(wrapped.contains(&cell_style_index(&bytes, "A2")));
+    assert!(!wrapped.contains(&cell_style_index(&bytes, "C2")));
+
+    let temp_dir = tempfile::tempdir().expect("create temp directory");
+    let path = temp_dir.path().join("typed-alignment.xlsx");
+    let releases =
+        [Release { name: "right".to_owned(), version: 123, released_on: date, internal: false }];
+    MiniExcel::save_as_serialized_with_options(
+        &path,
+        &releases,
+        &WriteOptions::new()
+            .with_horizontal_alignment(HorizontalAlignment::Right)
+            .with_vertical_alignment(VerticalAlignment::Center)
+            .with_column_format("ReleasedOn", "yyyy-mm-dd"),
+    )
+    .expect("write aligned typed cells");
+    let typed = std::fs::read(path).unwrap();
+    for address in ["A2", "B2", "C2"] {
+        assert_eq!(
+            style_alignment(&typed, cell_style_index(&typed, address)),
+            (Some("right".to_owned()), Some("center".to_owned()))
+        );
+    }
+    assert_eq!(style_alignment(&typed, cell_style_index(&typed, "A1")), (None, None));
+
+    let default = MiniExcel::save_as_bytes(
+        &[dynamic_row("default", 1)],
+        &WriteOptions::new()
+            .with_horizontal_alignment(HorizontalAlignment::Left)
+            .with_vertical_alignment(VerticalAlignment::Bottom),
+    )
+    .expect("write default alignment");
+    let (horizontal, _) = style_alignment(&default, cell_style_index(&default, "B2"));
+    assert_ne!(horizontal.as_deref(), Some("left"));
 }
 
 #[test]

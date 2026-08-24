@@ -235,6 +235,8 @@ AutoFilter 下拉菜单默认覆盖完整写入范围，包括只有 header 的�
 
 使用 `with_wrap_cell_contents(true)` 可让普通 body value 自动换行。Header、date、time、duration 及设置了 explicit number format 的字段保持不换行，与 MiniExcel v1 的 style 边界一致。
 
+使用 `with_horizontal_alignment()` 和 `with_vertical_alignment()` 配置 body cell 对齐。水平方向支持 left/general、center、right；垂直方向支持 bottom、center、top。Alignment 可与换行和 number format 组合，但不影响 header。
+
 使用 `MiniExcel::save_as_sheets()` 可按输入顺序创建多个工作表；返回值是每张工作表的数据行数：
 
 ```rust

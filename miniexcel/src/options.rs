@@ -11,6 +11,22 @@ pub enum HeaderMode {
     FirstRow,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum HorizontalAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum VerticalAlignment {
+    #[default]
+    Bottom,
+    Center,
+    Top,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadOptions {
     sheet_name: Option<String>,
@@ -181,6 +197,8 @@ pub struct WriteOptions {
     right_to_left: bool,
     auto_width: bool,
     wrap_cell_contents: bool,
+    horizontal_alignment: HorizontalAlignment,
+    vertical_alignment: VerticalAlignment,
     min_width: f64,
     max_width: f64,
     freeze_row_count: u32,
@@ -238,6 +256,18 @@ impl WriteOptions {
     #[must_use]
     pub const fn with_wrap_cell_contents(mut self, enabled: bool) -> Self {
         self.wrap_cell_contents = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_horizontal_alignment(mut self, alignment: HorizontalAlignment) -> Self {
+        self.horizontal_alignment = alignment;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_vertical_alignment(mut self, alignment: VerticalAlignment) -> Self {
+        self.vertical_alignment = alignment;
         self
     }
 
@@ -345,6 +375,16 @@ impl WriteOptions {
     }
 
     #[must_use]
+    pub(crate) const fn horizontal_alignment(&self) -> HorizontalAlignment {
+        self.horizontal_alignment
+    }
+
+    #[must_use]
+    pub(crate) const fn vertical_alignment(&self) -> VerticalAlignment {
+        self.vertical_alignment
+    }
+
+    #[must_use]
     pub(crate) const fn min_width(&self) -> f64 {
         self.min_width
     }
@@ -413,6 +453,8 @@ impl Default for WriteOptions {
             right_to_left: false,
             auto_width: false,
             wrap_cell_contents: false,
+            horizontal_alignment: HorizontalAlignment::Left,
+            vertical_alignment: VerticalAlignment::Bottom,
             min_width: 8.428_571_43,
             max_width: 200.0,
             freeze_row_count: 1,

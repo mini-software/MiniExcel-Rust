@@ -35,6 +35,7 @@ pwsh ./benchmarks/compare-rust-dotnet.ps1
 - 支持工作表选择、A1 范围、表头和空行过滤。
 - 通过 Serde 读写 Rust 类型。
 - 按稳定列顺序动态创建工作簿。
+- 向现有 XLSX 工作簿原子追加 worksheet。
 - 在显式内存限制下执行流式筛选和分组分析。
 - 为 LLM/RAG 输出带来源地址的 JSONL 和 Markdown。
 - 支持字符串、数值、布尔值、错误、日期、时间、日期时间和时长。
@@ -270,6 +271,28 @@ let counts = MiniExcel::save_as_sheets(
 
 使用 `with_sheet_visibility(name, SheetVisibility::...)` 可按最终 sheet name 配置 visible、hidden 或 very hidden，名称匹配不区分大小写。第一个 visible sheet 自动成为 active；未知名称或全部隐藏的 workbook 会在创建输出前报错。隐藏状态只用于 UI 组织，不是数据保护，隐藏 worksheet 仍可查询。
 
+## 向现有工作簿追加 Worksheet
+
+使用 `MiniExcel::insert()` 原子追加一张 visible worksheet。路径不存在时会新建 workbook，并保持相同的数据 row count 语义：
+
+```rust
+use miniexcel::{CellValue, DynamicRow, InsertOptions, MiniExcel};
+
+let mut row = DynamicRow::new();
+row.insert("Name".to_owned(), CellValue::String("Archived".to_owned()));
+
+let count = MiniExcel::insert(
+    "book.xlsx",
+    &[row],
+    &InsertOptions::new().with_sheet_name("Archive"),
+)?;
+assert_eq!(count, 1);
+```
+
+`insert_with_schema()` 接受可返回错误、只消费一次的动态 iterator。源 row 会先落盘 spool，constant-memory backend 在生成 donor workbook 时只保留当前 row；style rebase 当前仍会物化生成的 worksheet XML。`insert_serialized()` 接受 Serde struct。现有无关 ZIP entry、worksheet identity、formula 和 cached value 均会保留；只有重写 package 完成验证并同步后，才原子替换现有 workbook。
+
+默认的 `ExistingSheetPolicy::Reject` 会不区分大小写地拒绝重复 worksheet name。`ExistingSheetPolicy::Replace` 与 `TargetRelationshipPolicy::RemoveSupported` 预留给后续 replacement 里程碑，当前会在创建输出前返回错误。Insert 写入 XLSX package，拒绝 macro-enabled `.xlsm` path，只创建 visible worksheet，并拒绝 `WriteOptions::with_overwrite_file(true)`，因为 workbook replacement 由 Insert policy 控制。
+
 ## 类型化写入
 
 ```rust
@@ -343,10 +366,10 @@ MiniExcel::save_as_template(
 - 分组分析保留与不同 group 数量成比例的状态，并在 `max_groups` 停止。
 - RAG 导出不会重新计算公式，hidden sheet 未显式允许时会拒绝处理。
 - 流式查询是同步接口，每个活动 query 使用一个 worker thread；暂不支持 async I/O。
-- 写入会创建新工作簿，并默认拒绝已有目标路径。需要明确替换时使用 `WriteOptions::with_overwrite_file(true)`；Save 不能原地修改已有工作簿。
+- Save 会创建新工作簿，并默认拒绝已有目标路径。`MiniExcel::insert*()` 会向现有 `.xlsx` path 原子追加 worksheet；路径不存在时则创建 workbook。
 
 ## 暂不支持
 
-目前不支持 CSV、`.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统和修改已有工作簿。
+目前不支持 CSV、`.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统，以及替换或以其他方式编辑现有 worksheet。
 
 当前支持范围请查看[兼容性矩阵](docs/compatibility.zh-CN.md)。

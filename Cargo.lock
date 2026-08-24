@@ -605,6 +605,7 @@ dependencies = [
  "js-sys",
  "rust_xlsxwriter_derive",
  "serde",
+ "tempfile",
  "wasm-bindgen",
  "zip",
 ]

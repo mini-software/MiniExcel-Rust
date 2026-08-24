@@ -1,9 +1,15 @@
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
+use std::rc::Rc;
 
-use miniexcel::{CellValue, DynamicRow, MiniExcel, ReadOptions, SheetVisibility, WriteOptions};
+use miniexcel::{
+    CellValue, DynamicRow, ExistingSheetPolicy, HeaderMode, InsertOptions, MiniExcel, ReadOptions,
+    SheetVisibility, TargetRelationshipPolicy, WriteOptions,
+};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
+use serde::Serialize;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
 
@@ -395,6 +401,247 @@ fn characterization_sheet_name_limit_matches_writer_contract() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn public_append_creates_missing_path_and_appends_dynamic_rows_atomically() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("dynamic.xlsx");
+    let rows = [dynamic_insert_row("MiniExcel", 2), dynamic_insert_row("Rust", 1)];
+
+    let created =
+        MiniExcel::insert(&path, &rows, &InsertOptions::new().with_sheet_name("Current")).unwrap();
+    assert_eq!(created, 2);
+    assert_eq!(MiniExcel::get_sheet_names(&path).unwrap(), ["Current"]);
+
+    let appended = MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Archive", 3)],
+        &InsertOptions::new().with_write_options(
+            WriteOptions::new()
+                .with_sheet_name("Archive")
+                .with_auto_filter(false)
+                .with_freeze_row_count(0),
+        ),
+    )
+    .unwrap();
+    assert_eq!(appended, 1);
+    assert_eq!(MiniExcel::get_sheet_names(&path).unwrap(), ["Current", "Archive"]);
+    let rows = MiniExcel::query_with_options(
+        &path,
+        &ReadOptions::new().with_sheet_name("Archive").with_header_mode(HeaderMode::FirstRow),
+    )
+    .unwrap()
+    .collect::<miniexcel::Result<Vec<_>>>()
+    .unwrap();
+    assert_eq!(rows[0]["Name"], CellValue::String("Archive".to_owned()));
+    assert_eq!(rows[0]["Version"], CellValue::Int(3));
+}
+
+#[test]
+fn public_append_explicit_schema_iterator_is_one_pass_and_failure_safe() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("streamed.xlsx");
+    let schema = vec!["Name".to_owned(), "Version".to_owned()];
+    let calls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&calls);
+    let rows = (0..3).map(move |version| {
+        observed.set(observed.get() + 1);
+        Ok(dynamic_insert_row("Stream", version))
+    });
+
+    let count = MiniExcel::insert_with_schema(
+        &path,
+        &schema,
+        rows,
+        &InsertOptions::new().with_sheet_name("Stream"),
+    )
+    .unwrap();
+    assert_eq!(count, 3);
+    assert_eq!(calls.get(), 3);
+
+    let appended = MiniExcel::insert_with_schema(
+        &path,
+        &schema,
+        std::iter::once(Ok(dynamic_insert_row("Archive", 4))),
+        &InsertOptions::new().with_sheet_name("Archive"),
+    )
+    .unwrap();
+    assert_eq!(appended, 1);
+    assert_eq!(MiniExcel::get_sheet_names(&path).unwrap(), ["Stream", "Archive"]);
+
+    let before = std::fs::read(&path).unwrap();
+    let failing_rows = [
+        Ok(dynamic_insert_row("Before error", 1)),
+        Err(std::io::Error::other("producer failed").into()),
+    ];
+    assert!(
+        MiniExcel::insert_with_schema(
+            &path,
+            &schema,
+            failing_rows,
+            &InsertOptions::new().with_sheet_name("Broken"),
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(MiniExcel::get_sheet_names(&path).unwrap(), ["Stream", "Archive"]);
+
+    let missing = directory.path().join("missing-failure.xlsx");
+    let failing_rows = [Err(std::io::Error::other("producer failed").into())];
+    assert!(
+        MiniExcel::insert_with_schema(
+            &missing,
+            &schema,
+            failing_rows,
+            &InsertOptions::new().with_sheet_name("Broken"),
+        )
+        .is_err()
+    );
+    assert!(!missing.exists());
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct PublicInsertRelease {
+    name: String,
+    version: u32,
+}
+
+#[test]
+fn public_append_supports_serde_rows_for_missing_and_existing_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("typed.xlsx");
+    let current = [PublicInsertRelease { name: "MiniExcel".to_owned(), version: 2 }];
+    assert_eq!(
+        MiniExcel::insert_serialized(
+            &path,
+            &current,
+            &InsertOptions::new().with_sheet_name("Current"),
+        )
+        .unwrap(),
+        1
+    );
+
+    let archive = [PublicInsertRelease { name: "Rust".to_owned(), version: 1 }];
+    assert_eq!(
+        MiniExcel::insert_serialized(
+            &path,
+            &archive,
+            &InsertOptions::new().with_sheet_name("Archive"),
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(MiniExcel::get_sheet_names(&path).unwrap(), ["Current", "Archive"]);
+}
+
+#[test]
+fn public_append_rejects_unsupported_policies_and_invalid_options_before_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("missing.xlsx");
+    let rows = [dynamic_insert_row("MiniExcel", 1)];
+
+    for options in [
+        InsertOptions::new()
+            .with_sheet_name("Data")
+            .with_existing_sheet_policy(ExistingSheetPolicy::Replace),
+        InsertOptions::new()
+            .with_sheet_name("Data")
+            .with_target_relationship_policy(TargetRelationshipPolicy::RemoveSupported),
+        InsertOptions::new().with_sheet_name("Invalid/Name"),
+        InsertOptions::new().with_write_options(
+            WriteOptions::new().with_sheet_name("Data").with_min_width(f64::NAN),
+        ),
+        InsertOptions::new().with_write_options(
+            WriteOptions::new().with_sheet_name("Data").with_overwrite_file(true),
+        ),
+    ] {
+        assert!(MiniExcel::insert(&missing, &rows, &options).is_err());
+        assert!(!missing.exists());
+    }
+
+    let invalid_schema = vec!["Value".to_owned(), "Value".to_owned()];
+    let calls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&calls);
+    let rows = std::iter::once_with(move || {
+        observed.set(observed.get() + 1);
+        Ok(dynamic_insert_row("Never read", 1))
+    });
+    assert!(
+        MiniExcel::insert_with_schema(
+            &missing,
+            &invalid_schema,
+            rows,
+            &InsertOptions::new().with_sheet_name("Data"),
+        )
+        .is_err()
+    );
+    assert_eq!(calls.get(), 0);
+    assert!(!missing.exists());
+
+    let oversized_schema = (0..=16_384).map(|column| format!("Column{column}")).collect::<Vec<_>>();
+    let calls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&calls);
+    let rows = std::iter::once_with(move || {
+        observed.set(observed.get() + 1);
+        Ok(dynamic_insert_row("Never read", 1))
+    });
+    assert!(
+        MiniExcel::insert_with_schema(
+            &missing,
+            &oversized_schema,
+            rows,
+            &InsertOptions::new().with_sheet_name("Data"),
+        )
+        .is_err()
+    );
+    assert_eq!(calls.get(), 0);
+    assert!(!missing.exists());
+
+    let macro_path = directory.path().join("book.xlsm");
+    assert!(MiniExcel::insert(&macro_path, &rows_for_macro(), &InsertOptions::new()).is_err());
+    assert!(!macro_path.exists());
+
+    MiniExcel::insert(&missing, &rows_for_macro(), &InsertOptions::new().with_sheet_name("Data"))
+        .unwrap();
+    let before = std::fs::read(&missing).unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&calls);
+    let duplicate_rows = std::iter::once_with(move || {
+        observed.set(observed.get() + 1);
+        Ok(dynamic_insert_row("Never read", 1))
+    });
+    assert!(
+        MiniExcel::insert_with_schema(
+            &missing,
+            &["Name".to_owned(), "Version".to_owned()],
+            duplicate_rows,
+            &InsertOptions::new().with_sheet_name("data"),
+        )
+        .is_err()
+    );
+    assert_eq!(calls.get(), 0);
+    assert!(
+        MiniExcel::insert(
+            &missing,
+            &rows_for_macro(),
+            &InsertOptions::new().with_sheet_name("data"),
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read(&missing).unwrap(), before);
+}
+
+fn dynamic_insert_row(name: &str, version: i64) -> DynamicRow {
+    let mut row = DynamicRow::new();
+    row.insert("Name".to_owned(), CellValue::String(name.to_owned()));
+    row.insert("Version".to_owned(), CellValue::Int(version));
+    row
+}
+
+fn rows_for_macro() -> [DynamicRow; 1] {
+    [dynamic_insert_row("MiniExcel", 1)]
 }
 
 fn complex_fixture() -> Vec<u8> {

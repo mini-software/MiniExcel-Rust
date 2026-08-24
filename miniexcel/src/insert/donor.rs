@@ -1,4 +1,6 @@
 use std::io::{Cursor, Read};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
 
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -7,6 +9,8 @@ use zip::ZipArchive;
 
 use super::package::{DefinedName, PackageInventory};
 use crate::writer::XlsxWriter;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::writer::validate_dimensions;
 use crate::{DynamicRow, Error, Result, WriteOptions};
 
 const STYLES_PATH: &str = "xl/styles.xml";
@@ -88,8 +92,47 @@ pub(super) fn build_from_dynamic_iter<I>(
 where
     I: IntoIterator<Item = Result<DynamicRow>>,
 {
-    use std::io::{BufReader, Seek, SeekFrom, Write};
+    let (spool, row_count) =
+        spool_dynamic_rows(rows, spool_directory, schema.len(), options.print_header())?;
+    let rows = spooled_rows(&spool)?;
+    let mut writer = XlsxWriter::new();
+    writer.add_rows_iter_with_schema(schema, rows, row_count, options)?;
+    let mut package = tempfile::NamedTempFile::new()?;
+    writer.save_to_writer(package.as_file_mut())?;
+    extract_donor_from_reader(package.reopen()?, row_count)
+}
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn save_dynamic_iter_to_path<I>(
+    path: &Path,
+    schema: &[String],
+    rows: I,
+    options: &WriteOptions,
+) -> Result<usize>
+where
+    I: IntoIterator<Item = Result<DynamicRow>>,
+{
+    let (spool, row_count) = spool_dynamic_rows(rows, None, schema.len(), options.print_header())?;
+    let rows = spooled_rows(&spool)?;
+    let mut writer = XlsxWriter::new();
+    writer.add_rows_iter_with_schema(schema, rows, row_count, options)?;
+    writer.save(path, false)?;
+    Ok(row_count)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn spool_dynamic_rows<I>(
+    rows: I,
+    spool_directory: Option<&Path>,
+    columns: usize,
+    print_header: bool,
+) -> Result<(tempfile::NamedTempFile, usize)>
+where
+    I: IntoIterator<Item = Result<DynamicRow>>,
+{
+    use std::io::Write;
+
+    validate_dimensions(0, columns, print_header)?;
     let mut spool = match spool_directory {
         Some(directory) => tempfile::NamedTempFile::new_in(directory)?,
         None => tempfile::NamedTempFile::new()?,
@@ -97,6 +140,7 @@ where
     let mut row_count = 0;
     for row in rows {
         let row = row?;
+        validate_dimensions(row_count + 1, columns, print_header)?;
         serde_json::to_writer(spool.as_file_mut(), &row).map_err(|error| {
             Error::insert_package(format!("cannot spool donor worksheet row: {error}"))
         })?;
@@ -104,22 +148,33 @@ where
         row_count += 1;
     }
     spool.as_file_mut().flush()?;
-    spool.as_file_mut().seek(SeekFrom::Start(0))?;
+    Ok((spool, row_count))
+}
 
-    let rows = serde_json::Deserializer::from_reader(BufReader::new(spool.reopen()?))
+#[cfg(not(target_arch = "wasm32"))]
+fn spooled_rows(
+    spool: &tempfile::NamedTempFile,
+) -> Result<impl Iterator<Item = Result<DynamicRow>>> {
+    use std::io::BufReader;
+
+    Ok(serde_json::Deserializer::from_reader(BufReader::new(spool.reopen()?))
         .into_iter::<DynamicRow>()
         .map(|row| {
             row.map_err(|error| {
                 Error::insert_package(format!("cannot read donor worksheet spool: {error}"))
             })
-        });
-    let mut writer = XlsxWriter::new();
-    writer.add_rows_iter_with_schema(schema, rows, row_count, options)?;
-    extract_donor(writer.save_to_bytes()?, row_count)
+        }))
 }
 
 pub(super) fn extract_donor(bytes: Vec<u8>, data_row_count: usize) -> Result<DonorWorksheet> {
-    let inventory = PackageInventory::inspect(Cursor::new(&bytes))?;
+    extract_donor_from_reader(Cursor::new(bytes), data_row_count)
+}
+
+fn extract_donor_from_reader<R>(mut source: R, data_row_count: usize) -> Result<DonorWorksheet>
+where
+    R: Read + std::io::Seek,
+{
+    let inventory = PackageInventory::inspect(&mut source)?;
     if inventory.sheets.len() != 1 {
         return Err(Error::insert_package(format!(
             "donor workbook contains {} worksheets instead of one",
@@ -131,7 +186,8 @@ pub(super) fn extract_donor(bytes: Vec<u8>, data_row_count: usize) -> Result<Don
     let local_defined_names =
         inventory.defined_names.into_iter().filter(|name| name.local_sheet_id == Some(0)).collect();
 
-    let mut archive = ZipArchive::new(Cursor::new(bytes))
+    source.rewind()?;
+    let mut archive = ZipArchive::new(source)
         .map_err(|error| Error::insert_package(format!("cannot open donor workbook: {error}")))?;
     let worksheet_xml = read_part(&mut archive, &worksheet_path)?;
     let styles = parse_style_model(read_part(&mut archive, STYLES_PATH)?)?;

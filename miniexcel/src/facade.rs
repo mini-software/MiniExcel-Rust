@@ -6,11 +6,15 @@ use serde::de::DeserializeOwned;
 
 use crate::streaming::{StreamingRows, StreamingStructuredRows, StreamingTypedRows};
 use crate::writer::XlsxWriter;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::writer::{validate_dimensions, validate_schema, validate_single_sheet_options};
 use crate::{
     AnalysisResult, ByteQuerySummary, DynamicRow, ExcelRange, QueryPlan, QuerySummary, RagChunk,
     RagExport, RagExportOptions, RagManifest, ReadOptions, Result, SheetInfo, StructuredRow,
     TemplateOptions, WriteOptions,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{ExistingSheetPolicy, InsertOptions, TargetRelationshipPolicy};
 
 /// Convenience entry points for the common path-based MiniExcel workflow.
 pub struct MiniExcel;
@@ -452,6 +456,91 @@ impl MiniExcel {
         Ok(row_counts)
     }
 
+    /// Inserts dynamic rows as a new worksheet, or creates a workbook when the path is missing.
+    ///
+    /// Existing workbooks are replaced atomically only after the rewritten package validates.
+    /// Returns the number of data rows written.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn insert(
+        path: impl AsRef<Path>,
+        rows: &[DynamicRow],
+        options: &InsertOptions,
+    ) -> Result<usize> {
+        let path = path.as_ref();
+        validate_insert_options(path, options)?;
+        if !path.exists() {
+            let mut writer = XlsxWriter::new();
+            writer.add_rows(rows, options.write_options())?;
+            writer.save(path, false)?;
+            return Ok(rows.len());
+        }
+        crate::insert::atomic::append_to_path(path, options.write_options().sheet_name(), || {
+            crate::insert::donor::DonorBuilder::from_dynamic(rows, options.write_options())
+        })
+    }
+
+    /// Inserts a one-pass dynamic row iterator using an explicit schema.
+    ///
+    /// Iterator items may report producer errors. Source rows are spooled to disk and the writer
+    /// retains only the current row while the producer is consumed exactly once. The generated
+    /// donor worksheet XML is materialized for style rebasing.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn insert_with_schema<I>(
+        path: impl AsRef<Path>,
+        schema: &[String],
+        rows: I,
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        I: IntoIterator<Item = Result<DynamicRow>>,
+    {
+        let path = path.as_ref();
+        validate_insert_options(path, options)?;
+        validate_schema(schema)?;
+        validate_dimensions(0, schema.len(), options.write_options().print_header())?;
+        if !path.exists() {
+            return crate::insert::donor::save_dynamic_iter_to_path(
+                path,
+                schema,
+                rows,
+                options.write_options(),
+            );
+        }
+        crate::insert::atomic::append_to_path(path, options.write_options().sheet_name(), || {
+            crate::insert::donor::DonorBuilder::from_dynamic_iter(
+                schema,
+                rows,
+                options.write_options(),
+            )
+        })
+    }
+
+    /// Inserts Serde-serializable rows as a new worksheet.
+    ///
+    /// A missing path creates a new workbook. Existing paths are updated atomically. Returns the
+    /// number of data rows written.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn insert_serialized<T>(
+        path: impl AsRef<Path>,
+        rows: &[T],
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+    {
+        let path = path.as_ref();
+        validate_insert_options(path, options)?;
+        if !path.exists() {
+            let mut writer = XlsxWriter::new();
+            writer.add_serialized(rows, options.write_options())?;
+            writer.save(path, false)?;
+            return Ok(rows.len());
+        }
+        crate::insert::atomic::append_to_path(path, options.write_options().sheet_name(), || {
+            crate::insert::donor::DonorBuilder::from_serialized(rows, options.write_options())
+        })
+    }
+
     /// Fills an existing XLSX template and writes a new workbook.
     ///
     /// Supports `{{name}}` scalar placeholders and single-row expansion for array paths such as
@@ -479,4 +568,39 @@ impl MiniExcel {
     {
         crate::template::fill_bytes(template_bytes, value, options)
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_insert_options(path: &Path, options: &InsertOptions) -> Result<()> {
+    if path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsm"))
+    {
+        return Err(crate::Error::unsupported_package_feature(
+            "Insert does not support macro-enabled .xlsm paths",
+        ));
+    }
+    if options.write_options().overwrite_file() {
+        return Err(crate::Error::invalid_write_options(
+            "overwrite_file does not apply to Insert; use ExistingSheetPolicy",
+        ));
+    }
+    match options.existing_sheet_policy() {
+        ExistingSheetPolicy::Reject => {}
+        ExistingSheetPolicy::Replace => {
+            return Err(crate::Error::unsupported_package_feature(
+                "worksheet replacement is not supported yet",
+            ));
+        }
+    }
+    match options.target_relationship_policy() {
+        TargetRelationshipPolicy::Reject => {}
+        TargetRelationshipPolicy::RemoveSupported => {
+            return Err(crate::Error::unsupported_package_feature(
+                "removing target worksheet relationships is not supported yet",
+            ));
+        }
+    }
+    validate_single_sheet_options(options.write_options())
 }

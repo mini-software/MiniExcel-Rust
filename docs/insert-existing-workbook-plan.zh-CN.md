@@ -259,12 +259,14 @@ Donor-workbook 方案复用经过测试的 `XlsxWriter`，避免重复实现 ser
 
 依赖 Task 0-5。
 
-- [ ] 增加 `InsertOptions`、`ExistingSheetPolicy` 和 `TargetRelationshipPolicy` 及其文档/builder。
-- [ ] 增加 dynamic slice、显式 schema iterator 和 Serde insert API。
-- [ ] Path 不存在时委托给 new-workbook writer，并保持 row-count 语义。
-- [ ] 只开放 append；在 Task 7 前，`ExistingSheetPolicy::Replace` 返回明确 not-yet-supported error。
-- [ ] 创建任何输出前验证全部 option。
-- [ ] 更新 example 与双语 README。
+- [x] 增加 `InsertOptions`、`ExistingSheetPolicy` 和 `TargetRelationshipPolicy` 及其文档/builder。
+- [x] 增加 dynamic slice、显式 schema iterator 和 Serde insert API。
+- [x] Path 不存在时委托给 new-workbook writer，并保持 row-count 语义。
+- [x] 只开放 append；在 Task 7 前，`ExistingSheetPolicy::Replace` 返回明确 not-yet-supported error。
+- [x] 创建任何输出前验证全部 option。
+- [x] 更新 example 与双语 README。
+
+已于 2026-08-24 完成。聚焦测试：`cargo +1.85.0 test -p miniexcel --test insert public_append --locked`。
 
 验收：
 

@@ -16,8 +16,8 @@ use crate::{
     VerticalAlignment, WriteOptions,
 };
 
-const MAX_EXCEL_ROWS: usize = 1_048_576;
-const MAX_EXCEL_COLUMNS: usize = 16_384;
+pub(crate) const MAX_EXCEL_ROWS: usize = 1_048_576;
+pub(crate) const MAX_EXCEL_COLUMNS: usize = 16_384;
 
 pub(crate) struct XlsxWriter {
     workbook: Workbook,
@@ -54,9 +54,20 @@ impl XlsxWriter {
         rows: &[DynamicRow],
         options: &WriteOptions,
     ) -> Result<()> {
-        self.add_rows_iter_with_schema(schema, rows.iter().map(Ok::<_, Error>), rows.len(), options)
+        validate_sheet_name(options.sheet_name(), &self.sheet_names)?;
+        validate_schema(schema)?;
+        validate_dimensions(rows.len(), schema.len(), options.print_header())?;
+        let worksheet = write_dynamic_rows(
+            new_worksheet(options)?,
+            schema,
+            rows.iter().map(Ok::<_, Error>),
+            options,
+        )?;
+        self.push_worksheet(worksheet, options);
+        Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn add_rows_iter_with_schema<I, R>(
         &mut self,
         schema: &[String],
@@ -71,38 +82,12 @@ impl XlsxWriter {
         validate_sheet_name(options.sheet_name(), &self.sheet_names)?;
         validate_schema(schema)?;
         validate_dimensions(row_count, schema.len(), options.print_header())?;
-
-        let mut worksheet = new_worksheet(options)?;
-
-        let mut output_row = 0_u32;
-        if options.print_header() {
-            let header_format = header_format(options);
-            for (column, header) in schema.iter().enumerate() {
-                worksheet.write_string_with_format(0, column as u16, header, &header_format)?;
-            }
-            output_row = 1;
-        }
-
-        let formats = CellFormats::new(options);
-        let mut widths = AutoWidthCollector::new(schema, options)?;
-        for row in rows {
-            let row = row?;
-            let row = row.borrow();
-            for (column, header) in schema.iter().enumerate() {
-                let value = row.get(header).unwrap_or(&CellValue::Empty);
-                write_cell(&mut worksheet, output_row, column as u16, value, &formats)?;
-                widths.observe(column, value_width(value));
-            }
-            output_row += 1;
-        }
-
-        widths.apply(&mut worksheet)?;
-        apply_column_layout(&mut worksheet, schema, options)?;
-
-        if options.auto_filter() && !schema.is_empty() {
-            worksheet.autofilter(0, 0, output_row.saturating_sub(1), schema.len() as u16 - 1)?;
-        }
-
+        let worksheet = write_dynamic_rows(
+            new_constant_memory_worksheet(&mut self.workbook, options)?,
+            schema,
+            rows,
+            options,
+        )?;
         self.push_worksheet(worksheet, options);
         Ok(())
     }
@@ -242,6 +227,58 @@ fn new_worksheet(options: &WriteOptions) -> Result<Worksheet> {
     Ok(worksheet)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn new_constant_memory_worksheet(
+    workbook: &mut Workbook,
+    options: &WriteOptions,
+) -> Result<Worksheet> {
+    let mut worksheet = workbook.new_worksheet_with_constant_memory();
+    worksheet.set_name(options.sheet_name())?;
+    worksheet.set_right_to_left(options.right_to_left());
+    worksheet.set_freeze_panes(options.freeze_row_count(), options.freeze_column_count())?;
+    Ok(worksheet)
+}
+
+fn write_dynamic_rows<I, R>(
+    mut worksheet: Worksheet,
+    schema: &[String],
+    rows: I,
+    options: &WriteOptions,
+) -> Result<Worksheet>
+where
+    I: IntoIterator<Item = Result<R>>,
+    R: Borrow<DynamicRow>,
+{
+    let mut output_row = 0_u32;
+    if options.print_header() {
+        let header_format = header_format(options);
+        for (column, header) in schema.iter().enumerate() {
+            worksheet.write_string_with_format(0, column as u16, header, &header_format)?;
+        }
+        output_row = 1;
+    }
+
+    let formats = CellFormats::new(options);
+    let mut widths = AutoWidthCollector::new(schema, options)?;
+    for row in rows {
+        let row = row?;
+        let row = row.borrow();
+        for (column, header) in schema.iter().enumerate() {
+            let value = row.get(header).unwrap_or(&CellValue::Empty);
+            write_cell(&mut worksheet, output_row, column as u16, value, &formats)?;
+            widths.observe(column, value_width(value));
+        }
+        output_row += 1;
+    }
+
+    widths.apply(&mut worksheet)?;
+    apply_column_layout(&mut worksheet, schema, options)?;
+    if options.auto_filter() && !schema.is_empty() {
+        worksheet.autofilter(0, 0, output_row.saturating_sub(1), schema.len() as u16 - 1)?;
+    }
+    Ok(worksheet)
+}
+
 struct CellFormats {
     blank: Format,
     ordinary: Format,
@@ -338,6 +375,24 @@ fn validate_auto_width_options(options: &WriteOptions) -> Result<()> {
     }
     if minimum > maximum {
         return Err(Error::invalid_write_options("auto-width minimum cannot exceed maximum"));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn validate_single_sheet_options(options: &WriteOptions) -> Result<()> {
+    validate_sheet_name(options.sheet_name(), &HashSet::new())?;
+    validate_auto_width_options(options)?;
+    validate_column_widths(options)?;
+
+    let normalized_name = normalized_sheet_name(options.sheet_name());
+    if let Some(name) =
+        options.sheet_visibilities().keys().find(|name| name.as_str() != normalized_name)
+    {
+        return Err(Error::unknown_sheet_visibility(name));
+    }
+    if options.sheet_visibility(options.sheet_name()) != SheetVisibility::Visible {
+        return Err(Error::no_visible_worksheets());
     }
     Ok(())
 }
@@ -578,7 +633,7 @@ fn normalized_sheet_name(name: &str) -> String {
     name.to_lowercase()
 }
 
-fn validate_schema(schema: &[String]) -> Result<()> {
+pub(crate) fn validate_schema(schema: &[String]) -> Result<()> {
     let mut names = HashSet::with_capacity(schema.len());
     for name in schema {
         if !names.insert(name) {
@@ -588,7 +643,7 @@ fn validate_schema(schema: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn validate_dimensions(rows: usize, columns: usize, print_header: bool) -> Result<()> {
+pub(crate) fn validate_dimensions(rows: usize, columns: usize, print_header: bool) -> Result<()> {
     let output_rows = rows.saturating_add(usize::from(print_header));
     if output_rows > MAX_EXCEL_ROWS || columns > MAX_EXCEL_COLUMNS {
         return Err(Error::worksheet_limit(output_rows, columns));

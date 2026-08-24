@@ -23,14 +23,23 @@ enum AtomicCommitStage {
     Commit,
 }
 
-pub(crate) fn append_to_path<F>(path: impl AsRef<Path>, donor_builder: F) -> Result<usize>
+pub(crate) fn append_to_path<F>(
+    path: impl AsRef<Path>,
+    sheet_name: &str,
+    donor_builder: F,
+) -> Result<usize>
 where
     F: FnOnce() -> Result<DonorWorksheet>,
 {
-    append_to_path_with_hook(path.as_ref(), donor_builder, |_| Ok(()))
+    append_to_path_with_hook(path.as_ref(), sheet_name, donor_builder, |_| Ok(()))
 }
 
-fn append_to_path_with_hook<F, H>(path: &Path, donor_builder: F, mut checkpoint: H) -> Result<usize>
+fn append_to_path_with_hook<F, H>(
+    path: &Path,
+    sheet_name: &str,
+    donor_builder: F,
+    mut checkpoint: H,
+) -> Result<usize>
 where
     F: FnOnce() -> Result<DonorWorksheet>,
     H: FnMut(AtomicCommitStage) -> Result<()>,
@@ -38,10 +47,17 @@ where
     checkpoint(AtomicCommitStage::Preflight)?;
     let source_metadata = fs::metadata(path)?;
     let mut source = File::open(path)?;
-    PackageInventory::inspect(&mut source)?;
+    let inventory = PackageInventory::inspect(&mut source)?;
+    inventory.ensure_sheet_absent(sheet_name)?;
 
     checkpoint(AtomicCommitStage::RowGeneration)?;
     let donor = donor_builder()?;
+    if donor.sheet_name != sheet_name {
+        return Err(Error::insert_package(format!(
+            "donor worksheet '{}' does not match requested worksheet '{sheet_name}'",
+            donor.sheet_name
+        )));
+    }
     let row_count = donor.data_row_count;
 
     let parent = sibling_directory(path);
@@ -306,7 +322,7 @@ mod tests {
         fs::write(&path, source_package()).unwrap();
         let permissions = fs::metadata(&path).unwrap().permissions();
 
-        let count = append_to_path(&path, || donor("Inserted", 2)).unwrap();
+        let count = append_to_path(&path, "Inserted", || donor("Inserted", 2)).unwrap();
 
         assert_eq!(count, 2);
         assert_eq!(fs::metadata(&path).unwrap().permissions().readonly(), permissions.readonly());
@@ -329,7 +345,7 @@ mod tests {
         permissions.set_readonly(true);
         fs::set_permissions(&path, permissions).unwrap();
 
-        append_to_path(&path, || donor("Inserted", 1)).unwrap();
+        append_to_path(&path, "Inserted", || donor("Inserted", 1)).unwrap();
 
         assert!(fs::metadata(&path).unwrap().permissions().readonly());
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -346,7 +362,7 @@ mod tests {
         let path = directory.path().join("book.xlsx");
         fs::write(&path, source_package()).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
-        append_to_path(&path, || donor("Inserted", 1)).unwrap();
+        append_to_path(&path, "Inserted", || donor("Inserted", 1)).unwrap();
         assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640);
     }
 
@@ -369,6 +385,7 @@ mod tests {
             let observed_directory = directory.path().to_owned();
             let result = append_to_path_with_hook(
                 &path,
+                "Inserted",
                 || {
                     calls.set(calls.get() + 1);
                     donor("Inserted", 1)
@@ -405,7 +422,7 @@ mod tests {
         let path = directory.path().join("book.xlsx");
         fs::write(&path, b"not an xlsx").unwrap();
         let before = file_hash(&path);
-        assert!(append_to_path(&path, || donor("Inserted", 1)).is_err());
+        assert!(append_to_path(&path, "Inserted", || donor("Inserted", 1)).is_err());
         assert_eq!(file_hash(&path), before);
         assert_no_temporary_files(directory.path());
 
@@ -415,7 +432,7 @@ mod tests {
         let rows =
             [Ok(row("before failure", 1)), Err(Error::insert_package("row producer failed"))];
         assert!(
-            append_to_path(&path, || {
+            append_to_path(&path, "Inserted", || {
                 build_from_dynamic_iter(
                     &schema,
                     rows,

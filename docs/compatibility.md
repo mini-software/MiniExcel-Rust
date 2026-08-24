@@ -10,6 +10,7 @@ The Rust MVP implements the smallest useful MiniExcel-style XLSX read/write surf
 
 | Dependency | Locked API line | Role | License | MSRV note |
 | --- | --- | --- | --- | --- |
+| `atomicwrites` | 0.4 | Safe cross-platform atomic replacement for Windows path inserts | MIT | Windows-only dependency; checked with Rust 1.85 |
 | `calamine` | 0.35 | XLSX parsing and Serde row deserialization | MIT | 0.35 declares Rust 1.83 |
 | `clap` | 4.6 | Local CLI argument parsing | MIT OR Apache-2.0 | 4.6 declares Rust 1.85 |
 | `rust_xlsxwriter` | 0.96 | New XLSX workbook generation and Serde serialization | MIT OR Apache-2.0 | 0.96 declares Rust 1.83 |
@@ -46,6 +47,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Dynamic export | `save_as()` / `save_as_with_schema()` | Map serialization is implemented internally |
 | Typed export | `save_as_serialized<T>()` | Uses Serde mapping internally |
 | Multi-sheet export | `save_as_sheets()` / `save_as_serialized_sheets()` | Preserves input sheet order and returns data-row counts |
+| `InsertSheet` append | `insert()` / `insert_with_schema()` / `insert_serialized()` | Atomically appends a visible worksheet; missing paths create a workbook; replacement is deferred |
 | Per-sheet visibility | `WriteOptions::with_sheet_visibility()` | Visible, hidden, and very hidden; first visible sheet is active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | Defaults to `false`; existing paths require explicit opt-in |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | Defaults to one frozen row and zero frozen columns |
@@ -112,7 +114,7 @@ Path RAG exports retain parser state, repeated header context, and one output ch
 
 The backend makes two sequential, bounded-memory passes over the selected worksheet entry. The first records the used extent and compact merged-cell rectangles. This is required for MiniExcel-compatible stable dynamic schemas when legal files omit `<dimension>`, to preserve style-only row elements like the .NET reader, and to support opt-in merged-cell filling without expanding ranges into an address map. The second pass emits rows and retains only anchor values for currently active merged ranges. Worksheet XML and prior rows are never retained; memory consists primarily of in-memory or disk-indexed shared strings, styles, merge metadata, parser buffers, the current row, and the bounded channel.
 
-The internal writer assembles a new ZIP package with one or more worksheets. Path saves refuse existing files by default and can explicitly replace them, but cannot patch or insert sheets into an existing workbook. Template fills rewrite worksheet XML within a copied package; worksheet styles and unrelated ZIP parts are retained. Array expansion shifts row and cell addresses and updates the worksheet dimension. Formula expressions are preserved but not recalculated, and version 1 does not adjust formula references, merged ranges, tables, drawings, or defined names after inserted rows.
+The internal writer assembles a new ZIP package with one or more worksheets. Path saves refuse existing files by default and can explicitly replace them. Insert APIs append a worksheet through a validated package rewrite and atomic sibling-file replacement; unchanged ZIP entries and existing worksheet identities are preserved. Fallible explicit-schema producers are consumed once through a disk spool and a constant-memory worksheet writer, while the generated donor worksheet XML is materialized for style rebasing. Template fills rewrite worksheet XML within a copied package; worksheet styles and unrelated ZIP parts are retained. Array expansion shifts row and cell addresses and updates the worksheet dimension. Formula expressions are preserved but not recalculated, and version 1 does not adjust formula references, merged ranges, tables, drawings, or defined names after inserted rows.
 
 ## Test Sources
 
@@ -171,7 +173,8 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | Versioned grouped analytics | Rust research extension | No |
 | Addressed JSONL/Markdown/manifest RAG export | Rust research extension | No |
 | Async APIs, DataReader, stream ownership | Deferred | No |
-| Insert/edit existing workbooks | Deferred | No |
+| Append worksheet to existing `.xlsx` workbook | Implemented and atomically committed | Rust tests; shared parity contract not yet extended |
+| Replace/edit existing worksheets | Deferred | No |
 | CSV and legacy formats | Deferred | No |
 | Advanced templates, pictures, merges, comments | Deferred | No |
 
@@ -179,4 +182,4 @@ This matrix is the coverage claim: Rust does not yet provide complete API parity
 
 ## Deferred Work
 
-SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, advanced template directives and sheet cloning, images, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, modifying existing workbooks, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.
+SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, advanced template directives and sheet cloning, images, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, replacing/editing existing worksheets, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.

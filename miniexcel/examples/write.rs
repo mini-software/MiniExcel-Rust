@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use chrono::NaiveDate;
-use miniexcel::{CellValue, DynamicRow, MiniExcel, WriteOptions};
+use miniexcel::{CellValue, DynamicRow, InsertOptions, MiniExcel, WriteOptions};
 
 fn main() -> miniexcel::Result<()> {
     let output = std::env::args()
@@ -25,6 +25,13 @@ fn main() -> miniexcel::Result<()> {
     let options = WriteOptions::new().with_sheet_name(sheet_name);
     MiniExcel::save_as_with_options(&output, &rows, &options)?;
 
+    let mut archive = DynamicRow::new();
+    archive.insert("Name".to_owned(), CellValue::String("Previous release".to_owned()));
+    archive.insert("Version".to_owned(), CellValue::Int(0));
+    let inserted =
+        MiniExcel::insert(&output, &[archive], &InsertOptions::new().with_sheet_name("Archive"))?;
+
     println!("Wrote {} rows to '{sheet_name}' in {}", rows.len(), output.display());
+    println!("Inserted {inserted} row into 'Archive'");
     Ok(())
 }

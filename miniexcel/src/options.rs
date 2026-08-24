@@ -34,6 +34,30 @@ pub enum TableStyle {
     Default,
 }
 
+/// Controls how insert operations handle an existing worksheet with the target name.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ExistingSheetPolicy {
+    /// Reject the operation without modifying the workbook.
+    #[default]
+    Reject,
+    /// Replace the existing worksheet.
+    ///
+    /// Replacement is reserved for a later compatibility stage and is currently rejected.
+    Replace,
+}
+
+/// Controls how relationships owned by a replaced worksheet are handled.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TargetRelationshipPolicy {
+    /// Reject replacement when the target worksheet owns package relationships.
+    #[default]
+    Reject,
+    /// Remove relationship types that MiniExcel explicitly supports.
+    ///
+    /// Relationship removal is reserved for worksheet replacement and is currently rejected.
+    RemoveSupported,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RgbColor {
     red: u8,
@@ -615,6 +639,100 @@ impl Default for WriteOptions {
             hidden_columns: IndexMap::new(),
             sheet_visibilities: IndexMap::new(),
         }
+    }
+}
+
+/// Options for inserting a worksheet into an XLSX path.
+///
+/// The contained [`WriteOptions`] configure the generated worksheet. Existing worksheets are
+/// rejected by default; replacement policies are exposed for API stability but are not yet
+/// implemented. Path insertion is available on native targets only. Inserted worksheets must be
+/// visible, and `WriteOptions::with_overwrite_file()` is rejected because workbook replacement is
+/// controlled by [`ExistingSheetPolicy`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct InsertOptions {
+    write_options: WriteOptions,
+    existing_sheet_policy: ExistingSheetPolicy,
+    target_relationship_policy: TargetRelationshipPolicy,
+}
+
+impl InsertOptions {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Replaces all worksheet-writing options used by the insert operation.
+    #[must_use]
+    pub fn with_write_options(mut self, write_options: WriteOptions) -> Self {
+        self.write_options = write_options;
+        self
+    }
+
+    /// Sets the inserted worksheet name while retaining the other write options.
+    #[must_use]
+    pub fn with_sheet_name(mut self, sheet_name: impl Into<String>) -> Self {
+        self.write_options = self.write_options.with_sheet_name(sheet_name);
+        self
+    }
+
+    /// Enables or disables the worksheet header row.
+    #[must_use]
+    pub fn with_print_header(mut self, print_header: bool) -> Self {
+        self.write_options = self.write_options.with_print_header(print_header);
+        self
+    }
+
+    #[must_use]
+    /// Sets the behavior for an existing worksheet with the requested name.
+    ///
+    /// [`ExistingSheetPolicy::Replace`] is currently rejected before any output is created.
+    pub const fn with_existing_sheet_policy(mut self, policy: ExistingSheetPolicy) -> Self {
+        self.existing_sheet_policy = policy;
+        self
+    }
+
+    #[must_use]
+    /// Sets the relationship policy reserved for worksheet replacement.
+    ///
+    /// [`TargetRelationshipPolicy::RemoveSupported`] is currently rejected.
+    pub const fn with_target_relationship_policy(
+        mut self,
+        policy: TargetRelationshipPolicy,
+    ) -> Self {
+        self.target_relationship_policy = policy;
+        self
+    }
+
+    #[must_use]
+    pub const fn write_options(&self) -> &WriteOptions {
+        &self.write_options
+    }
+
+    #[must_use]
+    pub const fn existing_sheet_policy(&self) -> ExistingSheetPolicy {
+        self.existing_sheet_policy
+    }
+
+    #[must_use]
+    pub const fn target_relationship_policy(&self) -> TargetRelationshipPolicy {
+        self.target_relationship_policy
+    }
+}
+
+impl Default for InsertOptions {
+    fn default() -> Self {
+        Self {
+            write_options: WriteOptions::new(),
+            existing_sheet_policy: ExistingSheetPolicy::Reject,
+            target_relationship_policy: TargetRelationshipPolicy::Reject,
+        }
+    }
+}
+
+impl From<WriteOptions> for InsertOptions {
+    fn from(write_options: WriteOptions) -> Self {
+        Self::new().with_write_options(write_options)
     }
 }
 

@@ -35,6 +35,7 @@ This benchmark compares dynamic streaming Query performance: Rust uses `MiniExce
 - Worksheet selection, A1 ranges, headers, and empty-row filtering.
 - Serde-based typed reading and writing.
 - Dynamic workbook creation with stable column ordering.
+- Atomic worksheet append to existing XLSX workbooks.
 - Filtered and grouped streaming analytics with explicit memory limits.
 - Source-addressed JSONL and Markdown exports for LLM/RAG workflows.
 - Strings, numbers, booleans, errors, dates, times, datetimes, and durations.
@@ -270,6 +271,28 @@ let counts = MiniExcel::save_as_sheets(
 
 Configure final sheet names as visible, hidden, or very hidden with `with_sheet_visibility(name, SheetVisibility::...)`. Matching is case-insensitive, the first visible sheet becomes active, and unknown names or an all-hidden workbook are rejected before output is created. Hidden states are UI organization, not data protection; hidden worksheets remain queryable.
 
+## Append To An Existing Workbook
+
+Use `MiniExcel::insert()` to atomically append a visible worksheet. A missing path creates a new workbook with the same row-count semantics:
+
+```rust
+use miniexcel::{CellValue, DynamicRow, InsertOptions, MiniExcel};
+
+let mut row = DynamicRow::new();
+row.insert("Name".to_owned(), CellValue::String("Archived".to_owned()));
+
+let count = MiniExcel::insert(
+    "book.xlsx",
+    &[row],
+    &InsertOptions::new().with_sheet_name("Archive"),
+)?;
+assert_eq!(count, 1);
+```
+
+`insert_with_schema()` accepts a fallible, one-pass dynamic iterator. Source rows are disk-spooled and the constant-memory backend retains only the current row while generating the donor workbook; style rebasing currently materializes the generated worksheet XML. `insert_serialized()` accepts Serde structs. Existing unrelated ZIP entries, worksheet identities, formulas, and cached values are preserved, and an existing workbook is replaced only after the rewritten package validates and syncs.
+
+The default `ExistingSheetPolicy::Reject` rejects duplicate worksheet names case-insensitively. `ExistingSheetPolicy::Replace` and `TargetRelationshipPolicy::RemoveSupported` are reserved for the replacement milestone and currently return an error before output is created. Insert writes XLSX packages, rejects macro-enabled `.xlsm` paths, creates visible worksheets, and rejects `WriteOptions::with_overwrite_file(true)` because workbook replacement is controlled by the insert policy.
+
 ## Typed Writing
 
 ```rust
@@ -343,10 +366,10 @@ Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` f
 - Grouped analytics retain state proportional to distinct groups and stop at `max_groups`.
 - RAG exports never recalculate formulas and reject hidden sheets unless explicitly allowed.
 - Streaming is synchronous and uses one worker thread per active query. Async I/O is not supported.
-- Writing creates new workbooks and refuses existing target paths by default. Use `WriteOptions::with_overwrite_file(true)` to replace one explicitly. Save cannot modify an existing workbook in place.
+- Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends a worksheet to an existing `.xlsx` path or creates a workbook when the path is missing.
 
 ## Not Supported
 
-CSV, `.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and editing existing workbooks are not currently supported.
+CSV, `.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and replacing or otherwise editing existing worksheets are not currently supported.
 
 See the [compatibility matrix](docs/compatibility.md) for the current support scope.

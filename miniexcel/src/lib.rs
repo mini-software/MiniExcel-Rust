@@ -24,8 +24,9 @@ pub use cell::{CellReference, CellValue, DynamicRow, ExcelRange, StructuredCell,
 pub use error::{Error, Result};
 pub use facade::MiniExcel;
 pub use options::{
-    HeaderMode, HeaderStyle, HorizontalAlignment, ReadOptions, RgbColor, TableStyle,
-    TemplateOptions, VerticalAlignment, WriteOptions,
+    ExistingSheetPolicy, HeaderMode, HeaderStyle, HorizontalAlignment, InsertOptions, ReadOptions,
+    RgbColor, TableStyle, TargetRelationshipPolicy, TemplateOptions, VerticalAlignment,
+    WriteOptions,
 };
 pub use rag::{
     FormulaCalculationStatus, RagCell, RagChunk, RagExport, RagExportOptions, RagManifest, RagRow,

@@ -259,12 +259,14 @@ Acceptance:
 
 Depends on Tasks 0-5.
 
-- [ ] Add `InsertOptions`, `ExistingSheetPolicy`, and `TargetRelationshipPolicy` with documentation and builders.
-- [ ] Add dynamic slice, explicit-schema iterator, and Serde insert APIs.
-- [ ] If the path is missing, delegate to the new-workbook writer with matching row-count semantics.
-- [ ] Expose append only; keep `ExistingSheetPolicy::Replace` returning a clear not-yet-supported error until Task 7.
-- [ ] Validate every option before creating any output.
-- [ ] Update examples and both README languages.
+- [x] Add `InsertOptions`, `ExistingSheetPolicy`, and `TargetRelationshipPolicy` with documentation and builders.
+- [x] Add dynamic slice, explicit-schema iterator, and Serde insert APIs.
+- [x] If the path is missing, delegate to the new-workbook writer with matching row-count semantics.
+- [x] Expose append only; keep `ExistingSheetPolicy::Replace` returning a clear not-yet-supported error until Task 7.
+- [x] Validate every option before creating any output.
+- [x] Update examples and both README languages.
+
+Completed on 2026-08-24. Focused test: `cargo +1.85.0 test -p miniexcel --test insert public_append --locked`.
 
 Acceptance:
 

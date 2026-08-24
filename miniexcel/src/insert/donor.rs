@@ -117,7 +117,7 @@ where
     extract_donor(writer.save_to_bytes()?, row_count)
 }
 
-fn extract_donor(bytes: Vec<u8>, data_row_count: usize) -> Result<DonorWorksheet> {
+pub(super) fn extract_donor(bytes: Vec<u8>, data_row_count: usize) -> Result<DonorWorksheet> {
     let inventory = PackageInventory::inspect(Cursor::new(&bytes))?;
     if inventory.sheets.len() != 1 {
         return Err(Error::insert_package(format!(

@@ -2,3 +2,4 @@
 
 pub(crate) mod donor;
 pub(crate) mod package;
+pub(crate) mod style;

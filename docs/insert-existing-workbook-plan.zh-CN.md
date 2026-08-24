@@ -198,19 +198,21 @@ Donor-workbook 方案复用经过测试的 `XlsxWriter`，避免重复实现 ser
 
 依赖 Task 2。
 
-- [ ] 解析现有与 donor `styles.xml` 中的 number format、font、fill、border、cell-style XF 和 cell XF。
-- [ ] 绝不改变现有 style index。
-- [ ] 安全时对语义相同 donor component 去重，否则 append。
-- [ ] 在所有现有 ID 之上分配 custom `numFmtId` 并重写 donor reference。
-- [ ] 构建 donor-cell-XF 到 target-cell-XF mapping，重写插入 worksheet 的全部 `s` attribute。
-- [ ] 输出前检查 Excel style/count limit。
-- [ ] 结构化 patch 时保留未知 style extension 和 unsupported node。
+- [x] 解析现有与 donor `styles.xml` 中的 number format、font、fill、border、cell-style XF 和 cell XF。
+- [x] 绝不改变现有 style index。
+- [x] 安全时对语义相同 donor component 去重，否则 append。
+- [x] 在所有现有 ID 之上分配 custom `numFmtId` 并重写 donor reference。
+- [x] 构建 donor-cell-XF 到 target-cell-XF mapping，重写插入 worksheet 的全部 `s` attribute。
+- [x] 输出前检查 Excel style/count limit。
+- [x] 结构化 patch 时保留未知 style extension 和 unsupported node。
+
+已于 2026-08-24 完成。聚焦测试：`cargo +1.85.0 test -p miniexcel insert::style::tests --lib --locked`。LibreOffice smoke test：设置 `MINIEXCEL_TEST_SOFFICE` 后运行 `cargo +1.85.0 test -p miniexcel insert::style::tests::rebased_styles_survive_libreoffice_roundtrip --lib --locked -- --ignored --exact`。
 
 验收：
 
 - 现有 cell 的 style ID 与渲染 metadata 不变。
 - 插入的 date/time/duration/custom number format 可被 Rust roundtrip 和 LibreOffice 正确识别。
-- 聚焦命令：`cargo +1.85.0 test -p miniexcel --test insert style_rebase --locked`。
+- 聚焦命令：`cargo +1.85.0 test -p miniexcel insert::style::tests --lib --locked`。
 
 ### Task 4：Append Package Rewrite
 

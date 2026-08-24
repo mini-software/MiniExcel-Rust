@@ -198,19 +198,21 @@ Acceptance:
 
 Depends on Task 2.
 
-- [ ] Parse existing and donor `styles.xml` into number formats, fonts, fills, borders, cell-style XFs, and cell XFs.
-- [ ] Never change existing style indices.
-- [ ] Deduplicate semantically identical donor components when safe; otherwise append them.
-- [ ] Allocate custom `numFmtId` values above all existing IDs and rewrite donor references.
-- [ ] Build a donor-cell-XF to target-cell-XF mapping and rewrite every inserted worksheet `s` attribute.
-- [ ] Enforce Excel style/count limits before writing output.
-- [ ] Preserve unknown style extensions and unsupported nodes by copying them through the structured patch.
+- [x] Parse existing and donor `styles.xml` into number formats, fonts, fills, borders, cell-style XFs, and cell XFs.
+- [x] Never change existing style indices.
+- [x] Deduplicate semantically identical donor components when safe; otherwise append them.
+- [x] Allocate custom `numFmtId` values above all existing IDs and rewrite donor references.
+- [x] Build a donor-cell-XF to target-cell-XF mapping and rewrite every inserted worksheet `s` attribute.
+- [x] Enforce Excel style/count limits before writing output.
+- [x] Preserve unknown style extensions and unsupported nodes by copying them through the structured patch.
+
+Completed on 2026-08-24. Focused test: `cargo +1.85.0 test -p miniexcel insert::style::tests --lib --locked`. LibreOffice smoke test: set `MINIEXCEL_TEST_SOFFICE` and run `cargo +1.85.0 test -p miniexcel insert::style::tests::rebased_styles_survive_libreoffice_roundtrip --lib --locked -- --ignored --exact`.
 
 Acceptance:
 
 - Existing cells retain identical style IDs and rendering metadata.
 - Inserted date/time/duration/custom number formats survive Rust roundtrip and LibreOffice inspection.
-- Focused command: `cargo +1.85.0 test -p miniexcel --test insert style_rebase --locked`.
+- Focused command: `cargo +1.85.0 test -p miniexcel insert::style::tests --lib --locked`.
 
 ### Task 4: Append Package Rewrite
 

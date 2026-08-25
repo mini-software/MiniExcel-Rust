@@ -42,6 +42,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | `GetSheetInformations` | `MiniExcel::get_sheet_info()` | Includes OOXML ID, order, name, type, visibility, and active state |
 | `GetSheetDimensions` | `MiniExcel::get_sheet_dimensions()` | Returns used ranges in workbook order with 1-based indices |
 | `GetColumns` | `MiniExcel::get_columns()` | Returns selected dynamic keys or an empty vector |
+| `QueryTable` | `query_table()` / `query_table_as()` / byte and borrowed-reader variants | Case-insensitive table-name lookup, metadata headers, and inclusive table bounds |
 | `startCell` | `ReadOptions::with_start_cell()` | A1 start coordinate |
 | `IgnoreEmptyRows` | `ReadOptions::with_ignore_empty_rows()` | Defaults to `false` for MiniExcel compatibility |
 | `FillMergedCells` | `ReadOptions::with_fill_merged_cells()` | Defaults to `false`; applies to dynamic, typed, and byte queries |
@@ -170,6 +171,7 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | `GetSheetNames` and `GetColumns` | Implemented | Yes |
 | `GetSheetInformations` ID/index/name/type/visibility/active | Implemented | Rust tests against .NET fixtures |
 | `GetSheetDimensions` | Implemented | Rust tests against .NET fixtures |
+| Named OpenXML `QueryTable` | Implemented | Rust and .NET focused tests against `TestQueryTable.xlsx` |
 | New-workbook `SaveAs`, including multiple sheets | Implemented and roundtrip-tested | Not yet |
 | Basic `SaveAsTemplate` scalar/list fill | Implemented and roundtrip-tested | Not yet |
 | Byte-array query/write for WASM | Implemented | Rust/browser tests |

@@ -13,7 +13,7 @@ use serde::de::DeserializeOwned;
 use crate::reader::{column_names, header_names, row_to_range, to_cell_value, trim_header_row};
 use crate::{DynamicRow, Error, ReadOptions, Result, StructuredCell, StructuredRow};
 
-use self::ooxml::StreamingRawRows;
+use self::ooxml::{StreamingRawRows, StreamingTableRawRows};
 
 enum Headers {
     FirstRow(Vec<Option<String>>),
@@ -87,6 +87,38 @@ impl Iterator for StreamingRows {
 
 impl FusedIterator for StreamingRows {}
 
+/// A bounded-memory iterator over dynamic rows in a named OpenXML table.
+pub(crate) struct StreamingTableRows {
+    rows: StreamingTableRawRows,
+    headers: Headers,
+}
+
+impl StreamingTableRows {
+    pub(crate) fn open(
+        path: impl AsRef<Path>,
+        table_name: &str,
+        sheet_name: Option<&str>,
+    ) -> Result<Self> {
+        let rows = StreamingTableRawRows::open(path, table_name, sheet_name)?;
+        let headers = Headers::FirstRow(rows.headers().to_vec());
+        Ok(Self { rows, headers })
+    }
+}
+
+impl Iterator for StreamingTableRows {
+    type Item = Result<DynamicRow>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let selected_row = match self.rows.next()? {
+            Ok(row) => row,
+            Err(error) => return Some(Err(error)),
+        };
+        Some(Ok(to_dynamic_row(&mut self.headers, selected_row)))
+    }
+}
+
+impl FusedIterator for StreamingTableRows {}
+
 /// A bounded-memory iterator over sparse structure-preserving XLSX rows.
 pub(crate) struct StreamingStructuredRows {
     rows: StreamingRawRows,
@@ -118,6 +150,19 @@ impl FusedIterator for StreamingStructuredRows {}
 pub(crate) fn query_bytes(bytes: &[u8], options: &ReadOptions) -> Result<Vec<DynamicRow>> {
     let mut rows = Vec::new();
     visit_dynamic_rows(bytes, options, |_, _, row| {
+        rows.push(row);
+        Ok(true)
+    })?;
+    Ok(rows)
+}
+
+pub(crate) fn query_table_bytes(
+    bytes: &[u8],
+    table_name: &str,
+    sheet_name: Option<&str>,
+) -> Result<Vec<DynamicRow>> {
+    let mut rows = Vec::new();
+    visit_table_dynamic_rows(bytes, table_name, sheet_name, |_, _, row| {
         rows.push(row);
         Ok(true)
     })?;
@@ -250,6 +295,70 @@ where
     Ok(QuerySummary { sheet_name, columns, visited_rows })
 }
 
+pub(crate) fn visit_table_dynamic_rows<F>(
+    bytes: &[u8],
+    table_name: &str,
+    sheet_name: Option<&str>,
+    mut visitor: F,
+) -> Result<QuerySummary>
+where
+    F: FnMut(&str, usize, DynamicRow) -> Result<bool>,
+{
+    let mut headers = None::<Headers>;
+    let mut visited_rows = 0;
+    let ready = ooxml::visit_table_raw_rows(
+        bytes,
+        table_name,
+        sheet_name,
+        |resolved_sheet, resolved_headers, selected_row| {
+            if headers.is_none() {
+                headers = Some(Headers::FirstRow(resolved_headers.to_vec()));
+            }
+            let excel_row = selected_row.excel_row + 1;
+            let row =
+                to_dynamic_row(headers.as_mut().expect("table headers initialized"), selected_row);
+            visited_rows += 1;
+            visitor(resolved_sheet, excel_row, row)
+        },
+    )?;
+    let columns = ready.headers.iter().flatten().cloned().collect();
+    Ok(QuerySummary { sheet_name: ready.sheet_name, columns, visited_rows })
+}
+
+pub(crate) fn visit_table_dynamic_rows_from_reader<R, F>(
+    reader: &mut R,
+    table_name: &str,
+    sheet_name: Option<&str>,
+    mut visitor: F,
+) -> Result<QuerySummary>
+where
+    R: Read + Seek,
+    F: FnMut(&str, usize, DynamicRow) -> Result<bool>,
+{
+    let mut visited_rows = 0;
+    let mut table_headers = None::<Headers>;
+    let ready = ooxml::visit_table_raw_rows_from_reader(
+        reader,
+        table_name,
+        sheet_name,
+        !cfg!(target_arch = "wasm32"),
+        |resolved_sheet, resolved_headers, selected_row| {
+            if table_headers.is_none() {
+                table_headers = Some(Headers::FirstRow(resolved_headers.to_vec()));
+            }
+            let excel_row = selected_row.excel_row + 1;
+            let row = to_dynamic_row(
+                table_headers.as_mut().expect("table headers initialized"),
+                selected_row,
+            );
+            visited_rows += 1;
+            visitor(resolved_sheet, excel_row, row)
+        },
+    )?;
+    let columns = ready.headers.iter().flatten().cloned().collect();
+    Ok(QuerySummary { sheet_name: ready.sheet_name, columns, visited_rows })
+}
+
 pub(crate) fn visit_typed_rows_from_reader<R, T, F>(
     reader: &mut R,
     options: &ReadOptions,
@@ -294,6 +403,44 @@ where
     )?;
     let columns = columns.map_or_else(Vec::new, |headers| headers.columns());
     Ok(QuerySummary { sheet_name, columns, visited_rows })
+}
+
+pub(crate) fn visit_table_typed_rows_from_reader<R, T, F>(
+    reader: &mut R,
+    table_name: &str,
+    sheet_name: Option<&str>,
+    mut visitor: F,
+) -> Result<QuerySummary>
+where
+    R: Read + Seek,
+    T: DeserializeOwned,
+    F: FnMut(&str, usize, T) -> Result<bool>,
+{
+    let mut visited_rows = 0;
+    let mut headers = None::<Vec<Data>>;
+    let ready = ooxml::visit_table_raw_rows_from_reader(
+        reader,
+        table_name,
+        sheet_name,
+        !cfg!(target_arch = "wasm32"),
+        |resolved_sheet, resolved_headers, selected_row| {
+            let excel_row = selected_row.excel_row + 1;
+            if headers.is_none() {
+                let mut resolved = resolved_headers
+                    .iter()
+                    .map(|header| Data::String(header.clone().unwrap_or_default()))
+                    .collect::<Vec<_>>();
+                trim_header_row(&mut resolved);
+                headers = Some(resolved);
+            }
+            let value =
+                deserialize_selected_row::<T>(resolved_sheet, headers.as_deref(), selected_row)?;
+            visited_rows += 1;
+            visitor(resolved_sheet, excel_row, value)
+        },
+    )?;
+    let columns = ready.headers.iter().flatten().cloned().collect();
+    Ok(QuerySummary { sheet_name: ready.sheet_name, columns, visited_rows })
 }
 
 pub(crate) fn sheet_names_from_reader<R>(reader: &mut R) -> Result<Vec<String>>
@@ -388,6 +535,51 @@ pub(crate) struct StreamingTypedRows<T> {
     sheet_name: String,
     marker: PhantomData<fn() -> T>,
 }
+
+pub(crate) struct StreamingTableTypedRows<T> {
+    rows: StreamingTableRawRows,
+    headers: Vec<Data>,
+    sheet_name: String,
+    marker: PhantomData<fn() -> T>,
+}
+
+impl<T> StreamingTableTypedRows<T>
+where
+    T: DeserializeOwned,
+{
+    pub(crate) fn open(
+        path: impl AsRef<Path>,
+        table_name: &str,
+        sheet_name: Option<&str>,
+    ) -> Result<Self> {
+        let rows = StreamingTableRawRows::open(path, table_name, sheet_name)?;
+        let sheet_name = rows.sheet_name().to_owned();
+        let mut headers = rows
+            .headers()
+            .iter()
+            .map(|header| Data::String(header.clone().unwrap_or_default()))
+            .collect::<Vec<_>>();
+        trim_header_row(&mut headers);
+        Ok(Self { rows, headers, sheet_name, marker: PhantomData })
+    }
+}
+
+impl<T> Iterator for StreamingTableTypedRows<T>
+where
+    T: DeserializeOwned,
+{
+    type Item = Result<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let row = match self.rows.next()? {
+            Ok(row) => row,
+            Err(error) => return Some(Err(error)),
+        };
+        Some(deserialize_selected_row(&self.sheet_name, Some(&self.headers), row))
+    }
+}
+
+impl<T> FusedIterator for StreamingTableTypedRows<T> where T: DeserializeOwned {}
 
 impl<T> StreamingTypedRows<T>
 where

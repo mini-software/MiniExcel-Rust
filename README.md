@@ -206,6 +206,22 @@ Without headers, dynamic keys use the actual Excel column names such as `A`, `B`
 
 Merged cells retain only their physical top-left value by default. Use `ReadOptions::with_fill_merged_cells(true)` to project that value across the merged range for dynamic, typed, and byte queries. Structured queries remain sparse and expose only physically stored cells.
 
+### Named Table Query
+
+Query an OpenXML table by its metadata name without reading cells outside its declared range:
+
+```rust
+let rows = MiniExcel::query_table("book.xlsx", "SalesTable", Some("Data"))?
+    .collect::<miniexcel::Result<Vec<_>>>()?;
+```
+
+`query_table_as::<T>()` provides Serde mapping, `query_table_bytes()` supports in-memory XLSX data,
+and `visit_table_rows*_from_reader()` keeps borrowed readers open. Table names are matched
+case-insensitively against the table `name` (not `displayName`). When no sheet is provided, only
+the first worksheet is searched. Column names come from table metadata, the physical header row is
+skipped unless `headerRowCount="0"`, and the complete declared range is returned, including totals
+rows. Path queries retain the existing bounded-memory two-pass worksheet pipeline.
+
 ## Typed Reading
 
 ```rust

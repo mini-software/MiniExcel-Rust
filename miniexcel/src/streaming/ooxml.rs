@@ -34,6 +34,27 @@ pub(super) struct StreamingRawRows {
     cancelled: Arc<AtomicBool>,
 }
 
+pub(super) struct StreamingTableRawRows {
+    receiver: Option<Receiver<Result<SelectedRow>>>,
+    worker: Option<JoinHandle<()>>,
+    sheet_name: String,
+    headers: Vec<Option<String>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+struct ResolvedTable {
+    sheet_name: String,
+    sheet_path: String,
+    headers: Vec<Option<String>>,
+    options: ReadOptions,
+    empty: bool,
+}
+
+pub(super) struct TableReady {
+    pub(super) sheet_name: String,
+    pub(super) headers: Vec<Option<String>>,
+}
+
 pub(super) fn visit_raw_rows<F>(
     bytes: &[u8],
     options: &ReadOptions,
@@ -79,6 +100,56 @@ where
         return Err(error);
     }
     Ok(sheet_name)
+}
+
+pub(super) fn visit_table_raw_rows_from_reader<R, F>(
+    reader: R,
+    table_name: &str,
+    sheet_name: Option<&str>,
+    allow_disk_cache: bool,
+    mut visitor: F,
+) -> Result<TableReady>
+where
+    R: Read + Seek,
+    F: FnMut(&str, &[Option<String>], SelectedRow) -> Result<bool>,
+{
+    let mut archive =
+        ZipArchive::new(reader).map_err(|error| stream_error("cannot open XLSX reader:", error))?;
+    let resolved = resolve_table(&mut archive, table_name, sheet_name)?;
+    let ready =
+        TableReady { sheet_name: resolved.sheet_name.clone(), headers: resolved.headers.clone() };
+    if resolved.empty {
+        return Ok(ready);
+    }
+    let context = prepare_resolved_table(&mut archive, &resolved, allow_disk_cache)?;
+    let cancelled = AtomicBool::new(false);
+    let scan = scan_worksheet(&mut archive, &resolved.sheet_path, &cancelled)?;
+    let mut visitor_error = None;
+    stream_worksheet(&mut archive, context, scan, &resolved.options, &cancelled, &mut |row| {
+        match visitor(&ready.sheet_name, &ready.headers, row) {
+            Ok(should_continue) => should_continue,
+            Err(error) => {
+                visitor_error = Some(error);
+                false
+            }
+        }
+    })?;
+    if let Some(error) = visitor_error {
+        return Err(error);
+    }
+    Ok(ready)
+}
+
+pub(super) fn visit_table_raw_rows<F>(
+    bytes: &[u8],
+    table_name: &str,
+    sheet_name: Option<&str>,
+    visitor: F,
+) -> Result<TableReady>
+where
+    F: FnMut(&str, &[Option<String>], SelectedRow) -> Result<bool>,
+{
+    visit_table_raw_rows_from_reader(Cursor::new(bytes), table_name, sheet_name, false, visitor)
 }
 
 pub(super) fn sheet_names_from_bytes(bytes: &[u8]) -> Result<Vec<String>> {
@@ -256,6 +327,83 @@ impl StreamingRawRows {
     }
 }
 
+impl StreamingTableRawRows {
+    pub(super) fn open(
+        path: impl AsRef<Path>,
+        table_name: &str,
+        sheet_name: Option<&str>,
+    ) -> Result<Self> {
+        let path = path.as_ref().to_owned();
+        let file = File::open(&path)?;
+        let (ready_sender, ready_receiver) = mpsc::sync_channel(0);
+        let (row_sender, row_receiver) = mpsc::sync_channel(ROW_BUFFER_SIZE);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let table_name = table_name.to_owned();
+        let sheet_name = sheet_name.map(str::to_owned);
+        let worker = thread::Builder::new().name("miniexcel-xlsx-table-stream".to_owned()).spawn(
+            move || {
+                table_worker_main(
+                    path,
+                    BufReader::new(file),
+                    table_name,
+                    sheet_name,
+                    worker_cancelled,
+                    ready_sender,
+                    row_sender,
+                )
+            },
+        )?;
+
+        let ready = match ready_receiver.recv() {
+            Ok(ready) => ready,
+            Err(_) => {
+                Err(Error::stream("the XLSX table worker stopped during initialization".to_owned()))
+            }
+        };
+        match ready {
+            Ok(ready) => Ok(Self {
+                receiver: Some(row_receiver),
+                worker: Some(worker),
+                sheet_name: ready.sheet_name,
+                headers: ready.headers,
+                cancelled,
+            }),
+            Err(error) => {
+                drop(row_receiver);
+                let _ = worker.join();
+                Err(error)
+            }
+        }
+    }
+
+    pub(super) fn sheet_name(&self) -> &str {
+        &self.sheet_name
+    }
+
+    pub(super) fn headers(&self) -> &[Option<String>] {
+        &self.headers
+    }
+}
+
+impl Iterator for StreamingTableRawRows {
+    type Item = Result<SelectedRow>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.receiver.as_ref()?.recv().ok()
+    }
+}
+
+impl Drop for StreamingTableRawRows {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+        self.receiver.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 impl Iterator for StreamingRawRows {
     type Item = Result<SelectedRow>;
 
@@ -360,6 +508,282 @@ fn worker_main<R>(
     {
         let _ = row_sender.send(Err(error));
     }
+}
+
+fn table_worker_main<R>(
+    path: PathBuf,
+    reader: R,
+    table_name: String,
+    sheet_name: Option<String>,
+    cancelled: Arc<AtomicBool>,
+    ready_sender: SyncSender<Result<TableReady>>,
+    row_sender: SyncSender<Result<SelectedRow>>,
+) where
+    R: Read + Seek,
+{
+    let mut archive = match ZipArchive::new(reader) {
+        Ok(archive) => archive,
+        Err(error) => {
+            let _ = ready_sender
+                .send(Err(stream_error(format!("cannot open '{}':", path.display()), error)));
+            return;
+        }
+    };
+    let resolved = match resolve_table(&mut archive, &table_name, sheet_name.as_deref()) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            let _ = ready_sender.send(Err(error));
+            return;
+        }
+    };
+    let ready =
+        TableReady { sheet_name: resolved.sheet_name.clone(), headers: resolved.headers.clone() };
+    if ready_sender.send(Ok(ready)).is_err() || resolved.empty {
+        return;
+    }
+    let context = match prepare_resolved_table(&mut archive, &resolved, true) {
+        Ok(context) => context,
+        Err(error) => {
+            let _ = row_sender.send(Err(error));
+            return;
+        }
+    };
+    let scan = match scan_worksheet(&mut archive, &resolved.sheet_path, &cancelled) {
+        Ok(scan) => scan,
+        Err(error) => {
+            let _ = row_sender.send(Err(error));
+            return;
+        }
+    };
+    let mut emit = |row| row_sender.send(Ok(row)).is_ok();
+    if let Err(error) =
+        stream_worksheet(&mut archive, context, scan, &resolved.options, &cancelled, &mut emit)
+    {
+        let _ = row_sender.send(Err(error));
+    }
+}
+
+fn prepare_resolved_table<R>(
+    archive: &mut ZipArchive<R>,
+    table: &ResolvedTable,
+    allow_disk_cache: bool,
+) -> Result<WorkbookContext>
+where
+    R: Read + Seek,
+{
+    let workbook = read_workbook_info(archive)?;
+    let shared_strings = read_shared_strings(archive, &table.options, allow_disk_cache)?;
+    let styles = read_styles(archive, false)?;
+    Ok(WorkbookContext {
+        sheet_name: table.sheet_name.clone(),
+        sheet_path: table.sheet_path.clone(),
+        shared_strings,
+        styles,
+        is_1904: workbook.is_1904,
+        preserve_structure: false,
+    })
+}
+
+fn resolve_table<R>(
+    archive: &mut ZipArchive<R>,
+    table_name: &str,
+    sheet_name: Option<&str>,
+) -> Result<ResolvedTable>
+where
+    R: Read + Seek,
+{
+    if table_name.is_empty() {
+        return Err(Error::table_not_found(table_name));
+    }
+    let workbook = read_workbook_info(archive)?;
+    let sheet = match sheet_name {
+        Some(name) => workbook
+            .sheets
+            .iter()
+            .find(|sheet| sheet.name == name)
+            .ok_or_else(|| Error::sheet_not_found(name))?,
+        None => workbook.sheets.first().ok_or_else(Error::no_worksheets)?,
+    };
+    let sheet_path = read_relationship_target(archive, &sheet.relationship_id)?;
+    let relationship_path = relationship_part_path(&sheet_path)?;
+    let file = match archive.by_name(&relationship_path) {
+        Ok(file) => file,
+        Err(ZipError::FileNotFound) => return Err(Error::table_not_found(table_name)),
+        Err(error) => return Err(stream_error("cannot read worksheet relationships:", error)),
+    };
+    let mut xml = Reader::from_reader(BufReader::new(file));
+    let mut buffer = Vec::new();
+    let mut table_targets = Vec::new();
+    loop {
+        match xml
+            .read_event_into(&mut buffer)
+            .map_err(|error| stream_error("invalid worksheet relationships:", error))?
+        {
+            Event::Start(event) | Event::Empty(event)
+                if is_name(event.name().as_ref(), b"Relationship") =>
+            {
+                let relationship_type = attribute(&event, xml.decoder(), b"Type")?;
+                let target_mode = attribute(&event, xml.decoder(), b"TargetMode")?;
+                if relationship_type.as_deref().and_then(|value| value.rsplit('/').next())
+                    == Some("table")
+                    && !target_mode
+                        .as_deref()
+                        .is_some_and(|value| value.eq_ignore_ascii_case("External"))
+                {
+                    let target = attribute(&event, xml.decoder(), b"Target")?.ok_or_else(|| {
+                        Error::invalid_table(table_name, "table relationship has no target")
+                    })?;
+                    table_targets.push(resolve_part_target(&sheet_path, &target)?);
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    drop(xml);
+
+    for target in table_targets {
+        let file = match archive.by_name(&target) {
+            Ok(file) => file,
+            Err(ZipError::FileNotFound) => continue,
+            Err(error) => return Err(stream_error("cannot read table metadata:", error)),
+        };
+        let mut xml = Reader::from_reader(BufReader::new(file));
+        let mut buffer = Vec::new();
+        let mut matched = false;
+        let mut reference = None;
+        let mut header_row_count = 1_u32;
+        let mut headers = Vec::new();
+        loop {
+            match xml
+                .read_event_into(&mut buffer)
+                .map_err(|error| stream_error("invalid table metadata:", error))?
+            {
+                Event::Start(event) | Event::Empty(event)
+                    if is_name(event.name().as_ref(), b"table") =>
+                {
+                    matched = attribute(&event, xml.decoder(), b"name")?
+                        .is_some_and(|name| name.eq_ignore_ascii_case(table_name));
+                    if matched {
+                        reference = attribute(&event, xml.decoder(), b"ref")?;
+                        header_row_count = attribute(&event, xml.decoder(), b"headerRowCount")?
+                            .and_then(|value| value.parse().ok())
+                            .unwrap_or(1);
+                    }
+                }
+                Event::Start(event) | Event::Empty(event)
+                    if matched && is_name(event.name().as_ref(), b"tableColumn") =>
+                {
+                    let index = headers.len();
+                    headers.push(Some(
+                        attribute(&event, xml.decoder(), b"name")?
+                            .unwrap_or_else(|| format!("Column{index}")),
+                    ));
+                }
+                Event::Eof => break,
+                _ => {}
+            }
+            buffer.clear();
+        }
+        if !matched {
+            continue;
+        }
+        if headers.is_empty() {
+            return Err(Error::table_not_found(table_name));
+        }
+        let reference = reference
+            .ok_or_else(|| Error::invalid_table(table_name, "table metadata has no range"))?;
+        let (start, end) = parse_table_range(table_name, &reference)?;
+        let width = end.column() - start.column() + 1;
+        let fallback = crate::reader::column_names(start.column(), width);
+        headers.resize_with(width, || None);
+        for (index, header) in headers.iter_mut().enumerate().take(width) {
+            if header.is_none() {
+                *header = fallback[index].clone();
+            }
+        }
+        headers.truncate(width);
+        let body_start_row = start.row().saturating_add(usize::from(header_row_count != 0));
+        let empty = body_start_row > end.row();
+        let body_start =
+            if empty { start } else { CellReference::new(body_start_row, start.column())? };
+        let options = ReadOptions::new()
+            .with_sheet_name(&sheet.name)
+            .with_start_cell(body_start)
+            .with_end_cell(end)
+            .with_header_mode(crate::HeaderMode::None);
+        return Ok(ResolvedTable {
+            sheet_name: sheet.name.clone(),
+            sheet_path,
+            headers,
+            options,
+            empty,
+        });
+    }
+    Err(Error::table_not_found(table_name))
+}
+
+fn parse_table_range(table_name: &str, reference: &str) -> Result<(CellReference, CellReference)> {
+    let mut cells = reference.split(':');
+    let start =
+        cells.next().ok_or_else(|| Error::invalid_table(table_name, "table range is empty"))?;
+    let end = cells
+        .next()
+        .ok_or_else(|| Error::invalid_table(table_name, "table range must contain two cells"))?;
+    if cells.next().is_some() {
+        return Err(Error::invalid_table(table_name, "table range contains too many cells"));
+    }
+    let start = start.parse::<CellReference>().map_err(|_| {
+        Error::invalid_table(table_name, format!("invalid table range '{reference}'"))
+    })?;
+    let end = end.parse::<CellReference>().map_err(|_| {
+        Error::invalid_table(table_name, format!("invalid table range '{reference}'"))
+    })?;
+    if end.row() < start.row() || end.column() < start.column() {
+        return Err(Error::invalid_table(
+            table_name,
+            format!("reversed table range '{reference}'"),
+        ));
+    }
+    Ok((start, end))
+}
+
+fn relationship_part_path(source: &str) -> Result<String> {
+    let (directory, file) = source
+        .rsplit_once('/')
+        .ok_or_else(|| Error::stream(format!("invalid worksheet path '{source}'")))?;
+    Ok(format!("{directory}/_rels/{file}.rels"))
+}
+
+fn resolve_part_target(source: &str, target: &str) -> Result<String> {
+    if target.contains('\\') || target.contains(['?', '#']) {
+        return Err(Error::stream(format!("unsafe relationship target '{target}'")));
+    }
+    let base = source.rsplit_once('/').map_or("", |(directory, _)| directory);
+    let combined = if target.starts_with('/') {
+        target.trim_start_matches('/').to_owned()
+    } else {
+        format!("{base}/{target}")
+    };
+    let mut parts = Vec::new();
+    for part in combined.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    return Err(Error::stream(format!(
+                        "relationship target '{target}' escapes the package root"
+                    )));
+                }
+            }
+            part => parts.push(part),
+        }
+    }
+    if parts.is_empty() {
+        return Err(Error::stream(format!("relationship target '{target}' is empty")));
+    }
+    Ok(parts.join("/"))
 }
 
 fn prepare_workbook<R>(

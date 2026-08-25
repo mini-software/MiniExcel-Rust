@@ -4,7 +4,10 @@ use std::path::Path;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::streaming::{StreamingRows, StreamingStructuredRows, StreamingTypedRows};
+use crate::streaming::{
+    StreamingRows, StreamingStructuredRows, StreamingTableRows, StreamingTableTypedRows,
+    StreamingTypedRows,
+};
 use crate::writer::XlsxWriter;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::writer::{
@@ -92,6 +95,30 @@ impl MiniExcel {
         Ok(Box::new(StreamingRows::open(path, options)?))
     }
 
+    /// Streams dynamic rows from a named OpenXML table.
+    ///
+    /// Table names are matched case-insensitively. When `sheet_name` is `None`, only the first
+    /// worksheet is searched. Column names and bounds come from table metadata.
+    pub fn query_table(
+        path: impl AsRef<Path>,
+        table_name: &str,
+        sheet_name: Option<&str>,
+    ) -> Result<Box<dyn Iterator<Item = Result<DynamicRow>> + Send>> {
+        Ok(Box::new(StreamingTableRows::open(path, table_name, sheet_name)?))
+    }
+
+    /// Streams and deserializes rows from a named OpenXML table through Serde.
+    pub fn query_table_as<T>(
+        path: impl AsRef<Path>,
+        table_name: &str,
+        sheet_name: Option<&str>,
+    ) -> Result<Box<dyn Iterator<Item = Result<T>> + Send>>
+    where
+        T: DeserializeOwned + 'static,
+    {
+        Ok(Box::new(StreamingTableTypedRows::open(path, table_name, sheet_name)?))
+    }
+
     /// Streams sparse rows while preserving cell coordinates, formulas, and number formats.
     ///
     /// Header mode does not consume the first row because structured reads expose source rows
@@ -124,6 +151,15 @@ impl MiniExcel {
         crate::streaming::query_bytes(bytes, options)
     }
 
+    /// Reads dynamic rows from a named OpenXML table in an in-memory workbook.
+    pub fn query_table_bytes(
+        bytes: &[u8],
+        table_name: &str,
+        sheet_name: Option<&str>,
+    ) -> Result<Vec<DynamicRow>> {
+        crate::streaming::query_table_bytes(bytes, table_name, sheet_name)
+    }
+
     /// Visits in-memory worksheet rows without materializing the complete selection.
     pub fn visit_rows_from_bytes<F>(
         bytes: &[u8],
@@ -153,6 +189,25 @@ impl MiniExcel {
         })
     }
 
+    /// Visits dynamic rows from a named OpenXML table in a borrowed reader.
+    pub fn visit_table_rows_from_reader<R, F>(
+        reader: &mut R,
+        table_name: &str,
+        sheet_name: Option<&str>,
+        mut visitor: F,
+    ) -> Result<QuerySummary>
+    where
+        R: Read + Seek,
+        F: FnMut(usize, &DynamicRow) -> Result<bool>,
+    {
+        crate::streaming::visit_table_dynamic_rows_from_reader(
+            reader,
+            table_name,
+            sheet_name,
+            |_, excel_row, row| visitor(excel_row, &row),
+        )
+    }
+
     /// Visits typed rows from a borrowed seekable XLSX reader without taking ownership.
     pub fn visit_rows_as_from_reader<T, R, F>(
         reader: &mut R,
@@ -167,6 +222,26 @@ impl MiniExcel {
         crate::streaming::visit_typed_rows_from_reader(reader, options, |_, excel_row, row| {
             visitor(excel_row, &row)
         })
+    }
+
+    /// Visits Serde-deserialized rows from a named OpenXML table in a borrowed reader.
+    pub fn visit_table_rows_as_from_reader<T, R, F>(
+        reader: &mut R,
+        table_name: &str,
+        sheet_name: Option<&str>,
+        mut visitor: F,
+    ) -> Result<QuerySummary>
+    where
+        T: DeserializeOwned,
+        R: Read + Seek,
+        F: FnMut(usize, &T) -> Result<bool>,
+    {
+        crate::streaming::visit_table_typed_rows_from_reader(
+            reader,
+            table_name,
+            sheet_name,
+            |_, excel_row, row| visitor(excel_row, &row),
+        )
     }
 
     /// Visits sparse structure-preserving rows from a borrowed seekable XLSX reader.

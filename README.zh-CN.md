@@ -206,6 +206,21 @@ for row in MiniExcel::query_with_options("book.xlsx", &options)? {
 
 合并单元格默认只保留物理存储的左上角值。使用 `ReadOptions::with_fill_merged_cells(true)` 可在动态、类型化和 byte query 中将该值投影到整个合并范围。Structured query 仍保持稀疏，只暴露物理存储的 cell。
 
+### 命名 Table Query
+
+可按 OpenXML table metadata name 查询，并且不会读取声明 range 外的 cell：
+
+```rust
+let rows = MiniExcel::query_table("book.xlsx", "SalesTable", Some("Data"))?
+    .collect::<miniexcel::Result<Vec<_>>>()?;
+```
+
+`query_table_as::<T>()` 提供 Serde mapping，`query_table_bytes()` 支持内存 XLSX，
+`visit_table_rows*_from_reader()` 会保持 borrowed reader open。Table name 会按 table
+`name`（不是 `displayName`）进行大小写不敏感匹配。未指定 sheet 时只搜索第一张 worksheet。
+Column name 来自 table metadata；除非 `headerRowCount="0"`，否则会跳过物理 header row；
+返回完整声明 range，包括 totals row。Path query 继续使用既有有界内存两遍 worksheet pipeline。
+
 ## 类型化读取
 
 ```rust

@@ -30,6 +30,12 @@ enum ErrorKind {
     #[error("worksheet '{0}' was not found")]
     SheetNotFound(String),
 
+    #[error("table '{0}' was not found")]
+    TableNotFound(String),
+
+    #[error("invalid table '{name}': {reason}")]
+    InvalidTable { name: String, reason: String },
+
     #[error("the workbook does not contain any worksheets")]
     NoWorksheets,
 
@@ -127,6 +133,14 @@ impl Error {
 
     pub(crate) fn sheet_not_found(sheet_name: impl Into<String>) -> Self {
         ErrorKind::SheetNotFound(sheet_name.into()).into()
+    }
+
+    pub(crate) fn table_not_found(table_name: impl Into<String>) -> Self {
+        ErrorKind::TableNotFound(table_name.into()).into()
+    }
+
+    pub(crate) fn invalid_table(name: impl Into<String>, reason: impl Into<String>) -> Self {
+        ErrorKind::InvalidTable { name: name.into(), reason: reason.into() }.into()
     }
 
     pub(crate) fn no_worksheets() -> Self {

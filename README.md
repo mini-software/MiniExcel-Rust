@@ -125,6 +125,24 @@ Explicit cancellation yields an error recognized by `Error::is_cancelled()`; dro
 requests cancellation without blocking the executor. Parser initialization or the current row may
 finish before background cleanup completes.
 
+Explicit-schema async row streams can also create new workbooks atomically:
+
+```rust
+let count = MiniExcel::save_as_with_schema_async_with_cancellation(
+    "book.xlsx",
+    &["Name".to_owned(), "Version".to_owned()],
+    rows,
+    &WriteOptions::new().with_sheet_name("Async"),
+    cancellation,
+).await?;
+```
+
+The schema is required so empty streams and one-pass producers remain deterministic. Rows cross a
+bounded channel and are disk-spooled before the blocking constant-memory writer runs. Producer
+errors, cancellation, dropped futures, validation failures, and destination races leave an existing
+target byte-identical or a missing target absent. `with_overwrite_file(true)` enables atomic
+replacement. The returned count excludes the header.
+
 ## Borrowed Readers And Writers
 
 Use visitor APIs for caller-owned `Read + Seek` sources without materializing all rows or transferring ownership:
@@ -573,7 +591,7 @@ Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` f
 - `MiniExcel::query()` and `query_as()` strictly stream worksheet XML from paths.
 - Grouped analytics retain state proportional to distinct groups and stop at `max_groups`.
 - RAG exports never recalculate formulas and reject hidden sheets unless explicitly allowed.
-- Synchronous streaming queries use one worker thread per active query. Optional async query and Insert APIs use bounded channels around blocking XLSX workers; ZIP/XML/filesystem work is not async I/O.
+- Synchronous streaming queries use one worker thread per active query. Optional async query, explicit-schema export, and Insert APIs use bounded channels around blocking XLSX workers; ZIP/XML/filesystem work is not async I/O.
 - Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends or strictly replaces a worksheet in an existing `.xlsx` path, or creates a workbook when the path is missing. `copy_and_add_sheet*()` creates a validated source-derived destination. `rename_sheet()`, `set_sheet_visibility()`, and `reorder_sheet()` atomically change existing workbook sheet metadata.
 
 ## Not Supported

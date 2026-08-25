@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 #[cfg(feature = "async")]
+pub(crate) mod async_export;
+#[cfg(feature = "async")]
 pub(crate) mod async_insert;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod atomic;

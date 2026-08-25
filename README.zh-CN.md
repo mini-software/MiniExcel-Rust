@@ -123,6 +123,23 @@ async executor。它们不会把 filesystem access 变成 async I/O，也不依�
 返回可由 `Error::is_cancelled()` 识别的错误；丢弃 stream 会请求取消，但不会阻塞 executor。
 Parser 初始化或当前 row 可能会在后台清理完成前继续执行。
 
+显式 schema async row stream 也可原子创建新 workbook：
+
+```rust
+let count = MiniExcel::save_as_with_schema_async_with_cancellation(
+    "book.xlsx",
+    &["Name".to_owned(), "Version".to_owned()],
+    rows,
+    &WriteOptions::new().with_sheet_name("Async"),
+    cancellation,
+).await?;
+```
+
+显式 schema 使空 stream 与 one-pass producer 的行为保持确定。Row 通过 bounded channel，
+并在 blocking constant-memory writer 运行前落盘 spool。Producer error、cancellation、
+drop future、validation failure 与 destination race 都会使已有 target 字节不变，或使缺失
+target 继续不存在。`with_overwrite_file(true)` 启用原子 replacement。返回 count 不含 header。
+
 ## 借用 Reader 与 Writer
 
 对调用方持有的 `Read + Seek` source，可使用 visitor API 流式处理，不会物化全部 row 或转移所有权：
@@ -564,7 +581,7 @@ MiniExcel::save_as_template(
 - `MiniExcel::query()` 和 `query_as()` 会从路径严格流式解析 worksheet XML。
 - 分组分析保留与不同 group 数量成比例的状态，并在 `max_groups` 停止。
 - RAG 导出不会重新计算公式，hidden sheet 未显式允许时会拒绝处理。
-- 同步流式 query 每个活动 query 使用一个 worker thread。可选 async query/Insert API 通过 bounded channel 包装 blocking XLSX worker；ZIP/XML/filesystem 工作并不是 async I/O。
+- 同步流式 query 每个活动 query 使用一个 worker thread。可选 async query、显式 schema export 与 Insert API 通过 bounded channel 包装 blocking XLSX worker；ZIP/XML/filesystem 工作并不是 async I/O。
 - Save 会创建新工作簿，并默认拒绝已有目标路径。`MiniExcel::insert*()` 会向现有 `.xlsx` path 原子 append 或严格 replace worksheet；路径不存在时则创建 workbook。`copy_and_add_sheet*()` 创建经过验证、源自 source 的 destination。`rename_sheet()`、`set_sheet_visibility()` 和 `reorder_sheet()` 会原子修改现有 workbook 的 sheet metadata。
 
 ## 暂不支持

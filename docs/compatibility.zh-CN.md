@@ -55,6 +55,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` / borrowed reader-to-writer variants | Path API 为原子操作；独立 borrowed stream 要求空 sink，并在无原子 commit 的情况下保持相同 package 行为 |
 | Async Insert producer | `insert_with_schema_async*()` | 可选 `async` feature；bounded producer channel，XLSX 工作在专用 blocking thread |
 | Async path query | `query_async*()` / `query_as_async*()` | 可选 `async` feature；bounded 动态/Serde stream、协作式 cancellation、blocking XLSX worker |
+| Async 显式 schema export | `save_as_with_schema_async*()` | 可选 `async` feature；bounded row producer、原子 destination、协作式 cancellation |
 | 每表 visibility | `WriteOptions::with_sheet_visibility()` | visible、hidden、very hidden；第一个 visible sheet 为 active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | 默认 `false`；已有路径需要显式允许覆盖 |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | 默认冻结一行、零列 |
@@ -184,6 +185,7 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | 带地址 JSONL/Markdown/manifest RAG 导出 | Rust 研究扩展 | 否 |
 | Async Insert producer | 已通过可选 feature 实现 | Rust cancellation test；不共享内部行为 |
 | Async 动态/类型化 path query | 已通过可选 feature 实现 | Rust parity、cancellation、error 与 cleanup 测试 |
+| Async 显式 schema path export | 已通过可选 feature 实现 | Rust success、rollback、cancellation 与 cleanup 测试；固定 .NET async-enumerable 基准 |
 | DataReader 与更广泛的 stream ownership | 延后 | 否 |
 | 向现有 `.xlsx` workbook 追加 worksheet | 已实现并原子提交 | Rust 测试；共享 parity contract 尚未扩展 |
 | 严格 worksheet replacement | 已支持 plain target 与受支持的 target-owned closure | Rust 测试；删除 stale calcChain 并要求 full recalculation |
@@ -198,4 +200,4 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 
 ## 延后工作
 
-SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、旧 Excel 格式、高级 template 指令与 sheet 克隆、image authoring、merged-cell API、公式计算/依赖展开、公式编写、通用 style、async export/template I/O、async borrowed reader，以及 borrowed XLSX lazy reader，都需要独立的设计与验收里程碑。CSV DataReader/DataTable adapter 已有意替换为 Rust iterator；当前不提供一步式 CSV/XLSX converter，调用方可组合 query 与 save API。支持工作流与有意保留的差异见 [Insert 迁移说明](insert-v1-migration.zh-CN.md)。
+SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、旧 Excel 格式、高级 template 指令与 sheet 克隆、image authoring、merged-cell API、公式计算/依赖展开、公式编写、通用 style、async template I/O、推断/类型化 async export source、async borrowed reader/writer，以及 borrowed XLSX lazy reader，都需要独立的设计与验收里程碑。CSV DataReader/DataTable adapter 已有意替换为 Rust iterator；当前不提供一步式 CSV/XLSX converter，调用方可组合 query 与 save API。支持工作流与有意保留的差异见 [Insert 迁移说明](insert-v1-migration.zh-CN.md)。

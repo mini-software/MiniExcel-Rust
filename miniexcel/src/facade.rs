@@ -556,6 +556,58 @@ impl MiniExcel {
         writer.save(path, options.overwrite_file())
     }
 
+    /// Creates an XLSX workbook from a runtime-neutral async dynamic row stream.
+    ///
+    /// The explicit schema supports empty streams and bounded one-pass production. Blocking XLSX
+    /// work runs on a worker thread, and the destination is published atomically after validation.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn save_as_with_schema_async<S>(
+        path: impl AsRef<Path>,
+        schema: &[String],
+        rows: S,
+        options: &WriteOptions,
+    ) -> Result<usize>
+    where
+        S: futures_core::Stream<Item = Result<DynamicRow>>,
+    {
+        Self::save_as_with_schema_async_with_cancellation(
+            path,
+            schema,
+            rows,
+            options,
+            crate::CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Creates an XLSX workbook from an async row stream with cooperative cancellation.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn save_as_with_schema_async_with_cancellation<S>(
+        path: impl AsRef<Path>,
+        schema: &[String],
+        rows: S,
+        options: &WriteOptions,
+        cancellation: crate::CancellationToken,
+    ) -> Result<usize>
+    where
+        S: futures_core::Stream<Item = Result<DynamicRow>>,
+    {
+        if cancellation.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+        validate_schema(schema)?;
+        validate_dimensions(0, schema.len(), options.print_header())?;
+        validate_single_sheet_options(options)?;
+        crate::insert::async_export::save_with_schema_async(
+            path.as_ref().to_owned(),
+            schema.to_vec(),
+            rows,
+            options.clone(),
+            cancellation,
+        )
+        .await
+    }
+
     /// Creates a new XLSX workbook containing multiple dynamic worksheets.
     ///
     /// Returns data-row counts in the same order as the supplied worksheets.

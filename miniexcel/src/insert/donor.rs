@@ -151,6 +151,25 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn save_dynamic_iter_to_writer<I, W>(
+    writer: &mut W,
+    schema: &[String],
+    rows: I,
+    options: &WriteOptions,
+) -> Result<usize>
+where
+    I: IntoIterator<Item = Result<DynamicRow>>,
+    W: Write + Send,
+{
+    let (spool, row_count) = spool_dynamic_rows(rows, None, schema.len(), options.print_header())?;
+    let rows = spooled_rows(&spool)?;
+    let mut workbook = XlsxWriter::new();
+    workbook.add_rows_iter_with_schema(schema, rows, row_count, options)?;
+    workbook.save_to_writer(writer)?;
+    Ok(row_count)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn spool_dynamic_rows<I>(
     rows: I,
     spool_directory: Option<&Path>,

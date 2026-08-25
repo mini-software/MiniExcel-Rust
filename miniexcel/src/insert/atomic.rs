@@ -190,6 +190,65 @@ where
     )
 }
 
+pub(super) fn export_to_path_with_hook<F, H>(
+    path: &Path,
+    sheet_name: &str,
+    overwrite: bool,
+    writer: F,
+    mut checkpoint: H,
+) -> Result<usize>
+where
+    F: FnOnce(&mut File) -> Result<usize>,
+    H: FnMut(AtomicCommitStage) -> Result<()>,
+{
+    checkpoint(AtomicCommitStage::Preflight)?;
+    let _guard = PathMutationGuard::acquire(path, "export")?;
+    let destination_fingerprint =
+        path.exists().then(|| SourceFingerprint::read(path)).transpose()?;
+    if destination_fingerprint.is_some() && !overwrite {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("destination '{}' already exists", path.display()),
+        )
+        .into());
+    }
+
+    let parent = sibling_directory(path);
+    let mut temporary =
+        tempfile::Builder::new().prefix(".miniexcel-").suffix(".xlsx.tmp").tempfile_in(parent)?;
+    checkpoint(AtomicCommitStage::RowGeneration)?;
+    let row_count = writer(temporary.as_file_mut())?;
+    temporary.as_file_mut().flush()?;
+    temporary.as_file().sync_all()?;
+
+    checkpoint(AtomicCommitStage::Validation)?;
+    validate_rewritten_package(temporary.reopen()?, sheet_name)?;
+    checkpoint(AtomicCommitStage::Commit)?;
+    match destination_fingerprint {
+        Some(fingerprint) => {
+            if SourceFingerprint::read(path)? != fingerprint {
+                return Err(Error::atomic_commit(format!(
+                    "destination workbook '{}' changed during export",
+                    path.display()
+                )));
+            }
+            let permissions = fs::metadata(path)?.permissions();
+            replace_temporary(temporary, path, permissions)?;
+        }
+        None => {
+            if path.exists() {
+                return Err(Error::atomic_commit(format!(
+                    "destination workbook '{}' was created during export",
+                    path.display()
+                )));
+            }
+            let permissions = temporary.as_file().metadata()?.permissions();
+            persist_new_temporary(temporary, path, permissions)?;
+        }
+    }
+    Ok(row_count)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn copy_and_add_to_path_with_hook<F, H>(
     source_path: &Path,

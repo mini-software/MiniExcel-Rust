@@ -8,7 +8,7 @@
 
 | 项目 | 版本基线 |
 | --- | --- |
-| MiniExcel-Rust | `1e3167222142a86710e05269f9fcbbba11185d22`（`0.3.0`） |
+| MiniExcel-Rust | `23bba2d448bc4fab14baf750152a7c83cb6ececc`（`0.3.0`） |
 | MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 比对依据包括同级目录 `../MiniExcel` 中的 .NET 公开 API、控制实现和聚焦测试，以及 Rust 的公开 `MiniExcel` 门面、选项、集成测试和[兼容性边界](compatibility.zh-CN.md)。
@@ -38,12 +38,12 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 | 模板 | 部分实现 | Rust 可使用标量和单 row 数组填充 path/byte 模板并保留 package part。stream、分组、条件、参数化 sheet、`$=` 公式、公式引用调整和 calculation chain 处理仍不支持。 |
 | 图片与合并处理 | 未实现 | 添加锚定图片，以及通过模板 API 合并相邻相同单元格。结构化读取不等于具备写入能力。 |
 | CSV | 未实现 | CSV 动态/强类型查询与保存、追加、列发现、DataReader/DataTable、分隔符/换行/编码/引号配置，以及 CSV/XLSX 转换。 |
-| 批注与注释 | 未实现 | 读取线程化批注、回复、人员/作者、解决状态、时间戳和旧式注释。 |
+| 批注与注释 | 已实现 | Path/bytes/borrowed API 返回 threaded root、reply、未解析 person ID、person/provider/user ID、resolved state、typed timestamp 与 legacy note。 |
 | Fluent Mapping | 未实现 | 基于地址的对象映射、公式/格式映射、集合起始单元格与间距、嵌套集合，以及映射式导入/导出/模板 API。 |
 | 特性式字段映射 | 部分实现 | 仍缺列索引/名称特性、本地化表头、公式元数据、自定义动态格式器、字段映射，以及动态列排序/过滤。Serde 可覆盖重命名、别名、默认值、跳过、可选值和自定义序列化；`WriteOptions` 可按最终 header name 配置 width/hidden layout。 |
 | 读取配置 | 部分实现 | 区域文化感知转换、缓冲/快速模式，以及部分 null/空字符串行为。合并单元格填充和 shared-string 磁盘 cache 已实现。 |
 | 写入配置与样式 | 部分实现 | 仍缺 OOXML table、共享字符串与内联字符串选择，以及更广泛的单元格样式。Rust 已暴露默认/最小 cell style 模式、header output/style、AutoFilter、从右到左 view、冻结行列、有界 AutoWidth、body 换行/对齐和数字格式。 |
-| 工作表元数据与流程 | 部分实现 | 表格元数据、批注元数据、动态工作表别名、类级工作表选择，以及通过一个 reader 遍历所有工作表。Rust 已覆盖名称、顺序、尺寸、可见性和活动状态。 |
+| 工作表元数据与流程 | 部分实现 | 仍缺 dynamic sheet alias、class-level sheet selection 和单 reader 遍历全部 sheet。Rust 已覆盖名称、顺序、尺寸、可见性、active state、table metadata 与 comments/notes。 |
 | Provider/包模型 | 设计不同 | .NET 组合 OpenXML、CSV、模板和 Fluent Mapping provider。Rust 使用单一 XLSX crate 加 CLI/WASM 适配器；这些适配器不能替代上述缺失能力。 |
 
 ## 证据索引
@@ -52,23 +52,23 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 | --- | --- | --- |
 | 公开读写边界 | `miniexcel/src/facade.rs`、`miniexcel/src/options.rs` | `src/MiniExcel.OpenXml/Api/OpenXmlImporter.cs`、`OpenXmlExporter.cs` |
 | 表格 | `MiniExcel::query_table*`；Rust focused test 使用完全相同的 `TestQueryTable.xlsx` fixture（SHA-256 `04F719BF9F9E99D9B437A8FB32F8111FD92580A1D29ACAD10B6ED128C0564501`） | `OpenXmlImporter.QueryTableAsync`；`tests/MiniExcel.OpenXml.Tests/Tables/` |
+| Comments | `MiniExcel::get_comments*`；Rust focused test 使用 `TestCommentsAndNotes.xlsx`（SHA-256 `3A855CE896ED62DC27C91797432DD89EE081F07CD03AB05BF1B0CD745543A3FC`） | `OpenXmlImporter.RetrieveCommentsAsync`；`tests/MiniExcel.OpenXml.Tests/Comments/` |
 | DataReader/DataTable | Rust iterator 与 borrowed visitor 是原生抽象；不计划逐字复制 .NET tabular adapter | `OpenXmlImporter.GetDataReader`、`GetAsyncDataReader`、`QueryAsDataTableAsync`；`tests/MiniExcel.OpenXml.Tests/DataReader/` |
 | 多工作表与工作簿修改 | Writer 可创建多个工作表；现有 workbook 支持 append 与严格 replacement，并保留 package，显式 schema producer 采用有界资源处理 | `OpenXmlExporter.InsertSheetAsync`、`CopyAndAddSheetAsync`、`AlterSheetAsync`；`MultipleSheets/` 与 `AlterSheets/` 测试 |
 | 模板/图片/合并 | 已实现基础模板填充；高级指令与 authoring 仍延期 | `src/MiniExcel.OpenXml/Api/OpenXmlTemplater.cs`；`tests/MiniExcel.OpenXml.Tests/Templates/` |
 | CSV/转换 | 核心仅支持 XLSX | `src/MiniExcel.Csv/Api/`；`src/MiniExcel/MiniExcelConverter.cs`；`tests/MiniExcel.Csv.Tests/` |
 | 映射 | 仅 Serde 映射 | `src/MiniExcel.Core/Attributes/MiniExcelColumnAttribute.cs`；`src/MiniExcel.OpenXml.FluentMapping/`；映射测试 |
-| 批注 | 无公开批注模型/API | `OpenXmlImporter.RetrieveCommentsAsync`；`src/MiniExcel.OpenXml/Models/Comments.cs`；批注测试 |
+| 批注 | `MiniExcel::get_comments*`；Rust focused test 使用 `TestCommentsAndNotes.xlsx`（SHA-256 `3A855CE896ED62DC27C91797432DD89EE081F07CD03AB05BF1B0CD745543A3FC`） | `OpenXmlImporter.RetrieveCommentsAsync`；`src/MiniExcel.OpenXml/Models/Comments.cs`；comment test |
 | 配置/样式 | 较窄的 `ReadOptions` 与 `WriteOptions` | `MiniExcelBaseConfiguration`、`OpenXmlConfiguration`、`OpenXmlStyleOptions`；导出测试 |
 
 .NET 中标为 `Async` 的 API 还会通过仓库的同步版本生成机制产生公开同步入口，因此这里比较的是能力，而不只是方法命名差异。
 
 ## 建议实现顺序
 
-1. **Comments 与 notes 读取**：范围聚焦的 OpenXML read feature，需要明确 public result model。
-2. **CSV provider**：保持独立格式边界，不在 XLSX parser 内堆叠条件分支。
-3. **Async query/export/template API**：延续 runtime-neutral producer/cancellation 模式，不把 blocking ZIP 工作描述成 async I/O。
-4. **高级模板与 Fluent Mapping**：通过独立兼容里程碑增加分组/条件模板、参数化 sheet 和 mapping。
-5. **剩余 workbook edit**：copy/add、rename、reorder 和独立 visibility mutation 需要各自的 preservation contract。
+1. **CSV provider**：保持独立格式边界，不在 XLSX parser 内堆叠条件分支。
+2. **Async query/export/template API**：延续 runtime-neutral producer/cancellation 模式，不把 blocking ZIP 工作描述成 async I/O。
+3. **高级模板与 Fluent Mapping**：通过独立兼容里程碑增加分组/条件模板、参数化 sheet 和 mapping。
+4. **剩余 workbook edit**：copy/add、rename、reorder 和独立 visibility mutation 需要各自的 preservation contract。
 
 DataReader/DataTable 属于 .NET 生态抽象，明确不作为逐字 Rust parity 要求。只有出现具体集成需求时，才应设计 Rust-native record-batch 或 table adapter。
 

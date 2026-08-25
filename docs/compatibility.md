@@ -23,6 +23,7 @@ The Rust MVP implements the smallest useful MiniExcel-style XLSX read/write surf
 | `serde_json` | 1.x | Query plans, analytics/RAG output, parity contracts, and CLI JSON | MIT OR Apache-2.0 | Checked with Rust 1.85 |
 | `sha2` | 0.10 | Streaming SHA-256 source identity for RAG manifests | MIT OR Apache-2.0 | Checked with Rust 1.85 |
 | `thiserror` | 2.x | Public error composition | MIT OR Apache-2.0 | Resolved by the workspace lockfile |
+| `uuid` | 1.x | Typed threaded-comment, reply, person, and legacy-note identifiers | MIT OR Apache-2.0 | Resolved by the workspace lockfile |
 | `zip` | 7.2 | Incremental worksheet entry decompression | MIT | Locked and checked with Rust 1.85 |
 
 The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP pins the preceding API lines so the declared Rust 1.85 MSRV is executable rather than aspirational.
@@ -43,6 +44,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | `GetSheetDimensions` | `MiniExcel::get_sheet_dimensions()` | Returns used ranges in workbook order with 1-based indices |
 | `GetColumns` | `MiniExcel::get_columns()` | Returns selected dynamic keys or an empty vector |
 | `QueryTable` | `query_table()` / `query_table_as()` / byte and borrowed-reader variants | Case-insensitive table-name lookup, metadata headers, and inclusive table bounds |
+| Retrieve comments and notes | `get_comments()` / bytes / borrowed-reader variants | Thread roots, replies, people, resolution/timestamps, and legacy notes |
 | `startCell` | `ReadOptions::with_start_cell()` | A1 start coordinate |
 | `IgnoreEmptyRows` | `ReadOptions::with_ignore_empty_rows()` | Defaults to `false` for MiniExcel compatibility |
 | `FillMergedCells` | `ReadOptions::with_fill_merged_cells()` | Defaults to `false`; applies to dynamic, typed, and byte queries |
@@ -172,6 +174,7 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | `GetSheetInformations` ID/index/name/type/visibility/active | Implemented | Rust tests against .NET fixtures |
 | `GetSheetDimensions` | Implemented | Rust tests against .NET fixtures |
 | Named OpenXML `QueryTable` | Implemented | Rust and .NET focused tests against `TestQueryTable.xlsx` |
+| Threaded comments and legacy notes | Implemented | Rust and .NET focused tests against `TestCommentsAndNotes.xlsx` |
 | New-workbook `SaveAs`, including multiple sheets | Implemented and roundtrip-tested | Not yet |
 | Basic `SaveAsTemplate` scalar/list fill | Implemented and roundtrip-tested | Not yet |
 | Byte-array query/write for WASM | Implemented | Rust/browser tests |

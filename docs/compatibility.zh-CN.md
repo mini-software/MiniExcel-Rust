@@ -23,6 +23,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | `serde_json` | 1.x | Query plan、分析/RAG 输出、等价契约和 CLI JSON | MIT OR Apache-2.0 | 已使用 Rust 1.85 检查 |
 | `sha2` | 0.10 | 为 RAG manifest 流式计算 SHA-256 源身份 | MIT OR Apache-2.0 | 已使用 Rust 1.85 检查 |
 | `thiserror` | 2.x | 公共 error 组合 | MIT OR Apache-2.0 | 由 workspace lockfile 解析 |
+| `uuid` | 1.x | Typed threaded-comment、reply、person 与 legacy-note identifier | MIT OR Apache-2.0 | 由 workspace lockfile 解析 |
 | `zip` | 7.2 | 增量 worksheet entry 解压 | MIT | 已锁定并使用 Rust 1.85 检查 |
 
 最新的 `calamine 0.36` 和 `rust_xlsxwriter 0.97` 需要 Rust 1.88。MVP 固定使用前一条 API 版本线，使声明的 Rust 1.85 MSRV 可实际执行，而不只是目标。
@@ -43,6 +44,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | `GetSheetDimensions` | `MiniExcel::get_sheet_dimensions()` | 按 workbook 顺序返回使用范围，index 从 1 开始 |
 | `GetColumns` | `MiniExcel::get_columns()` | 返回选中的动态 key，或空 vector |
 | `QueryTable` | `query_table()` / `query_table_as()` / byte 和 borrowed-reader variants | 大小写不敏感 table-name lookup、metadata header 与包含端点的 table bounds |
+| 读取 comments 与 notes | `get_comments()` / bytes / borrowed-reader variants | Thread root、reply、person、resolved/timestamp 与 legacy note |
 | `startCell` | `ReadOptions::with_start_cell()` | A1 起始坐标 |
 | `IgnoreEmptyRows` | `ReadOptions::with_ignore_empty_rows()` | 为兼容 MiniExcel，默认值为 `false` |
 | `FillMergedCells` | `ReadOptions::with_fill_merged_cells()` | 默认 `false`；适用于动态、类型化和 byte query |
@@ -172,6 +174,7 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | `GetSheetInformations` ID/index/name/type/visibility/active | 已实现 | Rust 使用 .NET fixture 测试 |
 | `GetSheetDimensions` | 已实现 | Rust 使用 .NET fixture 测试 |
 | 命名 OpenXML `QueryTable` | 已实现 | Rust/.NET 使用 `TestQueryTable.xlsx` 的 focused test |
+| Threaded comments 与 legacy notes | 已实现 | Rust/.NET 使用 `TestCommentsAndNotes.xlsx` 的 focused test |
 | 新 workbook `SaveAs`（含多工作表） | 已实现并完成 roundtrip 测试 | 尚未 |
 | 基础 `SaveAsTemplate` 标量/列表填充 | 已实现并完成 roundtrip 测试 | 尚未 |
 | 用于 WASM 的字节数组 query/write | 已实现 | Rust/browser 测试 |

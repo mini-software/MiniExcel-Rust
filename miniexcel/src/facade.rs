@@ -80,6 +80,37 @@ impl MiniExcel {
         crate::streaming::sheet_dimensions_from_reader(reader)
     }
 
+    /// Returns threaded comments and legacy notes for a worksheet.
+    ///
+    /// When `sheet_name` is `None`, the first worksheet is selected.
+    pub fn get_comments(
+        path: impl AsRef<Path>,
+        sheet_name: Option<&str>,
+    ) -> Result<crate::SheetComments> {
+        crate::streaming::comments(path, sheet_name)
+    }
+
+    /// Returns threaded comments and legacy notes from in-memory XLSX data.
+    pub fn get_comments_from_bytes(
+        bytes: &[u8],
+        sheet_name: Option<&str>,
+    ) -> Result<crate::SheetComments> {
+        crate::streaming::comments_from_bytes(bytes, sheet_name)
+    }
+
+    /// Returns threaded comments and legacy notes from a borrowed XLSX reader.
+    ///
+    /// The reader remains open and its final position is unspecified.
+    pub fn get_comments_from_reader<R>(
+        reader: &mut R,
+        sheet_name: Option<&str>,
+    ) -> Result<crate::SheetComments>
+    where
+        R: Read + Seek,
+    {
+        crate::streaming::comments_from_reader(reader, sheet_name)
+    }
+
     /// Streams dynamic rows from the first worksheet without a header row.
     pub fn query(
         path: impl AsRef<Path>,

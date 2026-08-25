@@ -36,6 +36,9 @@ enum ErrorKind {
     #[error("invalid table '{name}': {reason}")]
     InvalidTable { name: String, reason: String },
 
+    #[error("invalid comments for worksheet '{sheet}': {reason}")]
+    InvalidComments { sheet: String, reason: String },
+
     #[error("the workbook does not contain any worksheets")]
     NoWorksheets,
 
@@ -141,6 +144,10 @@ impl Error {
 
     pub(crate) fn invalid_table(name: impl Into<String>, reason: impl Into<String>) -> Self {
         ErrorKind::InvalidTable { name: name.into(), reason: reason.into() }.into()
+    }
+
+    pub(crate) fn invalid_comments(sheet: impl Into<String>, reason: impl Into<String>) -> Self {
+        ErrorKind::InvalidComments { sheet: sheet.into(), reason: reason.into() }.into()
     }
 
     pub(crate) fn no_worksheets() -> Self {

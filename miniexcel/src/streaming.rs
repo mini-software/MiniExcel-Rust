@@ -1,3 +1,4 @@
+mod comments;
 mod ooxml;
 mod shared_strings;
 
@@ -14,6 +15,30 @@ use crate::reader::{column_names, header_names, row_to_range, to_cell_value, tri
 use crate::{DynamicRow, Error, ReadOptions, Result, StructuredCell, StructuredRow};
 
 use self::ooxml::{StreamingRawRows, StreamingTableRawRows};
+
+pub(crate) fn comments(
+    path: impl AsRef<Path>,
+    sheet_name: Option<&str>,
+) -> Result<crate::SheetComments> {
+    comments::get_comments(path, sheet_name)
+}
+
+pub(crate) fn comments_from_bytes(
+    bytes: &[u8],
+    sheet_name: Option<&str>,
+) -> Result<crate::SheetComments> {
+    comments::get_comments_from_bytes(bytes, sheet_name)
+}
+
+pub(crate) fn comments_from_reader<R>(
+    reader: &mut R,
+    sheet_name: Option<&str>,
+) -> Result<crate::SheetComments>
+where
+    R: Read + Seek,
+{
+    comments::get_comments_from_reader(reader, sheet_name)
+}
 
 enum Headers {
     FirstRow(Vec<Option<String>>),

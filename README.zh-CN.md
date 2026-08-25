@@ -221,6 +221,27 @@ let rows = MiniExcel::query_table("book.xlsx", "SalesTable", Some("Data"))?
 Column name 来自 table metadata；除非 `headerRowCount="0"`，否则会跳过物理 header row；
 返回完整声明 range，包括 totals row。Path query 继续使用既有有界内存两遍 worksheet pipeline。
 
+### Comments 与 Notes
+
+可在不读取 worksheet row 的情况下读取 threaded comment 与 legacy note：
+
+```rust
+let comments = MiniExcel::get_comments("book.xlsx", Some("Data"))?;
+
+for thread in comments.threaded_comments() {
+    println!("{}: {}", thread.cell(), thread.text());
+    for reply in thread.replies() {
+        println!("  {}", reply.text());
+    }
+}
+```
+
+`get_comments_from_bytes()` 与 `get_comments_from_reader()` 为内存和 borrowed source 提供
+相同 metadata。结果包含 typed UUID/cell reference、person、provider/user ID、resolved
+state、local 或 offset timestamp、reply，以及 legacy note author/text。只有 author marker
+为 `tc={thread-id}` 且 cell 同时匹配 threaded root 的 compatibility-shadow note 才会被
+抑制；同 cell 的无关 note 仍保留。Comment metadata 会物化，但不会读取 worksheet row。
+
 ## 类型化读取
 
 ```rust

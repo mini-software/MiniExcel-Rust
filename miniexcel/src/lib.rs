@@ -6,6 +6,7 @@ mod analytics;
 #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
 mod cancellation;
 mod cell;
+mod comments;
 mod error;
 mod facade;
 #[cfg(not(target_arch = "wasm32"))]
@@ -26,6 +27,10 @@ pub use analytics::{
 #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
 pub use cancellation::CancellationToken;
 pub use cell::{CellReference, CellValue, DynamicRow, ExcelRange, StructuredCell, StructuredRow};
+pub use comments::{
+    CommentPerson, CommentTimestamp, NoteComment, SheetComments, ThreadedComment,
+    ThreadedCommentReply,
+};
 pub use error::{Error, Result};
 pub use facade::MiniExcel;
 pub use options::{

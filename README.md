@@ -222,6 +222,28 @@ the first worksheet is searched. Column names come from table metadata, the phys
 skipped unless `headerRowCount="0"`, and the complete declared range is returned, including totals
 rows. Path queries retain the existing bounded-memory two-pass worksheet pipeline.
 
+### Comments And Notes
+
+Read threaded comments and legacy notes without reading worksheet rows:
+
+```rust
+let comments = MiniExcel::get_comments("book.xlsx", Some("Data"))?;
+
+for thread in comments.threaded_comments() {
+    println!("{}: {}", thread.cell(), thread.text());
+    for reply in thread.replies() {
+        println!("  {}", reply.text());
+    }
+}
+```
+
+`get_comments_from_bytes()` and `get_comments_from_reader()` provide the same metadata for
+in-memory and borrowed sources. Results include typed UUIDs and cell references, people, provider
+and user IDs, resolution state, local or offset timestamps, replies, and legacy note authors/text.
+Compatibility-shadow notes are suppressed only when their `tc={thread-id}` author marker and cell
+both match a threaded root; unrelated notes at the same cell remain visible. Comment metadata is
+materialized, while worksheet rows are never read.
+
 ## Typed Reading
 
 ```rust

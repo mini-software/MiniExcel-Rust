@@ -294,6 +294,23 @@ let count = MiniExcel::insert(
 assert_eq!(count, 1);
 ```
 
+Replace an existing worksheet in place while preserving its workbook identity:
+
+```rust
+use miniexcel::ExistingSheetPolicy;
+
+let mut replacement_row = DynamicRow::new();
+replacement_row.insert("Name".to_owned(), CellValue::String("Replaced".to_owned()));
+
+let count = MiniExcel::insert(
+    "book.xlsx",
+    &[replacement_row],
+    &InsertOptions::new()
+        .with_sheet_name("Archive")
+        .with_existing_sheet_policy(ExistingSheetPolicy::Replace),
+)?;
+```
+
 `insert_with_schema()` accepts a fallible, one-pass dynamic iterator. Source rows and generated donor worksheet XML are disk-spooled; row generation, shared-string conversion, style-ID rebasing, and ZIP output are streamed without retaining the complete worksheet XML. `insert_serialized()` accepts Serde structs. Existing unrelated ZIP entries, worksheet identities, formulas, and cached values are preserved, and an existing workbook is replaced only after the rewritten package validates and syncs.
 
 For separate borrowed streams, use `insert_from_reader_to_writer()`,
@@ -411,11 +428,11 @@ Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` f
 - `MiniExcel::query()` and `query_as()` strictly stream worksheet XML from paths.
 - Grouped analytics retain state proportional to distinct groups and stop at `max_groups`.
 - RAG exports never recalculate formulas and reject hidden sheets unless explicitly allowed.
-- Streaming is synchronous and uses one worker thread per active query. Async I/O is not supported.
-- Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends a worksheet to an existing `.xlsx` path or creates a workbook when the path is missing.
+- Streaming queries are synchronous and use one worker thread per active query. The optional async Insert API makes row production asynchronous, not ZIP I/O.
+- Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends or strictly replaces a worksheet in an existing `.xlsx` path, or creates a workbook when the path is missing.
 
 ## Not Supported
 
-CSV, `.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and replacing or otherwise editing existing worksheets are not currently supported.
+CSV, `.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and arbitrary worksheet copying/renaming/reordering are not currently supported.
 
-See the [compatibility matrix](docs/compatibility.md) for the current support scope.
+See the [compatibility matrix](docs/compatibility.md) for the current support scope and the [MiniExcel v1 Insert migration guide](docs/insert-v1-migration.md) for deliberate differences.

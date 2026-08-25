@@ -175,7 +175,8 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | Byte-array query/write for WASM | Implemented | Rust/browser tests |
 | Versioned grouped analytics | Rust research extension | No |
 | Addressed JSONL/Markdown/manifest RAG export | Rust research extension | No |
-| Async APIs, DataReader, stream ownership | Deferred | No |
+| Async Insert producer | Implemented behind optional feature | Rust cancellation tests; not shared internals |
+| DataReader and broader stream ownership | Deferred | No |
 | Append worksheet to existing `.xlsx` workbook | Implemented and atomically committed | Rust tests; shared parity contract not yet extended |
 | Strict worksheet replacement | Implemented for plain targets and supported target-owned closures | Rust tests; stale calcChain removed and full recalculation requested |
 | CSV and legacy formats | Deferred | No |
@@ -185,4 +186,4 @@ This matrix is the coverage claim: Rust does not yet provide complete API parity
 
 ## Deferred Work
 
-SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, advanced template directives and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, async I/O, and streaming from caller-owned readers require separate design and acceptance milestones.
+SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, advanced template directives and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, async query/export/template I/O, and borrowed lazy readers require separate design and acceptance milestones. See the [Insert migration guide](insert-v1-migration.md) for supported workflows and deliberate differences.

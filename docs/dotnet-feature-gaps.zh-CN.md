@@ -8,8 +8,8 @@
 
 | 项目 | 版本基线 |
 | --- | --- |
-| MiniExcel-Rust | `38ce3b220fb3a6ac06dec1026bacc0561d7cc94e`（`0.2.0`） |
-| MiniExcel .NET | `5beb8b6986e93213af0b7ad8f0f1f6351b505d7e`（`2.0.0-preview.4-23-g5beb8b6`） |
+| MiniExcel-Rust | `8a76d1af50c039967875511e2e3ca7c746241e51`（`0.3.0`） |
+| MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 比对依据包括同级目录 `../MiniExcel` 中的 .NET 公开 API、控制实现和聚焦测试，以及 Rust 的公开 `MiniExcel` 门面、选项、集成测试和[兼容性边界](compatibility.zh-CN.md)。
 
@@ -63,12 +63,11 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 
 ## 建议实现顺序
 
-1. **更丰富的写入选项**：增加隐藏工作表、表格/自动筛选、冻结窗格和样式控制，不必改动有界内存读取架构。
-2. **命名表格查询与批注读取**：范围聚焦的 OpenXML 读取功能，容易建立明确 fixture 和公开结果模型。
-3. **调用方提供的 `Read`/`Write` API**：先明确所有权与可 seek 约定，再设计异步包装。
-4. **现有工作簿的工作表操作**：需要审慎设计包重写，并加强损坏防护与原子性测试。
-5. **CSV provider**：应形成独立格式边界，不应在 XLSX parser 内堆叠条件分支。
-6. **高级模板与 Fluent Mapping**：通过独立兼容里程碑增加分组/条件模板、参数化 sheet 和 mapping。
+1. **命名表格查询与批注读取**：范围聚焦的 OpenXML 读取功能，容易建立明确 fixture 和公开结果模型。
+2. **CSV provider**：保持独立格式边界，不在 XLSX parser 内堆叠条件分支。
+3. **Async query/export/template API**：延续 runtime-neutral producer/cancellation 模式，不把 blocking ZIP 工作描述成 async I/O。
+4. **高级模板与 Fluent Mapping**：通过独立兼容里程碑增加分组/条件模板、参数化 sheet 和 mapping。
+5. **剩余 workbook edit**：copy/add、rename、reorder 和独立 visibility mutation 需要各自的 preservation contract。
 
 DataReader/DataTable 属于 .NET 生态抽象，不建议逐字移植。只有出现明确集成需求时，才应设计 Rust 原生的 record-batch 或表格适配器。
 

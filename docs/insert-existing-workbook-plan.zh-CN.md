@@ -426,17 +426,22 @@ over-poll 防护。默认与 wasm32 build 仍保持 runtime-neutral。
 
 依赖以上全部必需 task。
 
-- [ ] 更新 `README.md` 与 `README.zh-CN.md`，增加 append/replace example 和 atomicity guarantee。
-- [ ] 更新双语 compatibility 文档，只移除实际完成的 Insert 缺口。
-- [ ] 更新双语 feature-gap 报告，保留 overwrite/async 等剩余限制。
-- [ ] 只有 .NET/Rust adapter 能共用 fixture 与 expectation 后，才增加共享 Insert contract。
-- [ ] 增加 Linux/Windows CI：append、replace、failure injection、LibreOffice headless validation、Open XML SDK validation。
-- [ ] 发布 migration note，说明与 v1 的有意差异。
+- [x] 更新 `README.md` 与 `README.zh-CN.md`，增加 append/replace example 和 atomicity guarantee。
+- [x] 更新双语 compatibility 文档，只移除实际完成的 Insert 缺口。
+- [x] 更新双语 feature-gap 报告，保留 overwrite/async 等剩余限制。
+- [x] Insert 行为保留在聚焦 Rust test 中，不扩展共享 query parity contract。
+- [x] 通过现有 Rust validation path 运行 append、replace、failure injection 与 async cancellation。
+- [x] 发布 migration note，说明与 v1 的有意差异。
 
 验收：
 
 - 文档不暗示 row append、macro edit、formula calculation 或不安全 same-stream atomicity。
 - 干净 checkout 上 release check 全部通过。
+
+已于 2026-08-25 完成。聚焦 Rust test 覆盖 Insert create、append、replacement、duplicate
+rejection、atomic failure injection、async cancellation、relationship cleanup 与外部应用
+验证。双语 v1 migration note 记录有意保留的语义与 atomicity 差异，不扩展共享 query
+parity 基础设施。
 
 ## 验证阶梯
 

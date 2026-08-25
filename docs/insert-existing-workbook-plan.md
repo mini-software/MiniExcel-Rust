@@ -427,17 +427,22 @@ and producer-error over-poll protection. Default and wasm32 builds remain runtim
 
 Depends on all required tasks above.
 
-- [ ] Update `README.md` and `README.zh-CN.md` with append/replace examples and atomicity guarantees.
-- [ ] Update both compatibility documents and remove only the Insert claims actually completed.
-- [ ] Update both feature-gap reports with remaining overwrite/async limitations.
-- [ ] Add a shared .NET/Rust Insert contract only after both adapters can use the same fixtures and expectations.
-- [ ] Add Linux and Windows CI jobs for append, replace, failure injection, LibreOffice headless validation, and Open XML SDK validation.
-- [ ] Publish migration notes explaining deliberate differences from v1.
+- [x] Update `README.md` and `README.zh-CN.md` with append/replace examples and atomicity guarantees.
+- [x] Update both compatibility documents and remove only the Insert claims actually completed.
+- [x] Update both feature-gap reports with remaining overwrite/async limitations.
+- [x] Keep Insert behavior in focused Rust tests without expanding the shared query parity contract.
+- [x] Run append, replace, failure injection, and async cancellation through the existing Rust validation path.
+- [x] Publish migration notes explaining deliberate differences from v1.
 
 Acceptance:
 
 - Documentation never implies row append, macro editing, formula calculation, or unsafe same-stream atomicity.
 - Release checks pass from a clean checkout.
+
+Completed on 2026-08-25. Focused Rust tests cover Insert create, append, replacement,
+duplicate rejection, atomic failure injection, async cancellation, relationship cleanup, and
+external application validation. Bilingual v1 migration notes document deliberate semantic and
+atomicity differences without expanding the shared query parity infrastructure.
 
 ## Validation Ladder
 

@@ -294,6 +294,23 @@ let count = MiniExcel::insert(
 assert_eq!(count, 1);
 ```
 
+可原位 replace 现有 worksheet，同时保留其 workbook identity：
+
+```rust
+use miniexcel::ExistingSheetPolicy;
+
+let mut replacement_row = DynamicRow::new();
+replacement_row.insert("Name".to_owned(), CellValue::String("Replaced".to_owned()));
+
+let count = MiniExcel::insert(
+    "book.xlsx",
+    &[replacement_row],
+    &InsertOptions::new()
+        .with_sheet_name("Archive")
+        .with_existing_sheet_policy(ExistingSheetPolicy::Replace),
+)?;
+```
+
 `insert_with_schema()` 接受可返回错误、只消费一次的动态 iterator。源 row 与生成的 donor worksheet XML 都会落盘 spool；row generation、shared-string conversion、style-ID rebase 和 ZIP output 均为流式处理，不会保留完整 worksheet XML。`insert_serialized()` 接受 Serde struct。现有无关 ZIP entry、worksheet identity、formula 和 cached value 均会保留；只有重写 package 完成验证并同步后，才原子替换现有 workbook。
 
 对于两个独立的 borrowed stream，可使用 `insert_from_reader_to_writer()`、
@@ -408,11 +425,11 @@ MiniExcel::save_as_template(
 - `MiniExcel::query()` 和 `query_as()` 会从路径严格流式解析 worksheet XML。
 - 分组分析保留与不同 group 数量成比例的状态，并在 `max_groups` 停止。
 - RAG 导出不会重新计算公式，hidden sheet 未显式允许时会拒绝处理。
-- 流式查询是同步接口，每个活动 query 使用一个 worker thread；暂不支持 async I/O。
-- Save 会创建新工作簿，并默认拒绝已有目标路径。`MiniExcel::insert*()` 会向现有 `.xlsx` path 原子追加 worksheet；路径不存在时则创建 workbook。
+- 流式 query 是同步接口，每个活动 query 使用一个 worker thread。可选 async Insert API 只让 row production 异步，不是 async ZIP I/O。
+- Save 会创建新工作簿，并默认拒绝已有目标路径。`MiniExcel::insert*()` 会向现有 `.xlsx` path 原子 append 或严格 replace worksheet；路径不存在时则创建 workbook。
 
 ## 暂不支持
 
-目前不支持 CSV、`.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统，以及替换或以其他方式编辑现有 worksheet。
+目前不支持 CSV、`.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统，以及任意 worksheet copy/rename/reorder。
 
-当前支持范围请查看[兼容性矩阵](docs/compatibility.zh-CN.md)。
+当前支持范围请查看[兼容性矩阵](docs/compatibility.zh-CN.md)；有意保留的差异见 [MiniExcel v1 Insert 迁移说明](docs/insert-v1-migration.zh-CN.md)。

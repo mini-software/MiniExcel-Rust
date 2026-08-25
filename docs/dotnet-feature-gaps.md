@@ -8,8 +8,8 @@ This report compares observable public capabilities in the local checkouts below
 
 | Project | Revision |
 | --- | --- |
-| MiniExcel-Rust | `38ce3b220fb3a6ac06dec1026bacc0561d7cc94e` (`0.2.0`) |
-| MiniExcel .NET | `5beb8b6986e93213af0b7ad8f0f1f6351b505d7e` (`2.0.0-preview.4-23-g5beb8b6`) |
+| MiniExcel-Rust | `8a76d1af50c039967875511e2e3ca7c746241e51` (`0.3.0`) |
+| MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 The comparison uses the .NET public APIs, their controlling implementations, and focused tests under the sibling `../MiniExcel` checkout. Rust status is based on the public `MiniExcel` facade, options, integration tests, and [compatibility boundary](compatibility.md).
 
@@ -63,12 +63,11 @@ The .NET APIs marked with `Async` also have generated synchronous counterparts t
 
 ## Suggested Implementation Order
 
-1. **Richer write options**: add hidden sheets, tables/autofilters, frozen panes, and style controls without changing the bounded-memory read architecture.
-2. **Named-table query and comments**: focused OpenXML read features with clear fixtures and public result models.
-3. **Caller-owned `Read`/`Write` APIs**: establish ownership and seekability contracts before adding async wrappers.
-4. **Existing-workbook sheet operations**: requires a deliberate package-rewrite design and stronger corruption/atomicity tests.
-5. **CSV provider**: should be a separate format boundary rather than conditionals inside the XLSX parser.
-6. **Advanced templates and Fluent Mapping**: add grouped/conditional templates, parametrized sheets, and mapping through separate compatibility milestones.
+1. **Named-table query and comments**: focused OpenXML read features with clear fixtures and public result models.
+2. **CSV provider**: keep a separate format boundary rather than conditionals inside the XLSX parser.
+3. **Async query/export/template APIs**: extend runtime-neutral producer/cancellation patterns without presenting blocking ZIP work as async I/O.
+4. **Advanced templates and Fluent Mapping**: add grouped/conditional templates, parametrized sheets, and mapping through separate compatibility milestones.
+5. **Remaining workbook edits**: copy/add, rename, reorder, and standalone visibility mutation require their own preservation contracts.
 
 DataReader/DataTable are .NET ecosystem abstractions and should not be ported literally. A Rust-native record-batch or tabular adapter is appropriate only when a concrete integration requires it.
 

@@ -1371,6 +1371,111 @@ fn hardening_source_change_during_insert_aborts_before_commit() {
 }
 
 #[test]
+fn external_validation_generates_readable_append_and_replace_packages() {
+    let directory = tempfile::tempdir().unwrap();
+    generate_interop_artifacts(directory.path());
+
+    if let Some(output) = std::env::var_os("MINIEXCEL_INSERT_INTEROP_DIR") {
+        let output = std::path::PathBuf::from(output);
+        std::fs::create_dir_all(&output).unwrap();
+        std::fs::copy(directory.path().join("append.xlsx"), output.join("append.xlsx")).unwrap();
+        std::fs::copy(directory.path().join("replace.xlsx"), output.join("replace.xlsx")).unwrap();
+    }
+}
+
+fn generate_interop_artifacts(directory: &std::path::Path) {
+    let append_path = directory.join("append.xlsx");
+    MiniExcel::insert(
+        &append_path,
+        &[dynamic_insert_row("Current", 1)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+    MiniExcel::insert(
+        &append_path,
+        &[dynamic_insert_row("Archive", 2)],
+        &InsertOptions::new().with_sheet_name("Archive"),
+    )
+    .unwrap();
+
+    let replace_path = directory.join("replace.xlsx");
+    std::fs::copy(&append_path, &replace_path).unwrap();
+    MiniExcel::insert(
+        &replace_path,
+        &[dynamic_insert_row("Replaced", 3)],
+        &InsertOptions::new()
+            .with_sheet_name("Archive")
+            .with_existing_sheet_policy(ExistingSheetPolicy::Replace),
+    )
+    .unwrap();
+
+    assert_eq!(MiniExcel::get_sheet_names(&append_path).unwrap(), ["Current", "Archive"]);
+    assert_eq!(MiniExcel::get_sheet_names(&replace_path).unwrap(), ["Current", "Archive"]);
+    let rows = MiniExcel::query_with_options(
+        &replace_path,
+        &ReadOptions::new().with_sheet_name("Archive").with_header_mode(HeaderMode::FirstRow),
+    )
+    .unwrap()
+    .collect::<miniexcel::Result<Vec<_>>>()
+    .unwrap();
+    assert_eq!(rows[0]["Name"], CellValue::String("Replaced".to_owned()));
+}
+
+#[test]
+#[ignore = "requires LibreOffice; set MINIEXCEL_TEST_SOFFICE when it is not on PATH"]
+fn external_validation_append_and_replace_survive_libreoffice_roundtrip() {
+    let soffice = std::env::var_os("MINIEXCEL_TEST_SOFFICE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("soffice"));
+    let root = tempfile::tempdir().unwrap();
+    let artifacts = root.path().join("artifacts");
+    std::fs::create_dir_all(&artifacts).unwrap();
+    generate_interop_artifacts(&artifacts);
+    let exported = std::env::var_os("MINIEXCEL_INSERT_INTEROP_DIR").map(std::path::PathBuf::from);
+
+    for source in [artifacts.join("append.xlsx"), artifacts.join("replace.xlsx")] {
+        let output =
+            root.path().join(format!("output-{}", source.file_stem().unwrap().to_string_lossy()));
+        let profile =
+            root.path().join(format!("profile-{}", source.file_stem().unwrap().to_string_lossy()));
+        std::fs::create_dir_all(&output).unwrap();
+        std::fs::create_dir_all(&profile).unwrap();
+        let profile_uri = format!(
+            "-env:UserInstallation=file:///{}",
+            profile.to_string_lossy().replace('\\', "/")
+        );
+        let result = std::process::Command::new(&soffice)
+            .args(["--headless", "--nologo", "--nodefault", "--nofirststartwizard"])
+            .arg(profile_uri)
+            .arg("--convert-to")
+            .arg("xlsx:Calc MS Excel 2007 XML")
+            .arg("--outdir")
+            .arg(&output)
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "LibreOffice failed: {}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let converted = output.join(source.file_name().unwrap());
+        assert!(converted.is_file(), "LibreOffice did not create {}", converted.display());
+        assert_eq!(MiniExcel::get_sheet_names(&converted).unwrap(), ["Current", "Archive"]);
+        if let Some(exported) = &exported {
+            std::fs::create_dir_all(exported).unwrap();
+            std::fs::copy(
+                converted,
+                exported
+                    .join(format!("libreoffice-{}", source.file_name().unwrap().to_string_lossy())),
+            )
+            .unwrap();
+        }
+    }
+}
+
+#[test]
 #[ignore = "million-row disk and memory stress; set MINIEXCEL_INSERT_STRESS_ROWS to override"]
 fn hardening_million_row_insert_is_disk_backed() {
     let row_count = std::env::var("MINIEXCEL_INSERT_STRESS_ROWS")

@@ -112,6 +112,11 @@ MiniExcel::visit_rows_from_reader(&mut input, &options, |excel_row, row| {
 
 动态、显式 schema、类型化和多工作表 workbook 可通过 `*_to_writer` API 写入借用的 `Write + Send` sink。库不会关闭 reader 或 writer。调用结束后的 reader position 不保证；writer 从当前位置开始写入且不截断既有内容，因此调用方应提供空或已截断的 sink。
 
+现有 workbook 可通过独立 borrowed stream 的 `insert*_from_reader_to_writer` API 执行
+append 或 replacement。这些 API 要求 `Read + Seek` source 与空的 `Write + Seek`
+destination。调用后两者保持 open，但 output 不具备 atomicity，destination error 后也不会
+rollback。Source 与 destination 不得指向同一个底层 stream。
+
 > **内存边界：** 流式路径会在内存中保留工作簿元数据、样式、少量行 channel 和 parser buffer。默认情况下，至少 5 MiB 的 shared-string table 会 spill 到带索引的临时文件；丢弃 iterator 后自动删除。可通过 `with_shared_string_disk_cache()`、`with_shared_string_cache_size()` 和 `with_shared_string_cache_path()` 配置，目录必须预先存在。Byte/WASM query 始终将 shared string 保留在内存中。Worksheet XML 和先前 row 永远不会保留；峰值内存仍可能随单个超大 row 增长，但不会随 worksheet 总行数增长。
 
 ## 保留结构的流式 Query
@@ -290,6 +295,14 @@ assert_eq!(count, 1);
 ```
 
 `insert_with_schema()` 接受可返回错误、只消费一次的动态 iterator。源 row 会先落盘 spool，constant-memory backend 在生成 donor workbook 时只保留当前 row；style rebase 当前仍会物化生成的 worksheet XML。`insert_serialized()` 接受 Serde struct。现有无关 ZIP entry、worksheet identity、formula 和 cached value 均会保留；只有重写 package 完成验证并同步后，才原子替换现有 workbook。
+
+对于两个独立的 borrowed stream，可使用 `insert_from_reader_to_writer()`、
+`insert_with_schema_from_reader_to_writer()` 或
+`insert_serialized_from_reader_to_writer()`。Source 必须实现 `Read + Seek`，destination
+必须实现 `Write + Seek`，调用后两者都保持 open。Destination 必须为空：MiniExcel 不会
+truncate，也不会在错误后 rollback，因此 destination 写入失败可能留下部分 XLSX package。
+两个 handle 不得指向同一个底层 stream。这些 stream API 保持与 path Insert 相同的 package
+行为，但不提供 path API 的 atomic commit 或写后验证保证。
 
 默认的 `ExistingSheetPolicy::Reject` 会不区分大小写地拒绝重复 worksheet name。使用 `ExistingSheetPolicy::Replace` 可原位替换 worksheet，并保留其 workbook 顺序、ID、relationship/path、visibility 与 active state。默认 `TargetRelationshipPolicy::Reject` 只接受没有 worksheet relationship 的 plain target。`RemoveSupported` 可删除 target-owned table、drawing 及其独占 image、comment、VML drawing 和 external hyperlink；pivot、external link、未知 relationship 与 shared/global part 会被拒绝或保守保留。Insert 写入 XLSX package，拒绝 macro-enabled `.xlsm` path，并拒绝 `WriteOptions::with_overwrite_file(true)`，因为 workbook replacement 由 Insert policy 控制。
 

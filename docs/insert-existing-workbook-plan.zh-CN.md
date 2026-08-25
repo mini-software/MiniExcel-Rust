@@ -102,7 +102,17 @@ impl MiniExcel {
     where
         T: Serialize;
 
-    pub fn insert_from_reader_to_writer<R, W, I>(
+    pub fn insert_from_reader_to_writer<R, W>(
+        source: &mut R,
+        destination: &mut W,
+        rows: &[DynamicRow],
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        R: Read + Seek,
+        W: Write + Seek;
+
+    pub fn insert_with_schema_from_reader_to_writer<R, W, I>(
         source: &mut R,
         destination: &mut W,
         schema: &[String],
@@ -113,6 +123,17 @@ impl MiniExcel {
         R: Read + Seek,
         W: Write + Seek,
         I: IntoIterator<Item = Result<DynamicRow>>;
+
+    pub fn insert_serialized_from_reader_to_writer<T, R, W>(
+        source: &mut R,
+        destination: &mut W,
+        rows: &[T],
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+        R: Read + Seek,
+        W: Write + Seek;
 }
 ```
 
@@ -338,17 +359,22 @@ LibreOffice 26.2.1.2 roundtrip，并在 roundtrip 前后均通过 .NET Open XML 
 
 依赖 Task 9。
 
-- [ ] 为独立 borrowed input/output 实现 `insert_from_reader_to_writer`。
-- [ ] Input 要求 `Read + Seek`，output 要求 `Write + Seek`；两者保持 open。
-- [ ] 不 truncate destination；文档要求调用方提供空 sink。
-- [ ] source、row iterator 和 destination error 原样传播，且不额外消费 row。
-- [ ] 继续不支持 same-stream mutation，因为它无法提供相同 atomicity 契约。
+- [x] 为独立 borrowed input/output 实现 `insert_from_reader_to_writer`。
+- [x] Input 要求 `Read + Seek`，output 要求 `Write + Seek`；两者保持 open。
+- [x] 不 truncate destination；文档要求调用方提供空 sink。
+- [x] source、row iterator 和 destination error 原样传播，且不额外消费 row。
+- [x] 继续不支持 same-stream mutation，因为它无法提供相同 atomicity 契约。
 
 验收：
 
 - 成功和失败后 input 不变、两端仍可使用。
 - Output package inventory 与 path API 一致。
 - 聚焦命令：`cargo +1.85.0 test -p miniexcel --test insert borrowed_io --locked`。
+
+已于 2026-08-25 完成。Dynamic、显式 schema iterator 与 Serde reader-to-writer API
+共用 package preflight 及 append/replace 行为。测试比较 append/replacement output 与 path
+API inventory，证明 source/policy failure 不消费 row、producer error 后立即停止、非空 sink
+保持原样，并在 destination failure 传播后仍保持两个 borrowed object 可继续使用。
 
 ### Task 11：Security、Resource 与 Stress Hardening
 

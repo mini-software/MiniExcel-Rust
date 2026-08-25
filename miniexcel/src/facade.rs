@@ -558,6 +558,95 @@ impl MiniExcel {
         )
     }
 
+    /// Inserts dynamic rows from a borrowed XLSX reader into a separate borrowed writer.
+    ///
+    /// The source and destination remain open. The destination must be empty and is not truncated
+    /// or rolled back on failure. Source and destination must not alias the same underlying stream.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn insert_from_reader_to_writer<R, W>(
+        source: &mut R,
+        destination: &mut W,
+        rows: &[DynamicRow],
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        R: Read + Seek,
+        W: Write + Seek,
+    {
+        validate_existing_insert_options(options)?;
+        crate::insert::rewrite::insert_worksheet_from_reader_to_writer(
+            source,
+            destination,
+            options.write_options().sheet_name(),
+            options.existing_sheet_policy(),
+            options.target_relationship_policy(),
+            || crate::insert::donor::DonorBuilder::from_dynamic(rows, options.write_options()),
+        )
+    }
+
+    /// Inserts a one-pass dynamic row iterator into separate borrowed XLSX streams.
+    ///
+    /// The source and destination remain open. The destination must be empty and is not truncated
+    /// or rolled back on failure. Source rows are consumed once after package preflight succeeds.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn insert_with_schema_from_reader_to_writer<R, W, I>(
+        source: &mut R,
+        destination: &mut W,
+        schema: &[String],
+        rows: I,
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        R: Read + Seek,
+        W: Write + Seek,
+        I: IntoIterator<Item = Result<DynamicRow>>,
+    {
+        validate_existing_insert_options(options)?;
+        validate_schema(schema)?;
+        validate_dimensions(0, schema.len(), options.write_options().print_header())?;
+        crate::insert::rewrite::insert_worksheet_from_reader_to_writer(
+            source,
+            destination,
+            options.write_options().sheet_name(),
+            options.existing_sheet_policy(),
+            options.target_relationship_policy(),
+            || {
+                crate::insert::donor::DonorBuilder::from_dynamic_iter(
+                    schema,
+                    rows,
+                    options.write_options(),
+                )
+            },
+        )
+    }
+
+    /// Inserts Serde-serializable rows into separate borrowed XLSX streams.
+    ///
+    /// The source and destination remain open. The destination must be empty and is not truncated
+    /// or rolled back on failure. Source and destination must not alias the same underlying stream.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn insert_serialized_from_reader_to_writer<T, R, W>(
+        source: &mut R,
+        destination: &mut W,
+        rows: &[T],
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+        R: Read + Seek,
+        W: Write + Seek,
+    {
+        validate_existing_insert_options(options)?;
+        crate::insert::rewrite::insert_worksheet_from_reader_to_writer(
+            source,
+            destination,
+            options.write_options().sheet_name(),
+            options.existing_sheet_policy(),
+            options.target_relationship_policy(),
+            || crate::insert::donor::DonorBuilder::from_serialized(rows, options.write_options()),
+        )
+    }
+
     /// Fills an existing XLSX template and writes a new workbook.
     ///
     /// Supports `{{name}}` scalar placeholders and single-row expansion for array paths such as
@@ -598,6 +687,22 @@ fn validate_insert_options(path: &Path, options: &InsertOptions) -> Result<()> {
             "Insert does not support macro-enabled .xlsm paths",
         ));
     }
+    validate_insert_policies(options)?;
+    if path.exists() {
+        validate_insert_sheet_options(options.write_options())
+    } else {
+        validate_single_sheet_options(options.write_options())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_existing_insert_options(options: &InsertOptions) -> Result<()> {
+    validate_insert_policies(options)?;
+    validate_insert_sheet_options(options.write_options())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_insert_policies(options: &InsertOptions) -> Result<()> {
     if options.write_options().overwrite_file() {
         return Err(crate::Error::invalid_write_options(
             "overwrite_file does not apply to Insert; use ExistingSheetPolicy",
@@ -610,9 +715,5 @@ fn validate_insert_options(path: &Path, options: &InsertOptions) -> Result<()> {
             "target relationship removal requires ExistingSheetPolicy::Replace",
         ));
     }
-    if path.exists() {
-        validate_insert_sheet_options(options.write_options())
-    } else {
-        validate_single_sheet_options(options.write_options())
-    }
+    Ok(())
 }

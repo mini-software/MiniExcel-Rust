@@ -253,6 +253,68 @@ where
     Ok(output.into_inner())
 }
 
+pub(crate) fn insert_worksheet_from_reader_to_writer<R, W, F>(
+    source: &mut R,
+    destination: &mut W,
+    sheet_name: &str,
+    existing_sheet_policy: crate::ExistingSheetPolicy,
+    target_relationship_policy: TargetRelationshipPolicy,
+    donor_builder: F,
+) -> Result<usize>
+where
+    R: Read + Seek,
+    W: Write + Seek,
+    F: FnOnce() -> Result<DonorWorksheet>,
+{
+    if destination.seek(SeekFrom::End(0))? != 0 {
+        return Err(Error::invalid_write_options(
+            "Insert destination must be an empty seekable sink",
+        ));
+    }
+    destination.seek(SeekFrom::Start(0))?;
+
+    source.seek(SeekFrom::Start(0))?;
+    let inventory = PackageInventory::inspect(&mut *source)?;
+    let replacement = match (inventory.find_sheet(sheet_name), existing_sheet_policy) {
+        (None, _) => None,
+        (Some(_), crate::ExistingSheetPolicy::Reject) => {
+            return Err(Error::existing_worksheet(sheet_name));
+        }
+        (Some(_), crate::ExistingSheetPolicy::Replace) => {
+            Some(plan_replacement(&inventory, sheet_name, target_relationship_policy)?)
+        }
+    };
+
+    let donor = donor_builder()?;
+    if donor.sheet_name != sheet_name {
+        return Err(Error::insert_package(format!(
+            "donor worksheet '{}' does not match requested worksheet '{sheet_name}'",
+            donor.sheet_name
+        )));
+    }
+    let row_count = donor.data_row_count;
+
+    source.seek(SeekFrom::Start(0))?;
+    match replacement {
+        Some(plan) => {
+            replace_worksheet_to_writer_with_hook(
+                &mut *source,
+                &mut *destination,
+                &donor,
+                &plan,
+                |_| Ok(()),
+            )?;
+        }
+        None => {
+            append_worksheet_to_writer_with_hook(&mut *source, &mut *destination, &donor, |_| {
+                Ok(())
+            })?;
+        }
+    }
+    destination.flush()?;
+    Ok(row_count)
+}
+
 pub(crate) fn append_worksheet_to_writer<R, W>(
     source: R,
     destination: W,

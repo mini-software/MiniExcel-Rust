@@ -102,7 +102,17 @@ impl MiniExcel {
     where
         T: Serialize;
 
-    pub fn insert_from_reader_to_writer<R, W, I>(
+    pub fn insert_from_reader_to_writer<R, W>(
+        source: &mut R,
+        destination: &mut W,
+        rows: &[DynamicRow],
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        R: Read + Seek,
+        W: Write + Seek;
+
+    pub fn insert_with_schema_from_reader_to_writer<R, W, I>(
         source: &mut R,
         destination: &mut W,
         schema: &[String],
@@ -113,6 +123,17 @@ impl MiniExcel {
         R: Read + Seek,
         W: Write + Seek,
         I: IntoIterator<Item = Result<DynamicRow>>;
+
+    pub fn insert_serialized_from_reader_to_writer<T, R, W>(
+        source: &mut R,
+        destination: &mut W,
+        rows: &[T],
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+        R: Read + Seek,
+        W: Write + Seek;
 }
 ```
 
@@ -338,17 +359,23 @@ the .NET Open XML SDK 3.5.1 before and after the roundtrip.
 
 Depends on Task 9.
 
-- [ ] Implement `insert_from_reader_to_writer` for separate borrowed input/output objects.
-- [ ] Require `Read + Seek` input and `Write + Seek` output; leave both open.
-- [ ] Do not truncate the destination; document that callers must provide an empty sink.
-- [ ] Propagate source, row-iterator, and destination errors without consuming additional rows.
-- [ ] Keep same-stream mutation unsupported because it cannot provide the same atomicity contract.
+- [x] Implement `insert_from_reader_to_writer` for separate borrowed input/output objects.
+- [x] Require `Read + Seek` input and `Write + Seek` output; leave both open.
+- [x] Do not truncate the destination; document that callers must provide an empty sink.
+- [x] Propagate source, row-iterator, and destination errors without consuming additional rows.
+- [x] Keep same-stream mutation unsupported because it cannot provide the same atomicity contract.
 
 Acceptance:
 
 - Input remains unchanged and both objects remain usable after success and failure.
 - Output matches the path API package inventory.
 - Focused command: `cargo +1.85.0 test -p miniexcel --test insert borrowed_io --locked`.
+
+Completed on 2026-08-25. Dynamic, explicit-schema iterator, and Serde reader-to-writer APIs
+share package preflight and append/replace behavior. Tests compare append and replacement output
+with path API inventories, prove source/policy failures consume no rows, stop immediately on
+producer errors, preserve non-empty sinks, and propagate destination failures while leaving both
+borrowed objects usable.
 
 ### Task 11: Security, Resource, And Stress Hardening
 

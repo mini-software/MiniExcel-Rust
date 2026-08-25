@@ -112,6 +112,11 @@ Typed and structured visitors plus sheet names, information, dimensions, and col
 
 Dynamic, explicit-schema, typed, and multi-sheet workbooks can be written to a borrowed `Write + Send` sink with the `*_to_writer` APIs. The library does not close readers or writers. Reader position is unspecified after a call. Writer output begins at the current position and does not truncate existing content, so callers should provide an empty or already-truncated sink.
 
+Existing workbooks can be appended to or replaced through separate borrowed streams with the
+`insert*_from_reader_to_writer` APIs. These require a `Read + Seek` source and an empty
+`Write + Seek` destination. Both remain open, but output is not atomic and is not rolled back after
+a destination error. Source and destination must not alias the same underlying stream.
+
 > **Memory boundary:** the streaming path keeps workbook metadata, styles, a small row channel, and parser buffers in memory. Shared-string tables at least 5 MiB spill to indexed temporary files by default; dropping the iterator removes them. Configure this with `with_shared_string_disk_cache()`, `with_shared_string_cache_size()`, and `with_shared_string_cache_path()`. The directory must already exist. Byte/WASM queries always keep shared strings in memory. Worksheet XML and prior rows are never retained. Peak memory can still grow with a single exceptionally large row, but not with the full worksheet row count.
 
 ## Structured Streaming Query
@@ -290,6 +295,15 @@ assert_eq!(count, 1);
 ```
 
 `insert_with_schema()` accepts a fallible, one-pass dynamic iterator. Source rows are disk-spooled and the constant-memory backend retains only the current row while generating the donor workbook; style rebasing currently materializes the generated worksheet XML. `insert_serialized()` accepts Serde structs. Existing unrelated ZIP entries, worksheet identities, formulas, and cached values are preserved, and an existing workbook is replaced only after the rewritten package validates and syncs.
+
+For separate borrowed streams, use `insert_from_reader_to_writer()`,
+`insert_with_schema_from_reader_to_writer()`, or
+`insert_serialized_from_reader_to_writer()`. The source must implement `Read + Seek`, the
+destination must implement `Write + Seek`, and both remain open. The destination must be empty:
+MiniExcel neither truncates it nor rolls it back after an error, so a destination failure can
+leave a partial XLSX package. The two handles must not alias the same underlying stream. These
+stream APIs preserve the same package behavior as path Insert but do not provide its atomic commit
+or post-write validation guarantee.
 
 The default `ExistingSheetPolicy::Reject` rejects duplicate worksheet names case-insensitively. Use `ExistingSheetPolicy::Replace` to replace a worksheet in place while preserving its workbook order, ID, relationship/path, visibility, and active state. The default `TargetRelationshipPolicy::Reject` accepts only a plain target with no worksheet relationships. `RemoveSupported` can remove target-owned tables, drawings with exclusively owned images, comments, VML drawings, and external hyperlinks; pivots, external links, unknown relationships, and shared/global parts are rejected or preserved conservatively. Insert writes XLSX packages, rejects macro-enabled `.xlsm` paths, and rejects `WriteOptions::with_overwrite_file(true)` because workbook replacement is controlled by the insert policy.
 

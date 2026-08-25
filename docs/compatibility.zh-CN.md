@@ -47,7 +47,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | 动态导出 | `save_as()` / `save_as_with_schema()` | map 序列化在内部实现 |
 | 类型化导出 | `save_as_serialized<T>()` | 内部使用 Serde 映射 |
 | 多工作表导出 | `save_as_sheets()` / `save_as_serialized_sheets()` | 保留输入工作表顺序并返回数据行数 |
-| `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` | 原子 append；严格原位 replacement 保留 sheet identity，并使用显式 relationship policy |
+| `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` / borrowed reader-to-writer variants | Path API 为原子操作；独立 borrowed stream 要求空 sink，并在无原子 commit 的情况下保持相同 package 行为 |
 | 每表 visibility | `WriteOptions::with_sheet_visibility()` | visible、hidden、very hidden；第一个 visible sheet 为 active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | 默认 `false`；已有路径需要显式允许覆盖 |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | 默认冻结一行、零列 |
@@ -114,7 +114,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 
 backend 对所选 worksheet entry 执行两次顺序、有界内存扫描。第一次记录使用范围和紧凑 merged-cell 矩形。这是为了在合法文件省略 `<dimension>` 时保持 MiniExcel 兼容的稳定动态 schema、像 .NET reader 一样保留仅含 style 的 row element，并在不展开地址 map 的情况下支持按需 merged-cell 填充。第二次扫描输出 row，只保留当前活动 merge range 的锚点值。Worksheet XML 和先前 row 永远不会保留；内存主要由内存或磁盘索引的 shared string、style、merge metadata、parser buffer、当前 row 和有界 channel 构成。
 
-内部 writer 组装包含一个或多个工作表的新 ZIP package。路径保存默认拒绝已有文件，也可显式替换。Insert API 通过验证后的 package rewrite 与同目录临时文件原子替换来追加 worksheet；未修改的 ZIP entry 和现有 worksheet identity 会保留。可返回错误的显式 schema producer 只消费一次，经磁盘 spool 与 constant-memory worksheet writer 处理；生成的 donor worksheet XML 会为 style rebase 而物化。模板填充会在复制的 package 中重写 worksheet XML；worksheet 样式和无关 ZIP part 会保留。数组展开会移动 row/cell 地址并更新 worksheet dimension。公式表达式会保留但不会重算；版本 1 不会在插行后调整公式引用、merge range、table、drawing 或 defined name。
+内部 writer 组装包含一个或多个工作表的新 ZIP package。路径保存默认拒绝已有文件，也可显式替换。Path Insert API 通过验证后的 package rewrite 与同目录临时文件原子替换来追加或替换 worksheet；未修改的 ZIP entry 和现有 worksheet identity 会保留。独立 borrowed Insert API 接受 `Read + Seek` input 与空的 `Write + Seek` output，调用后两者保持 open，并在不提供 atomic commit、rollback 或写后验证的情况下保持相同 package 行为。可返回错误的显式 schema producer 只消费一次，经磁盘 spool 与 constant-memory worksheet writer 处理；生成的 donor worksheet XML 会为 style rebase 而物化。模板填充会在复制的 package 中重写 worksheet XML；worksheet 样式和无关 ZIP part 会保留。数组展开会移动 row/cell 地址并更新 worksheet dimension。公式表达式会保留但不会重算；版本 1 不会在插行后调整公式引用、merge range、table、drawing 或 defined name。
 
 ## 测试来源
 

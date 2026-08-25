@@ -1,6 +1,6 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
 
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
@@ -219,6 +219,64 @@ struct PackageInventory {
     active_tab: usize,
     defined_names: Vec<DefinedName>,
     styles: StyleCounts,
+}
+
+struct FailOnceWriter {
+    inner: Cursor<Vec<u8>>,
+    fail_next_write: bool,
+}
+
+struct FailOnceReader {
+    inner: Cursor<Vec<u8>>,
+    fail_next_read: bool,
+}
+
+impl FailOnceReader {
+    fn new(bytes: Vec<u8>) -> Self {
+        Self { inner: Cursor::new(bytes), fail_next_read: true }
+    }
+}
+
+impl Read for FailOnceReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if self.fail_next_read {
+            self.fail_next_read = false;
+            return Err(std::io::Error::other("source failed"));
+        }
+        self.inner.read(buffer)
+    }
+}
+
+impl Seek for FailOnceReader {
+    fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(position)
+    }
+}
+
+impl FailOnceWriter {
+    fn new() -> Self {
+        Self { inner: Cursor::new(Vec::new()), fail_next_write: true }
+    }
+}
+
+impl Write for FailOnceWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if self.fail_next_write {
+            self.fail_next_write = false;
+            return Err(std::io::Error::other("destination failed"));
+        }
+        self.inner.write(buffer)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl Seek for FailOnceWriter {
+    fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(position)
+    }
 }
 
 #[test]
@@ -834,6 +892,203 @@ fn write_options_matrix_hundred_insert_stress_has_unique_ids_and_bounded_growth(
     if let Some(output) = std::env::var_os("MINIEXCEL_TEST_INSERT_OUTPUT") {
         std::fs::write(output, bytes).unwrap();
     }
+}
+
+#[test]
+fn borrowed_io_append_and_replace_match_path_inventory_and_leave_handles_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let source_path = directory.path().join("source.xlsx");
+    MiniExcel::insert(
+        &source_path,
+        &[dynamic_insert_row("Current", 1)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+    let source_bytes = std::fs::read(&source_path).unwrap();
+
+    let append_options = InsertOptions::new().with_sheet_name("Archive");
+    let append_rows = [dynamic_insert_row("Archive", 2)];
+    let path_append = directory.path().join("path-append.xlsx");
+    std::fs::write(&path_append, &source_bytes).unwrap();
+    MiniExcel::insert(&path_append, &append_rows, &append_options).unwrap();
+
+    let mut source = Cursor::new(source_bytes.clone());
+    let mut destination = Cursor::new(Vec::new());
+    assert_eq!(
+        MiniExcel::insert_from_reader_to_writer(
+            &mut source,
+            &mut destination,
+            &append_rows,
+            &append_options,
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(source.get_ref(), &source_bytes);
+    source.seek(SeekFrom::Start(0)).unwrap();
+    destination.seek(SeekFrom::End(0)).unwrap();
+    destination.write_all(&[]).unwrap();
+    assert_eq!(
+        package_inventory(destination.get_ref()),
+        package_inventory(&std::fs::read(path_append).unwrap())
+    );
+
+    let replacement = [PublicInsertRelease { name: "Replaced".to_owned(), version: 3 }];
+    let replace_options = InsertOptions::new()
+        .with_sheet_name("Current")
+        .with_existing_sheet_policy(ExistingSheetPolicy::Replace);
+    let path_replace = directory.path().join("path-replace.xlsx");
+    std::fs::write(&path_replace, &source_bytes).unwrap();
+    MiniExcel::insert_serialized(&path_replace, &replacement, &replace_options).unwrap();
+
+    let mut source = Cursor::new(source_bytes.clone());
+    let mut destination = Cursor::new(Vec::new());
+    assert_eq!(
+        MiniExcel::insert_serialized_from_reader_to_writer(
+            &mut source,
+            &mut destination,
+            &replacement,
+            &replace_options,
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(source.get_ref(), &source_bytes);
+    assert_eq!(
+        package_inventory(destination.get_ref()),
+        package_inventory(&std::fs::read(path_replace).unwrap())
+    );
+}
+
+#[test]
+fn borrowed_io_preflight_and_producer_failures_do_not_overconsume_or_write() {
+    let schema = ["Name".to_owned(), "Version".to_owned()];
+    let complex = complex_fixture();
+    let calls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&calls);
+    let rows = std::iter::once_with(move || {
+        observed.set(observed.get() + 1);
+        Ok(dynamic_insert_row("Never read", 1))
+    });
+    let mut source = Cursor::new(complex.clone());
+    let mut destination = Cursor::new(Vec::new());
+    let options = InsertOptions::new()
+        .with_sheet_name("Data")
+        .with_existing_sheet_policy(ExistingSheetPolicy::Replace);
+    assert!(
+        MiniExcel::insert_with_schema_from_reader_to_writer(
+            &mut source,
+            &mut destination,
+            &schema,
+            rows,
+            &options,
+        )
+        .is_err()
+    );
+    assert_eq!(calls.get(), 0);
+    assert!(destination.get_ref().is_empty());
+    assert_eq!(source.get_ref(), &complex);
+    source.seek(SeekFrom::Start(0)).unwrap();
+    destination.seek(SeekFrom::Start(0)).unwrap();
+
+    let calls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&calls);
+    let rows = std::iter::once_with(move || {
+        observed.set(observed.get() + 1);
+        Ok(dynamic_insert_row("Never read", 1))
+    });
+    let mut source = FailOnceReader::new(complex.clone());
+    let mut destination = Cursor::new(Vec::new());
+    let error = MiniExcel::insert_with_schema_from_reader_to_writer(
+        &mut source,
+        &mut destination,
+        &schema,
+        rows,
+        &InsertOptions::new().with_sheet_name("Archive 2"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("source failed"));
+    assert_eq!(calls.get(), 0);
+    assert!(destination.get_ref().is_empty());
+    source.seek(SeekFrom::Start(0)).unwrap();
+    let mut signature = [0; 2];
+    source.read_exact(&mut signature).unwrap();
+    assert_eq!(&signature, b"PK");
+
+    let simple = MiniExcel::save_as_bytes(
+        &[dynamic_insert_row("Current", 1)],
+        &WriteOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&calls);
+    let rows = std::iter::from_fn(move || {
+        let call = observed.get() + 1;
+        observed.set(call);
+        match call {
+            1 => Some(Ok(dynamic_insert_row("Before error", 1))),
+            2 => Some(Err(std::io::Error::other("producer failed").into())),
+            _ => panic!("iterator consumed after producer error"),
+        }
+    });
+    let mut source = Cursor::new(simple.clone());
+    let mut destination = Cursor::new(Vec::new());
+    let error = MiniExcel::insert_with_schema_from_reader_to_writer(
+        &mut source,
+        &mut destination,
+        &schema,
+        rows,
+        &InsertOptions::new().with_sheet_name("Broken"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("producer failed"));
+    assert_eq!(calls.get(), 2);
+    assert!(destination.get_ref().is_empty());
+    assert_eq!(source.get_ref(), &simple);
+}
+
+#[test]
+fn borrowed_io_rejects_nonempty_sink_and_propagates_destination_errors() {
+    let source_bytes = MiniExcel::save_as_bytes(
+        &[dynamic_insert_row("Current", 1)],
+        &WriteOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+    let schema = ["Name".to_owned(), "Version".to_owned()];
+    let calls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&calls);
+    let rows = std::iter::once_with(move || {
+        observed.set(observed.get() + 1);
+        Ok(dynamic_insert_row("Never read", 1))
+    });
+    let mut source = Cursor::new(source_bytes.clone());
+    let mut destination = Cursor::new(b"preserve me".to_vec());
+    let error = MiniExcel::insert_with_schema_from_reader_to_writer(
+        &mut source,
+        &mut destination,
+        &schema,
+        rows,
+        &InsertOptions::new().with_sheet_name("Archive"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("empty seekable sink"));
+    assert_eq!(calls.get(), 0);
+    assert_eq!(destination.get_ref(), b"preserve me");
+    assert_eq!(source.get_ref(), &source_bytes);
+
+    let mut source = Cursor::new(source_bytes.clone());
+    let mut destination = FailOnceWriter::new();
+    let error = MiniExcel::insert_from_reader_to_writer(
+        &mut source,
+        &mut destination,
+        &[dynamic_insert_row("Archive", 2)],
+        &InsertOptions::new().with_sheet_name("Archive"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("destination failed"));
+    assert_eq!(source.get_ref(), &source_bytes);
+    destination.seek(SeekFrom::Start(0)).unwrap();
+    destination.write_all(b"usable").unwrap();
 }
 
 #[test]

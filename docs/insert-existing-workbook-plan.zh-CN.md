@@ -380,18 +380,26 @@ API inventory，证明 source/policy failure 不消费 row、producer error 后�
 
 依赖 Task 10。
 
-- [ ] 为 control XML 和 entry count 增加 ZIP-bomb limit。
-- [ ] 拒绝 path traversal、重复 normalized target、relationship cycle、超大 XML attribute 和 unsupported strict-namespace package，并给出明确 error。
-- [ ] 检测 path rewrite 期间 source 变化，并在 commit 前 abort。
-- [ ] 用显式 schema iterator 测量一百万 inserted rows 的 peak working set。
-- [ ] 验证 RAM 不随 row count 增长，除当前 row、schema、style map、ZIP directory 和 bounded buffer 外。
-- [ ] 对同一路径并发 insert，保证一次成功或确定性 conflict，且文件不损坏。
+- [x] 为 control XML 和 entry count 增加 ZIP-bomb limit。
+- [x] 拒绝 path traversal、重复 normalized target、relationship cycle、超大 XML attribute 和 unsupported strict-namespace package，并给出明确 error。
+- [x] 检测 path rewrite 期间 source 变化，并在 commit 前 abort。
+- [x] 用显式 schema iterator 测量一百万 inserted rows 的 peak working set。
+- [x] 验证 RAM 不随 row count 增长，除当前 row、schema、style map、ZIP directory 和 bounded buffer 外。
+- [x] 对同一路径并发 insert，保证一次成功或确定性 conflict，且文件不损坏。
 
 验收：
 
 - Security fixture 在 commit 前失败。
 - Stress test 满足文档化 disk/RAM 边界。
 - 聚焦命令：`cargo +1.85.0 test -p miniexcel --test insert hardening --locked`。
+
+已于 2026-08-25 完成。Preflight 限制为 65,535 个 package entry、单个 control part
+16 MiB、累计 control XML 64 MiB、XML attribute 64 KiB、depth 256，以及 262,144 个
+relationship。Path Insert 使用 advisory lock，并在 commit 前校验 SHA-256 source
+fingerprint。Release-mode 一百万行测试耗时 282.91 秒，peak working set 为 7.13 MiB，
+peak temporary storage 为 258.98 MiB，XLSX output 为 9.58 MiB；10,000 行 baseline 为
+6.65 MiB，证明 worksheet memory 不随 row count 增长。LibreOffice 26.2.1.2 已成功
+roundtrip 流式 style-rebase output。
 
 ### Task 12：可选 Async Producer Feature
 

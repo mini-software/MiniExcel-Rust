@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::io::{BufRead, BufReader, Cursor, Read, Write};
 
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -14,18 +15,30 @@ const MAX_FILLS: usize = 256;
 const MAX_BORDERS: usize = 256;
 const MAX_CELL_STYLES: usize = 65_490;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct StyleRebaseResult {
     pub(crate) styles_xml: Vec<u8>,
-    pub(crate) worksheet_xml: Vec<u8>,
+    worksheet_xml: tempfile::NamedTempFile,
     pub(crate) cell_xf_map: Vec<u32>,
+}
+
+impl StyleRebaseResult {
+    pub(crate) fn worksheet_reader(&self) -> Result<BufReader<std::fs::File>> {
+        Ok(BufReader::new(self.worksheet_xml.reopen()?))
+    }
+
+    pub(crate) fn worksheet_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        self.worksheet_reader()?.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    }
 }
 
 pub(crate) fn rebase_styles(
     target_styles_xml: &[u8],
     donor: &DonorWorksheet,
 ) -> Result<StyleRebaseResult> {
-    rebase_style_xml(target_styles_xml, &donor.styles.xml, &donor.worksheet_xml)
+    rebase_style_reader(target_styles_xml, &donor.styles.xml, donor.worksheet_reader()?)
 }
 
 fn rebase_style_xml(
@@ -33,6 +46,17 @@ fn rebase_style_xml(
     donor_styles_xml: &[u8],
     donor_worksheet_xml: &[u8],
 ) -> Result<StyleRebaseResult> {
+    rebase_style_reader(target_styles_xml, donor_styles_xml, Cursor::new(donor_worksheet_xml))
+}
+
+fn rebase_style_reader<R>(
+    target_styles_xml: &[u8],
+    donor_styles_xml: &[u8],
+    donor_worksheet_xml: R,
+) -> Result<StyleRebaseResult>
+where
+    R: BufRead,
+{
     let target = StyleDocument::parse(target_styles_xml)?;
     let donor = StyleDocument::parse(donor_styles_xml)?;
 
@@ -98,7 +122,9 @@ fn rebase_style_xml(
         (StyleSection::CellXfs, appended_cell_xfs),
     ]);
     let styles_xml = target.render(&appended)?;
-    let worksheet_xml = rewrite_worksheet_styles(donor_worksheet_xml, &cell_xf_map)?;
+    let mut worksheet_xml = tempfile::NamedTempFile::new()?;
+    rewrite_worksheet_styles(donor_worksheet_xml, worksheet_xml.as_file_mut(), &cell_xf_map)?;
+    worksheet_xml.as_file_mut().flush()?;
     Ok(StyleRebaseResult { styles_xml, worksheet_xml, cell_xf_map })
 }
 
@@ -565,15 +591,20 @@ fn validate_limits(
     Ok(())
 }
 
-fn rewrite_worksheet_styles(xml: &[u8], mapping: &[u32]) -> Result<Vec<u8>> {
+fn rewrite_worksheet_styles<R, W>(xml: R, output: W, mapping: &[u32]) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
     let default_style = *mapping
         .first()
         .ok_or_else(|| Error::insert_package("donor styles contain no cell XFs"))?;
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
-    let mut writer = Writer::new(Vec::with_capacity(xml.len()));
+    let mut writer = Writer::new(output);
+    let mut buffer = Vec::new();
     loop {
-        let event = reader.read_event().map_err(|error| {
+        let event = reader.read_event_into(&mut buffer).map_err(|error| {
             Error::insert_package(format!("invalid donor worksheet XML: {error}"))
         })?;
         match event {
@@ -592,8 +623,9 @@ fn rewrite_worksheet_styles(xml: &[u8], mapping: &[u32]) -> Result<Vec<u8>> {
             Event::Eof => break,
             event => write_event(&mut writer, event)?,
         }
+        buffer.clear();
     }
-    Ok(writer.into_inner())
+    Ok(())
 }
 
 fn rewrite_cell_style(
@@ -722,7 +754,10 @@ fn serialize_events(events: &[Event<'_>]) -> Result<Vec<u8>> {
     Ok(writer.into_inner())
 }
 
-fn write_event(writer: &mut Writer<Vec<u8>>, event: Event<'_>) -> Result<()> {
+fn write_event<W>(writer: &mut Writer<W>, event: Event<'_>) -> Result<()>
+where
+    W: Write,
+{
     writer
         .write_event(event)
         .map_err(|error| Error::insert_package(format!("cannot write style XML: {error}")))
@@ -788,7 +823,7 @@ mod tests {
         assert!(number_format_ids(&rebased.styles_xml).iter().any(|id| *id > 200));
         let merged_cell_xfs = merged.nodes(StyleSection::CellXfs).unwrap();
         assert!(
-            worksheet_style_ids(&rebased.worksheet_xml)
+            worksheet_style_ids(&rebased.worksheet_bytes().unwrap())
                 .iter()
                 .all(|id| (*id as usize) < merged_cell_xfs.len())
         );
@@ -798,18 +833,7 @@ mod tests {
     fn style_rebase_is_stable_and_deduplicates_exact_components() {
         let (donor, _) = formatted_donor();
         let first = rebase_styles(target_styles().as_bytes(), &donor).unwrap();
-        let donor_again = DonorWorksheet {
-            sheet_name: donor.sheet_name.clone(),
-            visibility: donor.visibility,
-            worksheet_xml: donor.worksheet_xml.clone(),
-            data_row_count: donor.data_row_count,
-            styles: super::super::donor::DonorStyleModel {
-                xml: donor.styles.xml.clone(),
-                ..donor.styles.clone()
-            },
-            local_defined_names: donor.local_defined_names.clone(),
-        };
-        let second = rebase_styles(&first.styles_xml, &donor_again).unwrap();
+        let second = rebase_styles(&first.styles_xml, &donor).unwrap();
         assert_eq!(first.styles_xml, second.styles_xml);
         assert_eq!(first.cell_xf_map, second.cell_xf_map);
     }
@@ -818,8 +842,11 @@ mod tests {
     fn rebased_styles_roundtrip_date_time_duration_and_custom_formats() {
         let (donor, donor_package) = formatted_donor();
         let rebased = rebase_styles(target_styles().as_bytes(), &donor).unwrap();
-        let package =
-            replace_donor_parts(&donor_package, &rebased.styles_xml, &rebased.worksheet_xml);
+        let package = replace_donor_parts(
+            &donor_package,
+            &rebased.styles_xml,
+            &rebased.worksheet_bytes().unwrap(),
+        );
         let mut rows = Vec::new();
         MiniExcel::visit_structured_rows_from_reader(
             &mut Cursor::new(package),
@@ -840,7 +867,7 @@ mod tests {
         let custom_package = replace_donor_parts(
             &custom_package,
             &custom_rebased.styles_xml,
-            &custom_rebased.worksheet_xml,
+            &custom_rebased.worksheet_bytes().unwrap(),
         );
         let mut custom_rows = Vec::new();
         MiniExcel::visit_structured_rows_from_reader(
@@ -887,8 +914,11 @@ mod tests {
 
         let (donor, donor_package) = formatted_donor();
         let rebased = rebase_styles(target_styles().as_bytes(), &donor).unwrap();
-        let dynamic_package =
-            replace_donor_parts(&donor_package, &rebased.styles_xml, &rebased.worksheet_xml);
+        let dynamic_package = replace_donor_parts(
+            &donor_package,
+            &rebased.styles_xml,
+            &rebased.worksheet_bytes().unwrap(),
+        );
         let dynamic_package = libreoffice_roundtrip(&soffice, &dynamic_package, "dynamic");
         let dynamic_rows = structured_rows(&dynamic_package);
         assert_eq!(normalized_format(&dynamic_rows[1].cells()[0]), Some("yyyy-mm-dd".to_owned()));
@@ -900,7 +930,7 @@ mod tests {
         let custom_package = replace_donor_parts(
             &custom_package,
             &custom_rebased.styles_xml,
-            &custom_rebased.worksheet_xml,
+            &custom_rebased.worksheet_bytes().unwrap(),
         );
         let custom_package = libreoffice_roundtrip(&soffice, &custom_package, "custom");
         let custom_rows = structured_rows(&custom_package);
@@ -921,7 +951,12 @@ mod tests {
         writer.add_rows(&[row], &options).unwrap();
         let package = writer.save_to_bytes().unwrap();
         let extracted = extract_donor(package.clone(), 1, SheetVisibility::Visible).unwrap();
-        assert_eq!(donor, extracted);
+        assert_eq!(donor.sheet_name, extracted.sheet_name);
+        assert_eq!(donor.visibility, extracted.visibility);
+        assert_eq!(donor.data_row_count, extracted.data_row_count);
+        assert_eq!(donor.styles, extracted.styles);
+        assert_eq!(donor.local_defined_names, extracted.local_defined_names);
+        assert_eq!(donor.worksheet_bytes(), extracted.worksheet_bytes());
         (donor, package)
     }
 

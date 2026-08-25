@@ -29,11 +29,11 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | --- | --- | --- |
 | Named tables | Missing | Query an OpenXML table by table name (`QueryTable`), including table-specific headers and bounds. |
 | DataReader and DataTable | Missing | `IDataReader`/async reader access, schema tables, typed getters, `NextResult` sheet traversal, and `DataTable` materialization. |
-| Caller-owned streams | Partial | Borrowed synchronous dynamic/typed/structured visitors, metadata reads, and dynamic/schema/typed/multi-sheet writers are implemented with leave-open semantics. Borrowed lazy iterators, async streams, and template streams remain unsupported. |
+| Caller-owned streams | Partial | Borrowed synchronous dynamic/typed/structured visitors, metadata reads, dynamic/schema/typed/multi-sheet writers, and separate reader-to-writer Insert are implemented with leave-open semantics. Borrowed lazy iterators, async streams, and template streams remain unsupported. |
 | Async and cancellation | Missing | Async query/export/template operations, async row sources, cancellation tokens, and progress callbacks. Rust iterators are synchronous even though path reads use a worker thread. |
 | General save inputs | Partial | Export from general objects/enumerables, dictionaries, `DataTable`, `IDataReader`, and async enumerables, with progress. Rust accepts dynamic or same-type Serde slices and reports per-sheet row counts. |
 | Multi-sheet export | Partial | Rust creates ordered visible, hidden, and very-hidden worksheets, but does not yet accept heterogeneous Serde row types in one call. |
-| Existing-workbook operations | Missing | Insert or replace a sheet, copy and add a sheet, and rename, reorder, or change visibility of sheets. Rust always creates a new XLSX package. |
+| Existing-workbook operations | Partial | Rust appends or strictly replaces worksheets through atomic path APIs or separate borrowed streams, preserving unrelated package parts and worksheet identity. Copy-and-add, rename, reorder, and standalone visibility mutation remain unsupported. |
 | Templates | Partial | Rust fills path/byte templates with scalar values and single-row arrays while preserving package parts. Streams, grouping, conditions, parametrized sheets, `$=` formulas, formula-reference updates, and calculation-chain handling remain unsupported. |
 | Pictures and merge processing | Missing | Add anchored pictures and merge adjacent identical cells through the templater surface. Structured reads do not provide authoring parity. |
 | CSV | Missing | Dynamic/typed CSV query and save, append, columns, DataReader/DataTable, delimiter/newline/encoding/quoting configuration, and CSV/XLSX conversion. |
@@ -52,7 +52,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Public read/write boundary | `miniexcel/src/facade.rs`, `miniexcel/src/options.rs` | `src/MiniExcel.OpenXml/Api/OpenXmlImporter.cs`, `OpenXmlExporter.cs` |
 | Tables | No public table API | `OpenXmlImporter.QueryTableAsync`; `tests/MiniExcel.OpenXml.Tests/Tables/` |
 | DataReader/DataTable | No public tabular adapter | `OpenXmlImporter.GetDataReader`, `GetAsyncDataReader`, `QueryAsDataTableAsync`; `tests/MiniExcel.OpenXml.Tests/DataReader/` |
-| Multi-sheet and workbook edits | Writer creates multiple sheets in a new workbook; existing-workbook edits remain unsupported | `OpenXmlExporter.InsertSheetAsync`, `CopyAndAddSheetAsync`, `AlterSheetAsync`; `tests/MiniExcel.OpenXml.Tests/MultipleSheets/` and `AlterSheets/` |
+| Multi-sheet and workbook edits | Writer creates multiple sheets; existing workbooks support append and strict replacement with package preservation and bounded explicit-schema producers | `OpenXmlExporter.InsertSheetAsync`, `CopyAndAddSheetAsync`, `AlterSheetAsync`; `tests/MiniExcel.OpenXml.Tests/MultipleSheets/` and `AlterSheets/` |
 | Templates/pictures/merges | Basic template fill implemented; advanced directives and authoring remain deferred | `src/MiniExcel.OpenXml/Api/OpenXmlTemplater.cs`; `tests/MiniExcel.OpenXml.Tests/Templates/` |
 | CSV/conversion | XLSX-only core | `src/MiniExcel.Csv/Api/`; `src/MiniExcel/MiniExcelConverter.cs`; `tests/MiniExcel.Csv.Tests/` |
 | Mapping | Serde mapping only | `src/MiniExcel.Core/Attributes/MiniExcelColumnAttribute.cs`; `src/MiniExcel.OpenXml.FluentMapping/`; mapping tests |

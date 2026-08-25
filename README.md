@@ -294,7 +294,7 @@ let count = MiniExcel::insert(
 assert_eq!(count, 1);
 ```
 
-`insert_with_schema()` accepts a fallible, one-pass dynamic iterator. Source rows are disk-spooled and the constant-memory backend retains only the current row while generating the donor workbook; style rebasing currently materializes the generated worksheet XML. `insert_serialized()` accepts Serde structs. Existing unrelated ZIP entries, worksheet identities, formulas, and cached values are preserved, and an existing workbook is replaced only after the rewritten package validates and syncs.
+`insert_with_schema()` accepts a fallible, one-pass dynamic iterator. Source rows and generated donor worksheet XML are disk-spooled; row generation, shared-string conversion, style-ID rebasing, and ZIP output are streamed without retaining the complete worksheet XML. `insert_serialized()` accepts Serde structs. Existing unrelated ZIP entries, worksheet identities, formulas, and cached values are preserved, and an existing workbook is replaced only after the rewritten package validates and syncs.
 
 For separate borrowed streams, use `insert_from_reader_to_writer()`,
 `insert_with_schema_from_reader_to_writer()`, or
@@ -306,6 +306,13 @@ stream APIs preserve the same package behavior as path Insert but do not provide
 or post-write validation guarantee.
 
 The default `ExistingSheetPolicy::Reject` rejects duplicate worksheet names case-insensitively. Use `ExistingSheetPolicy::Replace` to replace a worksheet in place while preserving its workbook order, ID, relationship/path, visibility, and active state. The default `TargetRelationshipPolicy::Reject` accepts only a plain target with no worksheet relationships. `RemoveSupported` can remove target-owned tables, drawings with exclusively owned images, comments, VML drawings, and external hyperlinks; pivots, external links, unknown relationships, and shared/global parts are rejected or preserved conservatively. Insert writes XLSX packages, rejects macro-enabled `.xlsm` paths, and rejects `WriteOptions::with_overwrite_file(true)` because workbook replacement is controlled by the insert policy.
+
+Insert preflight limits package entry count, individual and aggregate control XML, XML attribute
+size, XML depth, and relationship count. It rejects unsafe or aliased part paths, internal
+relationship cycles, duplicate semantic relationship targets, and Strict OOXML packages. Path
+Insert holds a cross-process advisory lock and verifies a source SHA-256 fingerprint before commit;
+concurrent writers or external source changes return a deterministic conflict instead of silently
+overwriting newer content.
 
 Appending a formula-free worksheet preserves an existing calculation chain and workbook calculation properties. Replacement removes the complete stale `calcChain` part, relationship, and content-type override, then sets `fullCalcOnLoad` and `forceFullCalc` so Excel recalculates on the next open. MiniExcel does not evaluate or rewrite formulas; formulas and cached values in untouched worksheets remain byte-identical.
 

@@ -29,11 +29,11 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 | --- | --- | --- |
 | 命名表格 | 未实现 | 按表格名称查询 OpenXML Table（`QueryTable`），并遵循表格自身的表头与范围。 |
 | DataReader 与 DataTable | 未实现 | `IDataReader`/异步 reader、架构表、强类型 getter、通过 `NextResult` 遍历工作表，以及物化为 `DataTable`。 |
-| 调用方提供的流 | 部分实现 | 已实现借用的同步动态/类型化/structured visitor、metadata 读取，以及动态/schema/类型化/多表 writer，并保持 leave-open。借用 lazy iterator、async stream 和 template stream 仍不支持。 |
+| 调用方提供的流 | 部分实现 | 已实现借用的同步动态/类型化/structured visitor、metadata 读取、动态/schema/类型化/多表 writer，以及独立 reader-to-writer Insert，并保持 leave-open。借用 lazy iterator、async stream 和 template stream 仍不支持。 |
 | 异步与取消 | 未实现 | 异步查询/导出/模板操作、异步行源、取消令牌和进度回调。Rust 路径读取虽使用工作线程，对外迭代器仍是同步的。 |
 | 通用保存输入 | 部分实现 | 从普通对象/可枚举对象、字典、`DataTable`、`IDataReader` 和异步枚举导出，并报告进度。Rust 接受动态行或同类型 Serde 切片，并返回每张工作表的行数。 |
 | 多工作表导出 | 部分实现 | Rust 可按输入顺序创建 visible、hidden 和 very-hidden 工作表，但尚不能在一次调用中接受异构 Serde 行类型。 |
-| 修改现有工作簿 | 未实现 | 插入或替换工作表、复制并新增工作表，以及重命名、重排或修改工作表可见性。Rust 始终创建新的 XLSX 包。 |
+| 修改现有工作簿 | 部分实现 | Rust 可通过原子 path API 或独立 borrowed stream append 或严格 replace worksheet，并保留无关 package part 与 worksheet identity。复制新增、重命名、重排和独立 visibility 修改仍不支持。 |
 | 模板 | 部分实现 | Rust 可使用标量和单 row 数组填充 path/byte 模板并保留 package part。stream、分组、条件、参数化 sheet、`$=` 公式、公式引用调整和 calculation chain 处理仍不支持。 |
 | 图片与合并处理 | 未实现 | 添加锚定图片，以及通过模板 API 合并相邻相同单元格。结构化读取不等于具备写入能力。 |
 | CSV | 未实现 | CSV 动态/强类型查询与保存、追加、列发现、DataReader/DataTable、分隔符/换行/编码/引号配置，以及 CSV/XLSX 转换。 |
@@ -52,7 +52,7 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 | 公开读写边界 | `miniexcel/src/facade.rs`、`miniexcel/src/options.rs` | `src/MiniExcel.OpenXml/Api/OpenXmlImporter.cs`、`OpenXmlExporter.cs` |
 | 表格 | 无公开表格 API | `OpenXmlImporter.QueryTableAsync`；`tests/MiniExcel.OpenXml.Tests/Tables/` |
 | DataReader/DataTable | 无公开表格适配器 | `OpenXmlImporter.GetDataReader`、`GetAsyncDataReader`、`QueryAsDataTableAsync`；`tests/MiniExcel.OpenXml.Tests/DataReader/` |
-| 多工作表与工作簿修改 | Writer 可在新工作簿中创建多个工作表；仍不支持编辑现有工作簿 | `OpenXmlExporter.InsertSheetAsync`、`CopyAndAddSheetAsync`、`AlterSheetAsync`；`MultipleSheets/` 与 `AlterSheets/` 测试 |
+| 多工作表与工作簿修改 | Writer 可创建多个工作表；现有 workbook 支持 append 与严格 replacement，并保留 package，显式 schema producer 采用有界资源处理 | `OpenXmlExporter.InsertSheetAsync`、`CopyAndAddSheetAsync`、`AlterSheetAsync`；`MultipleSheets/` 与 `AlterSheets/` 测试 |
 | 模板/图片/合并 | 已实现基础模板填充；高级指令与 authoring 仍延期 | `src/MiniExcel.OpenXml/Api/OpenXmlTemplater.cs`；`tests/MiniExcel.OpenXml.Tests/Templates/` |
 | CSV/转换 | 核心仅支持 XLSX | `src/MiniExcel.Csv/Api/`；`src/MiniExcel/MiniExcelConverter.cs`；`tests/MiniExcel.Csv.Tests/` |
 | 映射 | 仅 Serde 映射 | `src/MiniExcel.Core/Attributes/MiniExcelColumnAttribute.cs`；`src/MiniExcel.OpenXml.FluentMapping/`；映射测试 |

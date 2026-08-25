@@ -109,6 +109,7 @@ impl XlsxWriter {
         Ok(self.workbook.save_to_buffer()?)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn save_insert_donor_to_bytes(&mut self) -> Result<Vec<u8>> {
         self.validate_workbook(false)?;
         Ok(self.workbook.save_to_buffer()?)

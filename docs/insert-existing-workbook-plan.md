@@ -381,18 +381,26 @@ borrowed objects usable.
 
 Depends on Task 10.
 
-- [ ] Add ZIP-bomb limits for control XML and entry counts.
-- [ ] Reject path traversal, duplicate normalized targets, relationship cycles, oversized XML attributes, and unsupported strict-namespace packages with clear errors.
-- [ ] Detect source changes during a path rewrite and abort before commit.
-- [ ] Measure peak working set for one million inserted rows using the explicit-schema iterator.
-- [ ] Verify memory is independent of row count apart from one row, schema, style maps, ZIP directory, and bounded buffers.
-- [ ] Run concurrent inserts against the same path and guarantee one success or deterministic conflict without corruption.
+- [x] Add ZIP-bomb limits for control XML and entry counts.
+- [x] Reject path traversal, duplicate normalized targets, relationship cycles, oversized XML attributes, and unsupported strict-namespace packages with clear errors.
+- [x] Detect source changes during a path rewrite and abort before commit.
+- [x] Measure peak working set for one million inserted rows using the explicit-schema iterator.
+- [x] Verify memory is independent of row count apart from one row, schema, style maps, ZIP directory, and bounded buffers.
+- [x] Run concurrent inserts against the same path and guarantee one success or deterministic conflict without corruption.
 
 Acceptance:
 
 - Security fixtures fail before commit.
 - Stress test completes within documented disk and memory bounds.
 - Focused command: `cargo +1.85.0 test -p miniexcel --test insert hardening --locked`.
+
+Completed on 2026-08-25. Preflight limits packages to 65,535 entries, 16 MiB per control
+part, 64 MiB aggregate control XML, 64 KiB XML attributes, depth 256, and 262,144
+relationships. Path Insert uses an advisory lock plus a SHA-256 source fingerprint before commit.
+The release-mode one-million-row test completed in 282.91 seconds with 7.13 MiB peak working set,
+258.98 MiB peak temporary storage, and a 9.58 MiB XLSX output; the 10,000-row baseline used
+6.65 MiB, demonstrating that worksheet memory did not scale with row count. LibreOffice 26.2.1.2
+successfully round-tripped the streamed style-rebase output.
 
 ### Task 12: Optional Async Producer Feature
 

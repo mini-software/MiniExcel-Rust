@@ -1,4 +1,4 @@
-use std::io::{Cursor, Read};
+use std::io::{BufReader, Cursor, Read, Seek, Write};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
@@ -29,14 +29,27 @@ pub(crate) struct DonorStyleModel {
     pub(crate) differential_formats: usize,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct DonorWorksheet {
     pub(crate) sheet_name: String,
     pub(crate) visibility: SheetVisibility,
-    pub(crate) worksheet_xml: Vec<u8>,
+    worksheet_xml: tempfile::NamedTempFile,
     pub(crate) data_row_count: usize,
     pub(crate) styles: DonorStyleModel,
     pub(crate) local_defined_names: Vec<DefinedName>,
+}
+
+impl DonorWorksheet {
+    pub(crate) fn worksheet_reader(&self) -> Result<BufReader<std::fs::File>> {
+        Ok(BufReader::new(self.worksheet_xml.reopen()?))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn worksheet_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.worksheet_reader().unwrap().read_to_end(&mut bytes).unwrap();
+        bytes
+    }
 }
 
 pub(crate) struct DonorBuilder;
@@ -214,7 +227,6 @@ where
     source.rewind()?;
     let mut archive = ZipArchive::new(source)
         .map_err(|error| Error::insert_package(format!("cannot open donor workbook: {error}")))?;
-    let worksheet_xml = read_part(&mut archive, &worksheet_path)?;
     let styles = parse_style_model(read_part(&mut archive, STYLES_PATH)?)?;
     let shared_strings = match archive.by_name(SHARED_STRINGS_PATH) {
         Ok(mut entry) => {
@@ -229,7 +241,21 @@ where
             )));
         }
     };
-    let worksheet_xml = inline_shared_strings(&worksheet_xml, &shared_strings)?;
+    let mut worksheet_xml = tempfile::NamedTempFile::new()?;
+    let mut worksheet_entry = archive.by_name(&worksheet_path).map_err(|error| {
+        Error::insert_package(format!("cannot read donor part '{worksheet_path}': {error}"))
+    })?;
+    if shared_strings.is_empty() {
+        std::io::copy(&mut worksheet_entry, worksheet_xml.as_file_mut())?;
+    } else {
+        inline_shared_strings(
+            BufReader::new(&mut worksheet_entry),
+            worksheet_xml.as_file_mut(),
+            &shared_strings,
+        )?;
+    }
+    worksheet_xml.as_file_mut().flush()?;
+    worksheet_xml.as_file_mut().rewind()?;
 
     Ok(DonorWorksheet {
         sheet_name,
@@ -332,12 +358,21 @@ fn parse_shared_strings(xml: &[u8]) -> Result<Vec<Vec<Event<'static>>>> {
     Ok(strings)
 }
 
-fn inline_shared_strings(xml: &[u8], shared_strings: &[Vec<Event<'static>>]) -> Result<Vec<u8>> {
+fn inline_shared_strings<R, W>(
+    xml: R,
+    output: W,
+    shared_strings: &[Vec<Event<'static>>],
+) -> Result<()>
+where
+    R: std::io::BufRead,
+    W: Write,
+{
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
-    let mut writer = Writer::new(Vec::with_capacity(xml.len()));
+    let mut writer = Writer::new(output);
+    let mut buffer = Vec::new();
     loop {
-        let event = reader.read_event().map_err(|error| {
+        let event = reader.read_event_into(&mut buffer).map_err(|error| {
             Error::insert_package(format!("invalid donor worksheet XML: {error}"))
         })?;
         match event {
@@ -345,7 +380,8 @@ fn inline_shared_strings(xml: &[u8], shared_strings: &[Vec<Event<'static>>]) -> 
                 let mut cell = vec![Event::Start(start.into_owned())];
                 let mut depth = 1;
                 while depth > 0 {
-                    let event = reader.read_event().map_err(|error| {
+                    buffer.clear();
+                    let event = reader.read_event_into(&mut buffer).map_err(|error| {
                         Error::insert_package(format!("invalid donor cell XML: {error}"))
                     })?;
                     match &event {
@@ -363,15 +399,19 @@ fn inline_shared_strings(xml: &[u8], shared_strings: &[Vec<Event<'static>>]) -> 
             Event::Eof => break,
             event => write_event(&mut writer, event)?,
         }
+        buffer.clear();
     }
-    Ok(writer.into_inner())
+    Ok(())
 }
 
-fn write_cell(
-    writer: &mut Writer<Vec<u8>>,
+fn write_cell<W>(
+    writer: &mut Writer<W>,
     events: &[Event<'static>],
     shared_strings: &[Vec<Event<'static>>],
-) -> Result<()> {
+) -> Result<()>
+where
+    W: Write,
+{
     let Event::Start(start) = &events[0] else {
         return Err(Error::insert_package("donor cell has no start event"));
     };
@@ -472,7 +512,10 @@ fn attribute(event: &BytesStart<'_>, key: &[u8]) -> Result<Option<String>> {
     Ok(None)
 }
 
-fn write_event(writer: &mut Writer<Vec<u8>>, event: Event<'_>) -> Result<()> {
+fn write_event<W>(writer: &mut Writer<W>, event: Event<'_>) -> Result<()>
+where
+    W: Write,
+{
     writer.write_event(event).map_err(|error| {
         Error::insert_package(format!("cannot write donor worksheet XML: {error}"))
     })
@@ -508,7 +551,7 @@ mod tests {
             .with_right_to_left(true)
             .with_freeze_row_count(2);
         let donor = DonorBuilder::from_dynamic(&rows, &options).unwrap();
-        let xml = String::from_utf8(donor.worksheet_xml).unwrap();
+        let xml = String::from_utf8(donor.worksheet_bytes()).unwrap();
 
         assert_eq!(donor.data_row_count, 2);
         assert!(xml.contains("t=\"inlineStr\""));
@@ -528,7 +571,7 @@ mod tests {
         let schema = vec!["Name".to_owned(), "Version".to_owned()];
         let header_only =
             DonorBuilder::from_dynamic_with_schema(&schema, &[], &WriteOptions::new()).unwrap();
-        let xml = String::from_utf8(header_only.worksheet_xml).unwrap();
+        let xml = String::from_utf8(header_only.worksheet_bytes()).unwrap();
         assert_eq!(header_only.data_row_count, 0);
         assert!(xml.contains(">Name</t>"));
         assert!(xml.contains("<autoFilter ref=\"A1:B1\""));
@@ -539,7 +582,7 @@ mod tests {
             &WriteOptions::new().with_print_header(false),
         )
         .unwrap();
-        let xml = String::from_utf8(empty.worksheet_xml).unwrap();
+        let xml = String::from_utf8(empty.worksheet_bytes()).unwrap();
         assert_eq!(empty.data_row_count, 0);
         assert!(!xml.contains("<row"));
         assert!(empty.local_defined_names.is_empty());
@@ -549,7 +592,7 @@ mod tests {
     fn donor_sheet_supports_serde_rows() {
         let rows = [Release { name: "MiniExcel".to_owned(), version: 2 }];
         let donor = DonorBuilder::from_serialized(&rows, &WriteOptions::new()).unwrap();
-        let xml = String::from_utf8(donor.worksheet_xml).unwrap();
+        let xml = String::from_utf8(donor.worksheet_bytes()).unwrap();
         assert_eq!(donor.data_row_count, 1);
         assert!(xml.contains(">name</t>"));
         assert!(xml.contains(">MiniExcel</t>"));
@@ -562,7 +605,9 @@ mod tests {
         let shared =
             parse_shared_strings(br#"<sst><si><t xml:space="preserve"> label </t></si></sst>"#)
                 .unwrap();
-        let output = String::from_utf8(inline_shared_strings(xml, &shared).unwrap()).unwrap();
+        let mut output = Vec::new();
+        inline_shared_strings(xml.as_slice(), &mut output, &shared).unwrap();
+        let output = String::from_utf8(output).unwrap();
         assert!(output.contains("<f>SUM(A2:A3)</f><v>3</v>"));
         assert!(output.contains("r=\"B1\" s=\"2\" t=\"inlineStr\""));
         assert!(output.contains("<is><t xml:space=\"preserve\"> label </t></is>"));

@@ -1,9 +1,12 @@
 use std::collections::BTreeSet;
-use std::fs::{self, File};
-use std::io::{Seek, Write};
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, Write};
 use std::path::Path;
 #[cfg(windows)]
-use std::path::PathBuf;
+use std::path::PathBuf as WindowsPathBuf;
+
+use fs2::FileExt;
+use sha2::{Digest, Sha256};
 
 use super::donor::DonorWorksheet;
 use super::package::PackageInventory;
@@ -24,6 +27,62 @@ enum AtomicCommitStage {
     ZipFinish,
     Validation,
     Commit,
+}
+
+struct PathInsertGuard {
+    file: File,
+}
+
+impl PathInsertGuard {
+    fn acquire(path: &Path) -> Result<Self> {
+        let canonical = fs::canonicalize(path)?;
+        let digest = Sha256::digest(canonical.to_string_lossy().as_bytes());
+        let directory = std::env::temp_dir().join("miniexcel-insert-locks");
+        fs::create_dir_all(&directory)?;
+        let lock_path = directory.join(format!("{digest:x}.lock"));
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)?;
+        file.try_lock_exclusive().map_err(|error| {
+            Error::atomic_commit(format!(
+                "concurrent Insert conflict for '{}': {error}",
+                path.display()
+            ))
+        })?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for PathInsertGuard {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
+#[derive(Eq, PartialEq)]
+struct SourceFingerprint {
+    length: u64,
+    sha256: [u8; 32],
+}
+
+impl SourceFingerprint {
+    fn read(path: &Path) -> Result<Self> {
+        let mut file = File::open(path)?;
+        let length = file.metadata()?.len();
+        let mut hasher = Sha256::new();
+        let mut buffer = [0; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+        Ok(Self { length, sha256: hasher.finalize().into() })
+    }
 }
 
 pub(crate) fn append_to_path<F>(
@@ -102,6 +161,8 @@ where
     H: FnMut(AtomicCommitStage) -> Result<()>,
 {
     checkpoint(AtomicCommitStage::Preflight)?;
+    let _guard = PathInsertGuard::acquire(path)?;
+    let source_fingerprint = SourceFingerprint::read(path)?;
     let source_metadata = fs::metadata(path)?;
     let mut source = File::open(path)?;
     let inventory = PackageInventory::inspect(&mut source)?;
@@ -160,6 +221,12 @@ where
     validate_rewritten_package(temporary.reopen()?, &donor.sheet_name)?;
 
     checkpoint(AtomicCommitStage::Commit)?;
+    if SourceFingerprint::read(path)? != source_fingerprint {
+        return Err(Error::atomic_commit(format!(
+            "source workbook '{}' changed during Insert",
+            path.display()
+        )));
+    }
     replace_temporary(temporary, path, source_metadata.permissions())?;
     Ok(row_count)
 }
@@ -355,13 +422,13 @@ fn replace_temporary(
 
 #[cfg(windows)]
 struct StagedFileCleanup {
-    path: PathBuf,
+    path: WindowsPathBuf,
     active: bool,
 }
 
 #[cfg(windows)]
 impl StagedFileCleanup {
-    fn new(path: PathBuf) -> Self {
+    fn new(path: WindowsPathBuf) -> Self {
         Self { path, active: true }
     }
 
@@ -500,6 +567,45 @@ mod tests {
     }
 
     #[test]
+    fn source_change_before_commit_aborts_without_overwriting_external_content() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("book.xlsx");
+        fs::write(&path, source_package()).unwrap();
+        let external = source_package_with_marker();
+        let replacement = external.clone();
+
+        let error = append_to_path_with_hook(
+            &path,
+            "Inserted",
+            || donor("Inserted", 1),
+            |stage| {
+                if stage == AtomicCommitStage::Commit {
+                    fs::write(&path, &replacement)?;
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("changed during Insert"));
+        assert_eq!(fs::read(&path).unwrap(), external);
+        assert_no_temporary_files(directory.path());
+    }
+
+    #[test]
+    fn concurrent_path_insert_is_rejected_while_lock_is_held() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("book.xlsx");
+        fs::write(&path, source_package()).unwrap();
+        let _guard = PathInsertGuard::acquire(&path).unwrap();
+
+        let error = append_to_path(&path, "Inserted", || donor("Inserted", 1)).unwrap_err();
+        assert!(error.to_string().contains("concurrent Insert conflict"));
+        let inventory = PackageInventory::inspect(File::open(&path).unwrap()).unwrap();
+        assert_eq!(inventory.sheets.len(), 1);
+    }
+
+    #[test]
     fn malformed_source_and_row_generation_errors_leave_no_temporary_files() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("book.xlsx");
@@ -589,6 +695,14 @@ mod tests {
             .add_rows(&[row("Existing", 1)], &WriteOptions::new().with_sheet_name("Data"))
             .unwrap();
         writer.save_to_bytes().unwrap()
+    }
+
+    fn source_package_with_marker() -> Vec<u8> {
+        mutate_package(
+            &source_package(),
+            Some(r#"<Override PartName="/custom/marker.xml" ContentType="application/xml"/>"#),
+            &[("custom/marker.xml", b"external")],
+        )
     }
 
     fn mutate_package(

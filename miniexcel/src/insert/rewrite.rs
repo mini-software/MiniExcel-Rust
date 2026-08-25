@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom, Write};
 
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
@@ -353,6 +353,7 @@ where
     let styles_xml = read_part(&mut archive, &styles_path)?;
 
     let style_rebase = rebase_styles(&styles_xml, donor)?;
+    let mut worksheet_reader = style_rebase.worksheet_reader()?;
     let workbook_xml = append_workbook(
         &workbook_xml,
         &donor.sheet_name,
@@ -391,7 +392,8 @@ where
         destination,
         &replacements,
         &BTreeSet::new(),
-        Some((&allocation.package_path, style_rebase.worksheet_xml.as_slice())),
+        None,
+        Some((&allocation.package_path, &mut worksheet_reader)),
         &mut checkpoint,
     )
 }
@@ -416,9 +418,19 @@ where
     let workbook_rels_xml = read_part(&mut archive, WORKBOOK_RELS_PATH)?;
     let content_types_xml = read_part(&mut archive, CONTENT_TYPES_PATH)?;
     let styles_xml = read_part(&mut archive, &plan.styles_path)?;
-    let target_worksheet_xml = read_part(&mut archive, &plan.target.target)?;
+    let target_tab_selected = {
+        let target = archive.by_name(&plan.target.target).map_err(|error| {
+            Error::insert_package(format!(
+                "cannot read source part '{}': {error}",
+                plan.target.target
+            ))
+        })?;
+        first_sheet_view_attribute(BufReader::new(target), b"tabSelected")?
+    };
     let style_rebase = rebase_styles(&styles_xml, donor)?;
-    let worksheet_xml = preserve_tab_selected(&style_rebase.worksheet_xml, &target_worksheet_xml)?;
+    let worksheet_xml =
+        preserve_tab_selected(style_rebase.worksheet_reader()?, target_tab_selected.as_deref())?;
+    let mut worksheet_reader = BufReader::new(worksheet_xml.reopen()?);
     let patched_workbook =
         force_full_calculation(&replace_target_filter_defined_name(&workbook_xml, plan, donor)?)?;
     let patched_workbook_rels =
@@ -426,10 +438,7 @@ where
     let patched_content_types =
         remove_content_type_overrides(&content_types_xml, &plan.removed_entries)?;
 
-    let mut replacements = BTreeMap::from([
-        (plan.styles_path.clone(), style_rebase.styles_xml),
-        (plan.target.target.clone(), worksheet_xml),
-    ]);
+    let mut replacements = BTreeMap::from([(plan.styles_path.clone(), style_rebase.styles_xml)]);
     if patched_workbook != workbook_xml {
         replacements.insert(WORKBOOK_PATH.to_owned(), patched_workbook);
     }
@@ -439,7 +448,15 @@ where
     if patched_content_types != content_types_xml {
         replacements.insert(CONTENT_TYPES_PATH.to_owned(), patched_content_types);
     }
-    write_package(archive, destination, &replacements, &plan.removed_entries, None, &mut checkpoint)
+    write_package(
+        archive,
+        destination,
+        &replacements,
+        &plan.removed_entries,
+        Some((&plan.target.target, &mut worksheet_reader)),
+        None,
+        &mut checkpoint,
+    )
 }
 
 fn is_calculation_chain_relationship(relationship_type: &str) -> bool {
@@ -467,48 +484,55 @@ fn replacement_relationship_kind(relationship_type: &str) -> Option<ReplacementR
     }
 }
 
-fn preserve_tab_selected(donor_xml: &[u8], target_xml: &[u8]) -> Result<Vec<u8>> {
-    let target_value = first_sheet_view_attribute(target_xml, b"tabSelected")?;
+fn preserve_tab_selected<R>(
+    donor_xml: R,
+    target_value: Option<&str>,
+) -> Result<tempfile::NamedTempFile>
+where
+    R: BufRead,
+{
     let mut reader = Reader::from_reader(donor_xml);
     reader.config_mut().trim_text(false);
-    let mut writer = Writer::new(Vec::with_capacity(donor_xml.len()));
+    let mut output = tempfile::NamedTempFile::new()?;
+    let mut writer = Writer::new(output.as_file_mut());
+    let mut buffer = Vec::new();
     loop {
-        let event = reader.read_event().map_err(|error| {
+        let event = reader.read_event_into(&mut buffer).map_err(|error| {
             Error::insert_package(format!("invalid donor worksheet XML: {error}"))
         })?;
         match event {
             Event::Start(start) if local_name(start.name().as_ref()) == b"sheetView" => {
                 write_event(
                     &mut writer,
-                    Event::Start(replace_optional_attribute(
-                        &start,
-                        b"tabSelected",
-                        target_value.as_deref(),
-                    )?),
+                    Event::Start(replace_optional_attribute(&start, b"tabSelected", target_value)?),
                 )?;
             }
             Event::Empty(empty) if local_name(empty.name().as_ref()) == b"sheetView" => {
                 write_event(
                     &mut writer,
-                    Event::Empty(replace_optional_attribute(
-                        &empty,
-                        b"tabSelected",
-                        target_value.as_deref(),
-                    )?),
+                    Event::Empty(replace_optional_attribute(&empty, b"tabSelected", target_value)?),
                 )?;
             }
             Event::Eof => break,
             event => write_event(&mut writer, event)?,
         }
+        buffer.clear();
     }
-    Ok(writer.into_inner())
+    drop(writer);
+    output.as_file_mut().flush()?;
+    output.as_file_mut().rewind()?;
+    Ok(output)
 }
 
-fn first_sheet_view_attribute(xml: &[u8], attribute_name: &[u8]) -> Result<Option<String>> {
+fn first_sheet_view_attribute<R>(xml: R, attribute_name: &[u8]) -> Result<Option<String>>
+where
+    R: BufRead,
+{
     let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
     loop {
         match reader
-            .read_event()
+            .read_event_into(&mut buffer)
             .map_err(|error| Error::insert_package(format!("invalid worksheet XML: {error}")))?
         {
             Event::Start(start) | Event::Empty(start)
@@ -519,6 +543,7 @@ fn first_sheet_view_attribute(xml: &[u8], attribute_name: &[u8]) -> Result<Optio
             Event::Eof => return Ok(None),
             _ => {}
         }
+        buffer.clear();
     }
 }
 
@@ -1371,7 +1396,8 @@ fn write_package<R, W, F>(
     destination: W,
     replacements: &BTreeMap<String, Vec<u8>>,
     removed_entries: &BTreeSet<String>,
-    new_entry: Option<(&str, &[u8])>,
+    mut streamed_replacement: Option<(&str, &mut dyn Read)>,
+    new_entry: Option<(&str, &mut dyn Read)>,
     checkpoint: &mut F,
 ) -> Result<W>
 where
@@ -1394,7 +1420,17 @@ where
         if removed_entries.contains(&name) {
             continue;
         }
-        if let Some(replacement) = replacements.get(&name) {
+        if streamed_replacement
+            .as_ref()
+            .is_some_and(|(replacement_path, _)| *replacement_path == name)
+        {
+            let (_, replacement) = streamed_replacement.as_mut().expect("stream replacement");
+            let options = entry.options();
+            writer.start_file(&name, options).map_err(|error| {
+                Error::insert_package(format!("cannot replace ZIP entry '{name}': {error}"))
+            })?;
+            std::io::copy(*replacement, &mut writer)?;
+        } else if let Some(replacement) = replacements.get(&name) {
             let options = entry.options();
             writer.start_file(&name, options).map_err(|error| {
                 Error::insert_package(format!("cannot replace ZIP entry '{name}': {error}"))
@@ -1418,7 +1454,7 @@ where
                     "cannot create worksheet '{worksheet_path}': {error}"
                 ))
             })?;
-        writer.write_all(worksheet_xml)?;
+        std::io::copy(worksheet_xml, &mut writer)?;
     }
     checkpoint(PackageRewriteStage::Finish)?;
     writer
@@ -1426,7 +1462,10 @@ where
         .map_err(|error| Error::insert_package(format!("cannot finish rewritten package: {error}")))
 }
 
-fn write_event(writer: &mut Writer<Vec<u8>>, event: Event<'_>) -> Result<()> {
+fn write_event<W>(writer: &mut Writer<W>, event: Event<'_>) -> Result<()>
+where
+    W: Write,
+{
     writer.write_event(event).map_err(|error| {
         Error::insert_package(format!("cannot write package control XML: {error}"))
     })

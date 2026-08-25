@@ -11,6 +11,32 @@ use crate::{Error, Result, SheetVisibility};
 const CONTENT_TYPES_PATH: &str = "[Content_Types].xml";
 const WORKBOOK_PATH: &str = "xl/workbook.xml";
 const WORKBOOK_RELS_PATH: &str = "xl/_rels/workbook.xml.rels";
+const MAX_PACKAGE_ENTRIES: usize = 65_535;
+const MAX_CONTROL_PART_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_TOTAL_CONTROL_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_XML_ATTRIBUTE_BYTES: usize = 64 * 1024;
+const MAX_XML_DEPTH: usize = 256;
+const MAX_RELATIONSHIPS: usize = 262_144;
+
+#[derive(Default)]
+struct ControlXmlBudget {
+    bytes: u64,
+}
+
+impl ControlXmlBudget {
+    fn consume(&mut self, bytes: u64) -> Result<()> {
+        self.bytes = self
+            .bytes
+            .checked_add(bytes)
+            .ok_or_else(|| Error::unsafe_package("control XML aggregate size overflow"))?;
+        if self.bytes > MAX_TOTAL_CONTROL_BYTES {
+            return Err(Error::unsafe_package(format!(
+                "control XML aggregate size exceeds limit {MAX_TOTAL_CONTROL_BYTES}"
+            )));
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ContentTypeDefault {
@@ -91,6 +117,12 @@ impl PackageInventory {
         let central_directory_start = {
             let archive = ZipArchive::new(&mut reader)
                 .map_err(|error| Error::insert_package(format!("cannot open XLSX ZIP: {error}")))?;
+            if archive.len() > MAX_PACKAGE_ENTRIES {
+                return Err(Error::unsafe_package(format!(
+                    "ZIP entry count {} exceeds limit {MAX_PACKAGE_ENTRIES}",
+                    archive.len()
+                )));
+            }
             archive.central_directory_start()
         };
         let raw_entry_count = inspect_central_directory(&mut reader, central_directory_start)?;
@@ -102,8 +134,12 @@ impl PackageInventory {
             ));
         }
         let entry_names = inspect_entries(&mut archive)?;
-        let content_types =
-            parse_content_types(&read_control_part(&mut archive, CONTENT_TYPES_PATH)?)?;
+        let mut control_budget = ControlXmlBudget::default();
+        let content_types = parse_content_types(&read_control_part(
+            &mut archive,
+            CONTENT_TYPES_PATH,
+            &mut control_budget,
+        )?)?;
         validate_content_type_uniqueness(&content_types)?;
         reject_unsupported_content_types(&content_types)?;
 
@@ -112,13 +148,21 @@ impl PackageInventory {
             entry_names.iter().filter(|name| name.ends_with(".rels")).cloned().collect::<Vec<_>>();
         for path in relationship_paths {
             let source = relationship_source(&path)?;
-            let xml = read_control_part(&mut archive, &path)?;
+            let xml = read_control_part(&mut archive, &path, &mut control_budget)?;
             relationships.extend(parse_relationships(source.as_deref(), &xml)?);
+            if relationships.len() > MAX_RELATIONSHIPS {
+                return Err(Error::unsafe_package(format!(
+                    "relationship count {} exceeds limit {MAX_RELATIONSHIPS}",
+                    relationships.len()
+                )));
+            }
         }
         reject_unsupported_relationships(&relationships)?;
         validate_relationship_id_uniqueness(&relationships)?;
+        validate_relationship_target_uniqueness(&relationships)?;
+        validate_relationship_cycles(&relationships)?;
 
-        let workbook_xml = read_control_part(&mut archive, WORKBOOK_PATH)?;
+        let workbook_xml = read_control_part(&mut archive, WORKBOOK_PATH, &mut control_budget)?;
         let (sheet_elements, views, defined_names) = parse_workbook(&workbook_xml)?;
         let workbook_relationships = relationships
             .iter()
@@ -259,6 +303,11 @@ where
         let comment_length = u16::from_le_bytes([header[28], header[29]]) as i64;
         reader.seek(SeekFrom::Current(name_length + extra_length + comment_length))?;
         count += 1;
+        if count > MAX_PACKAGE_ENTRIES {
+            return Err(Error::unsafe_package(format!(
+                "ZIP entry count exceeds limit {MAX_PACKAGE_ENTRIES}"
+            )));
+        }
     }
     Ok(count)
 }
@@ -291,7 +340,7 @@ where
         if !names.insert(name.clone()) {
             return Err(Error::unsafe_package(format!("duplicate ZIP entry '{name}'")));
         }
-        let normalized = name.to_lowercase();
+        let normalized = canonical_part_identity(&name)?;
         if !normalized_names.insert(normalized) {
             return Err(Error::unsafe_package(format!(
                 "ZIP entry '{name}' collides case-insensitively"
@@ -315,6 +364,7 @@ fn validate_entry_name(name: &str) -> Result<String> {
     if name.is_empty()
         || name.starts_with('/')
         || name.contains('\\')
+        || name.contains(['?', '#'])
         || name.split('/').any(|segment| segment.is_empty() || matches!(segment, "." | ".."))
         || name.as_bytes().get(1) == Some(&b':')
     {
@@ -323,20 +373,89 @@ fn validate_entry_name(name: &str) -> Result<String> {
     Ok(name.to_owned())
 }
 
-fn read_control_part<R>(archive: &mut ZipArchive<R>, path: &str) -> Result<Vec<u8>>
+fn read_control_part<R>(
+    archive: &mut ZipArchive<R>,
+    path: &str,
+    budget: &mut ControlXmlBudget,
+) -> Result<Vec<u8>>
 where
     R: Read + Seek,
 {
-    let mut file = archive
+    let file = archive
         .by_name(path)
         .map_err(|error| Error::insert_package(format!("cannot read '{path}': {error}")))?;
-    const MAX_CONTROL_PART_BYTES: u64 = 16 * 1024 * 1024;
     if file.size() > MAX_CONTROL_PART_BYTES {
         return Err(Error::unsafe_package(format!("control part '{path}' is too large")));
     }
     let mut bytes = Vec::with_capacity(file.size() as usize);
-    file.read_to_end(&mut bytes)?;
+    file.take(MAX_CONTROL_PART_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_CONTROL_PART_BYTES {
+        return Err(Error::unsafe_package(format!("control part '{path}' is too large")));
+    }
+    budget.consume(bytes.len() as u64)?;
+    validate_control_xml(&bytes, path)?;
     Ok(bytes)
+}
+
+fn validate_control_xml(xml: &[u8], path: &str) -> Result<()> {
+    const STRICT_NAMESPACE_PREFIX: &str = "http://purl.oclc.org/ooxml/";
+    let mut reader = Reader::from_reader(xml);
+    let mut depth = 0_usize;
+    loop {
+        match reader.read_event().map_err(|error| {
+            Error::insert_package(format!("invalid control XML '{path}': {error}"))
+        })? {
+            Event::Start(event) => {
+                depth += 1;
+                if depth > MAX_XML_DEPTH {
+                    return Err(Error::unsafe_package(format!(
+                        "control part '{path}' exceeds XML depth limit {MAX_XML_DEPTH}"
+                    )));
+                }
+                validate_control_attributes(&event, path, STRICT_NAMESPACE_PREFIX)?;
+            }
+            Event::Empty(event) => {
+                validate_control_attributes(&event, path, STRICT_NAMESPACE_PREFIX)?;
+            }
+            Event::End(_) => depth = depth.saturating_sub(1),
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_control_attributes(
+    event: &BytesStart<'_>,
+    path: &str,
+    strict_namespace_prefix: &str,
+) -> Result<()> {
+    for attribute in event.attributes().with_checks(true) {
+        let attribute = attribute.map_err(|error| {
+            Error::insert_package(format!(
+                "invalid XML attribute in control part '{path}': {error}"
+            ))
+        })?;
+        if attribute.value.len() > MAX_XML_ATTRIBUTE_BYTES {
+            return Err(Error::unsafe_package(format!(
+                "control part '{path}' contains an oversized XML attribute"
+            )));
+        }
+        let value = attribute.decode_and_unescape_value(event.decoder()).map_err(|error| {
+            Error::insert_package(format!("invalid XML value in control part '{path}': {error}"))
+        })?;
+        if value.len() > MAX_XML_ATTRIBUTE_BYTES {
+            return Err(Error::unsafe_package(format!(
+                "control part '{path}' contains an oversized decoded XML attribute"
+            )));
+        }
+        if value.starts_with(strict_namespace_prefix) {
+            return Err(Error::unsupported_package_feature(format!(
+                "Strict OOXML namespace in control part '{path}'"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn parse_content_types(xml: &[u8]) -> Result<ContentTypes> {
@@ -578,6 +697,65 @@ fn validate_relationship_id_uniqueness(relationships: &[PackageRelationship]) ->
     Ok(())
 }
 
+fn validate_relationship_target_uniqueness(relationships: &[PackageRelationship]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for relationship in relationships {
+        let Some(target) = relationship.normalized_target.as_deref() else {
+            continue;
+        };
+        let key = (relationship.source.as_deref(), target);
+        if !seen.insert(key) {
+            return Err(Error::unsafe_package(format!(
+                "relationship target '{target}' is duplicated for source '{}'",
+                relationship.source.as_deref().unwrap_or("/")
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_relationship_cycles(relationships: &[PackageRelationship]) -> Result<()> {
+    let mut graph = BTreeMap::<&str, Vec<&str>>::new();
+    for relationship in relationships {
+        if let (Some(source), Some(target)) =
+            (relationship.source.as_deref(), relationship.normalized_target.as_deref())
+        {
+            graph.entry(source).or_default().push(target);
+        }
+    }
+    let mut states = BTreeMap::<&str, u8>::new();
+    for node in graph.keys().copied() {
+        visit_relationship_node(node, &graph, &mut states)?;
+    }
+    Ok(())
+}
+
+fn visit_relationship_node<'a>(
+    node: &'a str,
+    graph: &BTreeMap<&'a str, Vec<&'a str>>,
+    states: &mut BTreeMap<&'a str, u8>,
+) -> Result<()> {
+    match states.get(node) {
+        Some(1) => {
+            return Err(Error::unsafe_package(format!(
+                "internal relationship cycle includes '{node}'"
+            )));
+        }
+        Some(2) => return Ok(()),
+        _ => {}
+    }
+    states.insert(node, 1);
+    if let Some(targets) = graph.get(node) {
+        for target in targets {
+            if graph.contains_key(target) {
+                visit_relationship_node(target, graph, states)?;
+            }
+        }
+    }
+    states.insert(node, 2);
+    Ok(())
+}
+
 fn relationship_source(path: &str) -> Result<Option<String>> {
     if path == "_rels/.rels" {
         return Ok(None);
@@ -618,8 +796,9 @@ fn normalize_absolute_part_name(part_name: &str) -> Result<String> {
 }
 
 fn normalize_part_path(path: &str) -> Result<String> {
+    let normalized_uri = canonicalize_part_uri(path)?;
     let mut parts = Vec::new();
-    for segment in path.split('/') {
+    for segment in normalized_uri.split('/') {
         match segment {
             "" | "." => {}
             ".." => {
@@ -643,15 +822,80 @@ fn normalize_part_path(path: &str) -> Result<String> {
     Ok(parts.join("/"))
 }
 
+fn canonical_part_identity(path: &str) -> Result<String> {
+    Ok(canonicalize_part_uri(path)?.to_lowercase())
+}
+
+fn canonicalize_part_uri(path: &str) -> Result<String> {
+    if path.contains(['?', '#']) {
+        return Err(Error::unsafe_package(format!(
+            "part path '{path}' contains a query or fragment"
+        )));
+    }
+    let bytes = path.as_bytes();
+    let mut output = String::with_capacity(path.len());
+    let mut index = 0;
+    let mut chunk_start = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            index += 1;
+            continue;
+        }
+        output.push_str(&path[chunk_start..index]);
+        if index + 2 >= bytes.len() {
+            return Err(Error::unsafe_package(format!(
+                "part path '{path}' contains invalid percent encoding"
+            )));
+        }
+        let high = hex_value(bytes[index + 1]);
+        let low = hex_value(bytes[index + 2]);
+        let (Some(high), Some(low)) = (high, low) else {
+            return Err(Error::unsafe_package(format!(
+                "part path '{path}' contains invalid percent encoding"
+            )));
+        };
+        let decoded = (high << 4) | low;
+        if decoded.is_ascii_alphanumeric()
+            || matches!(decoded, b'-' | b'.' | b'_' | b'~' | b'/' | b'\\')
+        {
+            return Err(Error::unsafe_package(format!(
+                "part path '{path}' contains non-canonical percent encoding"
+            )));
+        }
+        output.push('%');
+        output.push(char::from(b"0123456789ABCDEF"[high as usize]));
+        output.push(char::from(b"0123456789ABCDEF"[low as usize]));
+        index += 3;
+        chunk_start = index;
+    }
+    output.push_str(&path[chunk_start..]);
+    Ok(output)
+}
+
+const fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn xml_attribute(event: &BytesStart<'_>, name: &[u8]) -> Result<Option<String>> {
-    for attribute in event.attributes().with_checks(false) {
+    for attribute in event.attributes().with_checks(true) {
         let attribute = attribute
             .map_err(|error| Error::insert_package(format!("invalid XML attribute: {error}")))?;
+        if attribute.value.len() > MAX_XML_ATTRIBUTE_BYTES {
+            return Err(Error::unsafe_package("oversized XML attribute"));
+        }
         if local_name(attribute.key.as_ref()) == name {
-            return attribute
+            let value = attribute
                 .decode_and_unescape_value(event.decoder())
-                .map(|value| Some(value.into_owned()))
-                .map_err(|error| Error::insert_package(format!("invalid XML value: {error}")));
+                .map_err(|error| Error::insert_package(format!("invalid XML value: {error}")))?;
+            if value.len() > MAX_XML_ATTRIBUTE_BYTES {
+                return Err(Error::unsafe_package("oversized decoded XML attribute"));
+            }
+            return Ok(Some(value.into_owned()));
         }
     }
     Ok(None)
@@ -846,6 +1090,31 @@ mod tests {
             ("xl/worksheets/sheet3.xml", "<worksheet/>"),
         ]);
         assert!(PackageInventory::inspect(Cursor::new(malformed)).is_err());
+    }
+
+    #[test]
+    fn preflight_enforces_entry_and_control_xml_budgets() {
+        let mut central_directory = Vec::with_capacity((MAX_PACKAGE_ENTRIES + 1) * 46);
+        for _ in 0..=MAX_PACKAGE_ENTRIES {
+            central_directory.extend_from_slice(&[0x50, 0x4B, 0x01, 0x02]);
+            central_directory.extend_from_slice(&[0; 42]);
+        }
+        let error = inspect_central_directory(&mut Cursor::new(central_directory), 0).unwrap_err();
+        assert!(error.to_string().contains("entry count"));
+
+        let oversized = vec![b' '; MAX_CONTROL_PART_BYTES as usize + 1];
+        let package = zip_binary_entries(&[
+            (CONTENT_TYPES_PATH, oversized.as_slice()),
+            (WORKBOOK_PATH, WORKBOOK.as_bytes()),
+            (WORKBOOK_RELS_PATH, WORKBOOK_RELS.as_bytes()),
+        ]);
+        let error = PackageInventory::inspect(Cursor::new(package)).unwrap_err();
+        assert!(error.to_string().contains("control part"));
+
+        let mut budget = ControlXmlBudget::default();
+        budget.consume(MAX_TOTAL_CONTROL_BYTES).unwrap();
+        let error = budget.consume(1).unwrap_err();
+        assert!(error.to_string().contains("aggregate size"));
     }
 
     fn workbook_package(extra_entries: &[(&str, &[u8])]) -> Vec<u8> {

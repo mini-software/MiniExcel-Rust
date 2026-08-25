@@ -294,7 +294,7 @@ let count = MiniExcel::insert(
 assert_eq!(count, 1);
 ```
 
-`insert_with_schema()` 接受可返回错误、只消费一次的动态 iterator。源 row 会先落盘 spool，constant-memory backend 在生成 donor workbook 时只保留当前 row；style rebase 当前仍会物化生成的 worksheet XML。`insert_serialized()` 接受 Serde struct。现有无关 ZIP entry、worksheet identity、formula 和 cached value 均会保留；只有重写 package 完成验证并同步后，才原子替换现有 workbook。
+`insert_with_schema()` 接受可返回错误、只消费一次的动态 iterator。源 row 与生成的 donor worksheet XML 都会落盘 spool；row generation、shared-string conversion、style-ID rebase 和 ZIP output 均为流式处理，不会保留完整 worksheet XML。`insert_serialized()` 接受 Serde struct。现有无关 ZIP entry、worksheet identity、formula 和 cached value 均会保留；只有重写 package 完成验证并同步后，才原子替换现有 workbook。
 
 对于两个独立的 borrowed stream，可使用 `insert_from_reader_to_writer()`、
 `insert_with_schema_from_reader_to_writer()` 或
@@ -305,6 +305,12 @@ truncate，也不会在错误后 rollback，因此 destination 写入失败可�
 行为，但不提供 path API 的 atomic commit 或写后验证保证。
 
 默认的 `ExistingSheetPolicy::Reject` 会不区分大小写地拒绝重复 worksheet name。使用 `ExistingSheetPolicy::Replace` 可原位替换 worksheet，并保留其 workbook 顺序、ID、relationship/path、visibility 与 active state。默认 `TargetRelationshipPolicy::Reject` 只接受没有 worksheet relationship 的 plain target。`RemoveSupported` 可删除 target-owned table、drawing 及其独占 image、comment、VML drawing 和 external hyperlink；pivot、external link、未知 relationship 与 shared/global part 会被拒绝或保守保留。Insert 写入 XLSX package，拒绝 macro-enabled `.xlsm` path，并拒绝 `WriteOptions::with_overwrite_file(true)`，因为 workbook replacement 由 Insert policy 控制。
+
+Insert preflight 会限制 package entry count、单个和累计 control XML、XML attribute size、
+XML depth 与 relationship count；同时拒绝不安全或别名 part path、内部 relationship cycle、
+重复语义 relationship target 与 Strict OOXML package。Path Insert 会持有跨进程 advisory
+lock，并在 commit 前校验 source SHA-256 fingerprint；并发 writer 或外部 source 变化会返回
+确定性 conflict，不会静默覆盖更新后的内容。
 
 追加 formula-free worksheet 时会保留已有 calculation chain 与 workbook calculation property。Replacement 会完整删除 stale `calcChain` part、relationship 和 content-type override，并设置 `fullCalcOnLoad` 与 `forceFullCalc`，让 Excel 下次打开时重算。MiniExcel 不执行或改写公式；未修改 worksheet 中的 formula 与 cached value 保持原始字节。
 

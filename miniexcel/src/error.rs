@@ -58,15 +58,19 @@ enum ErrorKind {
     UnknownSheetVisibility(String),
 
     #[error("failed to inspect XLSX package: {0}")]
+    #[cfg(not(target_arch = "wasm32"))]
     InsertPackage(String),
 
     #[error("unsafe XLSX package: {0}")]
+    #[cfg(not(target_arch = "wasm32"))]
     UnsafePackage(String),
 
     #[error("unsupported XLSX package feature: {0}")]
+    #[cfg(not(target_arch = "wasm32"))]
     UnsupportedPackageFeature(String),
 
     #[error("worksheet '{0}' already exists")]
+    #[cfg(not(target_arch = "wasm32"))]
     ExistingWorksheet(String),
 
     #[error("atomic workbook commit failed: {0}")]
@@ -151,18 +155,22 @@ impl Error {
         ErrorKind::UnknownSheetVisibility(sheet_name.into()).into()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn insert_package(message: impl Into<String>) -> Self {
         ErrorKind::InsertPackage(message.into()).into()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn unsafe_package(message: impl Into<String>) -> Self {
         ErrorKind::UnsafePackage(message.into()).into()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn unsupported_package_feature(message: impl Into<String>) -> Self {
         ErrorKind::UnsupportedPackageFeature(message.into()).into()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn existing_worksheet(sheet_name: impl Into<String>) -> Self {
         ErrorKind::ExistingWorksheet(sheet_name.into()).into()
     }

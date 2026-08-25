@@ -1092,6 +1092,238 @@ fn borrowed_io_rejects_nonempty_sink_and_propagates_destination_errors() {
 }
 
 #[test]
+fn hardening_strict_namespace_fails_preflight_without_consuming_rows() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("strict.xlsx");
+    let source = strict_namespace_fixture();
+    std::fs::write(&path, &source).unwrap();
+
+    let calls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&calls);
+    let rows = std::iter::once_with(move || {
+        observed.set(observed.get() + 1);
+        Ok(dynamic_insert_row("Never read", 1))
+    });
+    let error = MiniExcel::insert_with_schema(
+        &path,
+        &["Name".to_owned(), "Version".to_owned()],
+        rows,
+        &InsertOptions::new().with_sheet_name("Strict Append"),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("Strict OOXML"));
+    assert_eq!(calls.get(), 0);
+    assert_eq!(std::fs::read(path).unwrap(), source);
+}
+
+#[test]
+fn hardening_security_fixtures_fail_before_consuming_rows_or_committing() {
+    let oversized_value = "x".repeat(65_537);
+    let fixtures = [
+        (
+            "traversal",
+            add_fixture_entry(complex_fixture(), "../escape.xml", b"escape"),
+            "unsafe ZIP entry path",
+        ),
+        (
+            "normalized-alias",
+            add_fixture_entry(complex_fixture(), "xl/%73tyles.xml", b"alias"),
+            "non-canonical percent encoding",
+        ),
+        (
+            "duplicate-target",
+            rewrite_fixture_entry(complex_fixture(), "xl/_rels/workbook.xml.rels", |xml| {
+                xml.replace(
+                    "</Relationships>",
+                    r#"<Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/data.xml"/></Relationships>"#,
+                )
+            }),
+            "relationship target",
+        ),
+        (
+            "relationship-cycle",
+            rewrite_fixture_entry(complex_fixture(), "xl/worksheets/_rels/data.xml.rels", |xml| {
+                xml.replace(
+                        "</Relationships>",
+                        r#"<Relationship Id="rId99" Type="urn:miniexcel:test-cycle" Target="../workbook.xml"/></Relationships>"#,
+                    )
+            }),
+            "relationship cycle",
+        ),
+        (
+            "oversized-attribute",
+            rewrite_fixture_entry(complex_fixture(), "xl/workbook.xml", |xml| {
+                xml.replacen(
+                    "<workbook ",
+                    &format!("<workbook oversized=\"{oversized_value}\" "),
+                    1,
+                )
+            }),
+            "oversized XML attribute",
+        ),
+    ];
+
+    let directory = tempfile::tempdir().unwrap();
+    for (name, source, expected_error) in fixtures {
+        let path = directory.path().join(format!("{name}.xlsx"));
+        std::fs::write(&path, &source).unwrap();
+        let calls = Rc::new(Cell::new(0));
+        let observed = Rc::clone(&calls);
+        let rows = std::iter::once_with(move || {
+            observed.set(observed.get() + 1);
+            Ok(dynamic_insert_row("Never read", 1))
+        });
+        let error = MiniExcel::insert_with_schema(
+            &path,
+            &["Name".to_owned(), "Version".to_owned()],
+            rows,
+            &InsertOptions::new().with_sheet_name("Hardened Append"),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains(expected_error),
+            "fixture {name}: expected '{expected_error}', got '{error}'"
+        );
+        assert_eq!(calls.get(), 0, "fixture {name} consumed rows");
+        assert_eq!(std::fs::read(&path).unwrap(), source, "fixture {name} changed source");
+    }
+}
+
+#[test]
+fn hardening_concurrent_same_path_insert_has_one_success_and_one_conflict() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("concurrent.xlsx");
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Current", 1)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::channel();
+    let (release_sender, release_receiver) = std::sync::mpsc::channel();
+    let first_path = path.clone();
+    let first = std::thread::spawn(move || {
+        let rows = std::iter::once_with(move || {
+            entered_sender.send(()).unwrap();
+            release_receiver.recv().unwrap();
+            Ok(dynamic_insert_row("First", 2))
+        });
+        MiniExcel::insert_with_schema(
+            first_path,
+            &["Name".to_owned(), "Version".to_owned()],
+            rows,
+            &InsertOptions::new().with_sheet_name("First"),
+        )
+    });
+
+    entered_receiver.recv().unwrap();
+    let second = MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Second", 3)],
+        &InsertOptions::new().with_sheet_name("Second"),
+    )
+    .unwrap_err();
+    assert!(second.to_string().contains("concurrent Insert conflict"));
+    release_sender.send(()).unwrap();
+    assert_eq!(first.join().unwrap().unwrap(), 1);
+
+    assert_eq!(MiniExcel::get_sheet_names(&path).unwrap(), ["Current", "First"]);
+    let rows = MiniExcel::query_with_options(
+        &path,
+        &ReadOptions::new().with_sheet_name("First").with_header_mode(HeaderMode::FirstRow),
+    )
+    .unwrap()
+    .collect::<miniexcel::Result<Vec<_>>>()
+    .unwrap();
+    assert_eq!(rows[0]["Version"], CellValue::Int(2));
+}
+
+#[test]
+fn hardening_source_change_during_insert_aborts_before_commit() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("source-change.xlsx");
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Current", 1)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+
+    let replacement = MiniExcel::save_as_bytes(
+        &[dynamic_insert_row("External", 9)],
+        &WriteOptions::new().with_sheet_name("External"),
+    )
+    .unwrap();
+    let expected = replacement.clone();
+    let (entered_sender, entered_receiver) = std::sync::mpsc::channel();
+    let (release_sender, release_receiver) = std::sync::mpsc::channel();
+    let insert_path = path.clone();
+    let insert = std::thread::spawn(move || {
+        let rows = std::iter::once_with(move || {
+            entered_sender.send(()).unwrap();
+            release_receiver.recv().unwrap();
+            Ok(dynamic_insert_row("Inserted", 2))
+        });
+        MiniExcel::insert_with_schema(
+            insert_path,
+            &["Name".to_owned(), "Version".to_owned()],
+            rows,
+            &InsertOptions::new().with_sheet_name("Inserted"),
+        )
+    });
+
+    entered_receiver.recv().unwrap();
+    std::fs::write(&path, replacement).unwrap();
+    release_sender.send(()).unwrap();
+    let error = insert.join().unwrap().unwrap_err();
+    assert!(error.to_string().contains("changed during Insert"));
+    assert_eq!(std::fs::read(&path).unwrap(), expected);
+    assert_eq!(MiniExcel::get_sheet_names(path).unwrap(), ["External"]);
+}
+
+#[test]
+#[ignore = "million-row disk and memory stress; set MINIEXCEL_INSERT_STRESS_ROWS to override"]
+fn hardening_million_row_insert_is_disk_backed() {
+    let row_count = std::env::var("MINIEXCEL_INSERT_STRESS_ROWS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1_000_000_usize);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("million.xlsx");
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Current", 1)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+
+    let rows = (0..row_count).map(|index| {
+        let mut row = DynamicRow::new();
+        row.insert("Name".to_owned(), CellValue::String("Stream".to_owned()));
+        row.insert("Version".to_owned(), CellValue::Int(index as i64));
+        Ok(row)
+    });
+    let written = MiniExcel::insert_with_schema(
+        &path,
+        &["Name".to_owned(), "Version".to_owned()],
+        rows,
+        &InsertOptions::new().with_write_options(
+            WriteOptions::new().with_sheet_name("Million").with_auto_filter(false),
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(written, row_count);
+    assert_eq!(MiniExcel::get_sheet_names(&path).unwrap(), ["Current", "Million"]);
+    assert!(std::fs::metadata(&path).unwrap().len() < 1024 * 1024 * 1024);
+    if let Some(output) = std::env::var_os("MINIEXCEL_INSERT_STRESS_OUTPUT") {
+        std::fs::copy(path, output).unwrap();
+    }
+}
+
+#[test]
 fn public_append_explicit_schema_iterator_is_one_pass_and_failure_safe() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("streamed.xlsx");
@@ -1649,6 +1881,75 @@ fn calculation_fixture() -> Vec<u8> {
             br#"<?xml version="1.0" encoding="UTF-8"?><calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><c r="C2" i="1"/><c r="A2" i="2"/><c r="A1" i="3"/></calcChain>"#,
         )
         .unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+fn strict_namespace_fixture() -> Vec<u8> {
+    let source = complex_fixture();
+    let mut archive = ZipArchive::new(Cursor::new(&source)).unwrap();
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        if name == "xl/workbook.xml" || name == "xl/_rels/workbook.xml.rels" {
+            let options = entry.options();
+            let mut xml = String::new();
+            entry.read_to_string(&mut xml).unwrap();
+            let xml = xml
+                .replace(
+                    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+                    "http://purl.oclc.org/ooxml/spreadsheetml/main",
+                )
+                .replace(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                    "http://purl.oclc.org/ooxml/officeDocument/relationships",
+                );
+            writer.start_file(name, options).unwrap();
+            writer.write_all(xml.as_bytes()).unwrap();
+        } else {
+            writer.raw_copy_file(entry).unwrap();
+        }
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+fn rewrite_fixture_entry<F>(source: Vec<u8>, target: &str, transform: F) -> Vec<u8>
+where
+    F: FnOnce(String) -> String,
+{
+    let mut archive = ZipArchive::new(Cursor::new(source)).unwrap();
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let mut transform = Some(transform);
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        if name == target {
+            let options = entry.options();
+            let mut xml = String::new();
+            entry.read_to_string(&mut xml).unwrap();
+            writer.start_file(name, options).unwrap();
+            writer.write_all(transform.take().unwrap()(xml).as_bytes()).unwrap();
+        } else {
+            writer.raw_copy_file(entry).unwrap();
+        }
+    }
+    assert!(transform.is_none(), "fixture entry '{target}' was not found");
+    writer.finish().unwrap().into_inner()
+}
+
+fn add_fixture_entry(source: Vec<u8>, name: &str, payload: &[u8]) -> Vec<u8> {
+    let mut archive = ZipArchive::new(Cursor::new(source)).unwrap();
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..archive.len() {
+        writer.raw_copy_file(archive.by_index(index).unwrap()).unwrap();
+    }
+    writer
+        .start_file(
+            name,
+            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+        )
+        .unwrap();
+    writer.write_all(payload).unwrap();
     writer.finish().unwrap().into_inner()
 }
 

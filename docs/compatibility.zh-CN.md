@@ -11,6 +11,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | 依赖 | 锁定 API 版本线 | 用途 | 许可证 | MSRV 说明 |
 | --- | --- | --- | --- | --- |
 | `atomicwrites` | 0.4 | Windows path insert 的安全跨平台原子替换 | MIT | 仅 Windows 依赖；已使用 Rust 1.85 检查 |
+| `fs2` | 0.4 | Path insert 的跨平台 advisory lock | MIT OR Apache-2.0 | 已使用 Rust 1.85 检查 |
 | `calamine` | 0.35 | XLSX 解析和 Serde row 反序列化 | MIT | 0.35 声明 Rust 1.83 |
 | `clap` | 4.6 | 本地 CLI 参数解析 | MIT OR Apache-2.0 | 4.6 声明 Rust 1.85 |
 | `rust_xlsxwriter` | 0.96 | 新 XLSX workbook 生成和 Serde 序列化 | MIT OR Apache-2.0 | 0.96 声明 Rust 1.83 |
@@ -114,7 +115,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 
 backend 对所选 worksheet entry 执行两次顺序、有界内存扫描。第一次记录使用范围和紧凑 merged-cell 矩形。这是为了在合法文件省略 `<dimension>` 时保持 MiniExcel 兼容的稳定动态 schema、像 .NET reader 一样保留仅含 style 的 row element，并在不展开地址 map 的情况下支持按需 merged-cell 填充。第二次扫描输出 row，只保留当前活动 merge range 的锚点值。Worksheet XML 和先前 row 永远不会保留；内存主要由内存或磁盘索引的 shared string、style、merge metadata、parser buffer、当前 row 和有界 channel 构成。
 
-内部 writer 组装包含一个或多个工作表的新 ZIP package。路径保存默认拒绝已有文件，也可显式替换。Path Insert API 通过验证后的 package rewrite 与同目录临时文件原子替换来追加或替换 worksheet；未修改的 ZIP entry 和现有 worksheet identity 会保留。独立 borrowed Insert API 接受 `Read + Seek` input 与空的 `Write + Seek` output，调用后两者保持 open，并在不提供 atomic commit、rollback 或写后验证的情况下保持相同 package 行为。可返回错误的显式 schema producer 只消费一次，经磁盘 spool 与 constant-memory worksheet writer 处理；生成的 donor worksheet XML 会为 style rebase 而物化。模板填充会在复制的 package 中重写 worksheet XML；worksheet 样式和无关 ZIP part 会保留。数组展开会移动 row/cell 地址并更新 worksheet dimension。公式表达式会保留但不会重算；版本 1 不会在插行后调整公式引用、merge range、table、drawing 或 defined name。
+内部 writer 组装包含一个或多个工作表的新 ZIP package。路径保存默认拒绝已有文件，也可显式替换。Path Insert API 通过验证后的 package rewrite 与同目录临时文件原子替换来追加或替换 worksheet；未修改的 ZIP entry 和现有 worksheet identity 会保留。独立 borrowed Insert API 接受 `Read + Seek` input 与空的 `Write + Seek` output，调用后两者保持 open，并在不提供 atomic commit、rollback 或写后验证的情况下保持相同 package 行为。可返回错误的显式 schema producer 只消费一次，经磁盘 spool 与 constant-memory worksheet writer 处理。生成的 donor worksheet XML、shared-string conversion、style-ID rebase 与 ZIP insertion 均使用临时文件 stream，因此 worksheet memory 与 row count 无关。Path Insert 还通过 advisory lock 与 commit 前 source fingerprint 防止并发更新丢失。模板填充会在复制的 package 中重写 worksheet XML；worksheet 样式和无关 ZIP part 会保留。数组展开会移动 row/cell 地址并更新 worksheet dimension。公式表达式会保留但不会重算；版本 1 不会在插行后调整公式引用、merge range、table、drawing 或 defined name。
 
 ## 测试来源
 

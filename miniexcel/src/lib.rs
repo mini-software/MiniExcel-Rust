@@ -6,6 +6,7 @@ mod analytics;
 mod cell;
 mod error;
 mod facade;
+#[cfg(not(target_arch = "wasm32"))]
 mod insert;
 mod options;
 mod rag;

@@ -18,6 +18,18 @@ enum ErrorKind {
     #[error("failed to write XLSX data: {0}")]
     Write(#[from] rust_xlsxwriter::XlsxError),
 
+    #[error("failed to read CSV record {record}: {message}")]
+    CsvRead { record: u64, message: String },
+
+    #[error("failed to deserialize CSV record {record}: {message}")]
+    CsvDeserialize { record: u64, message: String },
+
+    #[error("failed to write CSV data: {0}")]
+    CsvWrite(String),
+
+    #[error("CSV text cannot be represented by encoding '{0}'")]
+    CsvEncoding(String),
+
     #[error("failed to fill XLSX template: {0}")]
     Template(String),
 
@@ -120,6 +132,22 @@ impl Error {
 
     pub(crate) fn template(message: impl Into<String>) -> Self {
         ErrorKind::Template(message.into()).into()
+    }
+
+    pub(crate) fn csv_read(record: u64, message: impl Into<String>) -> Self {
+        ErrorKind::CsvRead { record, message: message.into() }.into()
+    }
+
+    pub(crate) fn csv_deserialize(record: u64, message: impl Into<String>) -> Self {
+        ErrorKind::CsvDeserialize { record, message: message.into() }.into()
+    }
+
+    pub(crate) fn csv_write(message: impl Into<String>) -> Self {
+        ErrorKind::CsvWrite(message.into()).into()
+    }
+
+    pub(crate) fn csv_encoding(encoding: impl Into<String>) -> Self {
+        ErrorKind::CsvEncoding(encoding.into()).into()
     }
 
     pub(crate) fn stream(message: impl Into<String>) -> Self {

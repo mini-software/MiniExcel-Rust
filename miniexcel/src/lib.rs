@@ -1,12 +1,13 @@
 #![forbid(unsafe_code)]
 
-//! Experimental Rust XLSX support for MiniExcel.
+//! Streaming XLSX and CSV support for MiniExcel.
 
 mod analytics;
 #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
 mod cancellation;
 mod cell;
 mod comments;
+mod csv_io;
 mod error;
 mod facade;
 #[cfg(not(target_arch = "wasm32"))]
@@ -34,6 +35,7 @@ pub use comments::{
 pub use error::{Error, Result};
 pub use facade::MiniExcel;
 pub use options::{
+    CsvConfiguration, CsvEncoding, CsvNewline, CsvReadOptions, CsvWriteOptions,
     ExistingSheetPolicy, HeaderMode, HeaderStyle, HorizontalAlignment, InsertOptions, ReadOptions,
     RgbColor, TableStyle, TargetRelationshipPolicy, TemplateOptions, VerticalAlignment,
     WriteOptions,

@@ -175,6 +175,7 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | `GetSheetDimensions` | 已实现 | Rust 使用 .NET fixture 测试 |
 | 命名 OpenXML `QueryTable` | 已实现 | Rust/.NET 使用 `TestQueryTable.xlsx` 的 focused test |
 | Threaded comments 与 legacy notes | 已实现 | Rust/.NET 使用 `TestCommentsAndNotes.xlsx` 的 focused test |
+| CSV 动态/类型化 query、save、append 与 columns | 已实现 | Rust 测试以及固定 .NET CSV fixture/基准测试 |
 | 新 workbook `SaveAs`（含多工作表） | 已实现并完成 roundtrip 测试 | 尚未 |
 | 基础 `SaveAsTemplate` 标量/列表填充 | 已实现并完成 roundtrip 测试 | 尚未 |
 | 用于 WASM 的字节数组 query/write | 已实现 | Rust/browser 测试 |
@@ -184,11 +185,11 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | DataReader 与更广泛的 stream ownership | 延后 | 否 |
 | 向现有 `.xlsx` workbook 追加 worksheet | 已实现并原子提交 | Rust 测试；共享 parity contract 尚未扩展 |
 | 严格 worksheet replacement | 已支持 plain target 与受支持的 target-owned closure | Rust 测试；删除 stale calcChain 并要求 full recalculation |
-| CSV 和旧格式 | 延后 | 否 |
-| 高级 template、picture、merge、comment | 延后 | 否 |
+| 旧式 `.xls`、`.xlsb` 与 `.ods` 格式 | 延后 | 否 |
+| 高级 template、picture 与 merge | 延后 | 否 |
 
 此矩阵就是覆盖声明：Rust 目前尚未提供与当前 .NET package 完整的 API 等价性。
 
 ## 延后工作
 
-SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、CSV provider、旧 Excel 格式、高级 template 指令与 sheet 克隆、image authoring、merged-cell API、公式计算/依赖展开、公式编写、通用 style、async query/export/template I/O，以及 borrowed lazy reader，都需要独立的设计与验收里程碑。支持工作流与有意保留的差异见 [Insert 迁移说明](insert-v1-migration.zh-CN.md)。
+SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、旧 Excel 格式、高级 template 指令与 sheet 克隆、image authoring、merged-cell API、公式计算/依赖展开、公式编写、通用 style、async query/export/template I/O，以及 borrowed XLSX lazy reader，都需要独立的设计与验收里程碑。CSV DataReader/DataTable adapter 已有意替换为 Rust iterator；当前不提供一步式 CSV/XLSX converter，调用方可组合 query 与 save API。支持工作流与有意保留的差异见 [Insert 迁移说明](insert-v1-migration.zh-CN.md)。

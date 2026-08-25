@@ -9,8 +9,8 @@ use std::process::{Command as ProcessCommand, ExitCode};
 use chrono::NaiveDate;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use miniexcel::{
-    CellReference, CellValue, DynamicRow, HeaderMode, MiniExcel, QueryPlan, RagExportOptions,
-    ReadOptions, WriteOptions,
+    CellReference, CellValue, CsvConfiguration, CsvEncoding, CsvReadOptions, DynamicRow,
+    HeaderMode, MiniExcel, QueryPlan, RagExportOptions, ReadOptions, WriteOptions,
 };
 use serde_json::{Map, Number, Value};
 
@@ -32,6 +32,8 @@ enum CliCommand {
     },
     /// Stream rows from an XLSX workbook.
     Query(QueryArgs),
+    /// Stream rows from a CSV file.
+    QueryCsv(QueryCsvArgs),
     /// Run a low-memory grouped analysis from a versioned JSON query plan.
     Analyze(AnalyzeArgs),
     /// Stream provenance-preserving RAG chunks and a manifest to files.
@@ -69,6 +71,40 @@ struct QueryArgs {
     /// Omit rows whose selected cells are all empty.
     #[arg(long)]
     ignore_empty_rows: bool,
+
+    /// Maximum rows to print. Use 0 for all rows.
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+
+    /// Output representation.
+    #[arg(long, value_enum, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+struct QueryCsvArgs {
+    /// Path to a CSV file.
+    file: PathBuf,
+
+    /// Treat the first record as column headers.
+    #[arg(long)]
+    header: bool,
+
+    /// Single-byte CSV field delimiter.
+    #[arg(long, default_value = ",")]
+    delimiter: String,
+
+    /// Source character encoding.
+    #[arg(long, value_enum, default_value = "utf8")]
+    encoding: CsvEncodingArg,
+
+    /// Return empty fields as null instead of empty strings.
+    #[arg(long)]
+    empty_as_null: bool,
+
+    /// Trim leading and trailing whitespace from header names.
+    #[arg(long)]
+    trim_headers: bool,
 
     /// Maximum rows to print. Use 0 for all rows.
     #[arg(long, default_value_t = 20)]
@@ -167,6 +203,27 @@ enum OutputFormat {
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
+enum CsvEncodingArg {
+    Utf8,
+    Utf16Le,
+    Utf16Be,
+    Gbk,
+    Windows1252,
+}
+
+impl From<CsvEncodingArg> for CsvEncoding {
+    fn from(value: CsvEncodingArg) -> Self {
+        match value {
+            CsvEncodingArg::Utf8 => Self::Utf8,
+            CsvEncodingArg::Utf16Le => Self::Utf16Le,
+            CsvEncodingArg::Utf16Be => Self::Utf16Be,
+            CsvEncodingArg::Gbk => Self::Gbk,
+            CsvEncodingArg::Windows1252 => Self::Windows1252,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
 enum RagOutputFormat {
     Jsonl,
     Markdown,
@@ -206,6 +263,7 @@ fn run(cli: Cli) -> CliResult<()> {
     match cli.command {
         CliCommand::Sheets { file } => list_sheets(&file),
         CliCommand::Query(arguments) => query(arguments),
+        CliCommand::QueryCsv(arguments) => query_csv(arguments),
         CliCommand::Analyze(arguments) => analyze(arguments),
         CliCommand::RagExport(arguments) => rag_export(arguments),
         CliCommand::WriteDemo { output } => write_demo(&output),
@@ -403,6 +461,39 @@ fn query(arguments: QueryArgs) -> CliResult<()> {
     }
 
     let rows = MiniExcel::query_with_options(&arguments.file, &options)?;
+    match arguments.format {
+        OutputFormat::Jsonl => print_json_lines(rows, arguments.limit),
+        OutputFormat::Json => {
+            let rows = collect_rows(rows, arguments.limit)?;
+            println!("{}", serde_json::to_string_pretty(&rows_to_json(&rows))?);
+            Ok(())
+        }
+        OutputFormat::Table => {
+            let rows = collect_rows(rows, arguments.limit)?;
+            print_table(&rows);
+            Ok(())
+        }
+    }
+}
+
+fn query_csv(arguments: QueryCsvArgs) -> CliResult<()> {
+    let delimiter = arguments.delimiter.as_bytes();
+    if delimiter.len() != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "CSV delimiter must be exactly one byte",
+        )
+        .into());
+    }
+    let configuration = CsvConfiguration::new()
+        .with_delimiter(delimiter[0])
+        .with_encoding(arguments.encoding.into())
+        .with_read_empty_as_null(arguments.empty_as_null);
+    let options = CsvReadOptions::new()
+        .with_header_mode(if arguments.header { HeaderMode::FirstRow } else { HeaderMode::None })
+        .with_trim_headers(arguments.trim_headers)
+        .with_configuration(configuration);
+    let rows = MiniExcel::query_csv_with_options(&arguments.file, &options)?;
     match arguments.format {
         OutputFormat::Jsonl => print_json_lines(rows, arguments.limit),
         OutputFormat::Json => {
@@ -653,7 +744,7 @@ mod tests {
 
     use miniexcel::DynamicRow;
 
-    use super::{Cli, CliCommand, OutputFormat, RagOutputFormat, collect_rows};
+    use super::{Cli, CliCommand, CsvEncodingArg, OutputFormat, RagOutputFormat, collect_rows};
     use clap::Parser;
 
     #[test]
@@ -701,6 +792,36 @@ mod tests {
             panic!("expected RAG export command");
         };
         assert!(matches!(arguments.format, RagOutputFormat::Both));
+    }
+
+    #[test]
+    fn parses_csv_query_options() {
+        let cli = Cli::try_parse_from([
+            "miniexcel",
+            "query-csv",
+            "data.csv",
+            "--header",
+            "--delimiter",
+            ";",
+            "--encoding",
+            "gbk",
+            "--empty-as-null",
+            "--limit",
+            "5",
+            "--format",
+            "jsonl",
+        ])
+        .expect("parse CSV query arguments");
+
+        let CliCommand::QueryCsv(arguments) = cli.command else {
+            panic!("expected CSV query command");
+        };
+        assert!(arguments.header);
+        assert_eq!(arguments.delimiter, ";");
+        assert!(matches!(arguments.encoding, CsvEncodingArg::Gbk));
+        assert!(arguments.empty_as_null);
+        assert_eq!(arguments.limit, 5);
+        assert!(matches!(arguments.format, OutputFormat::Jsonl));
     }
 
     #[test]

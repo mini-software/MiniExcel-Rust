@@ -34,6 +34,230 @@ pub enum TableStyle {
     Default,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CsvEncoding {
+    #[default]
+    Utf8,
+    Utf16Le,
+    Utf16Be,
+    Gbk,
+    Windows1252,
+}
+
+impl CsvEncoding {
+    pub(crate) const fn encoding(self) -> &'static encoding_rs::Encoding {
+        match self {
+            Self::Utf8 => encoding_rs::UTF_8,
+            Self::Utf16Le => encoding_rs::UTF_16LE,
+            Self::Utf16Be => encoding_rs::UTF_16BE,
+            Self::Gbk => encoding_rs::GBK,
+            Self::Windows1252 => encoding_rs::WINDOWS_1252,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CsvNewline {
+    #[default]
+    CrLf,
+    Lf,
+    Cr,
+}
+
+impl CsvNewline {
+    pub(crate) const fn bytes(self) -> &'static [u8] {
+        match self {
+            Self::CrLf => b"\r\n",
+            Self::Lf => b"\n",
+            Self::Cr => b"\r",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CsvConfiguration {
+    delimiter: u8,
+    newline: CsvNewline,
+    encoding: CsvEncoding,
+    write_bom: bool,
+    read_empty_as_null: bool,
+    always_quote: bool,
+    quote_whitespace: bool,
+}
+
+impl CsvConfiguration {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    #[must_use]
+    pub const fn with_delimiter(mut self, delimiter: u8) -> Self {
+        self.delimiter = delimiter;
+        self
+    }
+    #[must_use]
+    pub const fn with_newline(mut self, newline: CsvNewline) -> Self {
+        self.newline = newline;
+        self
+    }
+    #[must_use]
+    pub const fn with_encoding(mut self, encoding: CsvEncoding) -> Self {
+        self.encoding = encoding;
+        self
+    }
+    #[must_use]
+    pub const fn with_write_bom(mut self, enabled: bool) -> Self {
+        self.write_bom = enabled;
+        self
+    }
+    #[must_use]
+    pub const fn with_read_empty_as_null(mut self, enabled: bool) -> Self {
+        self.read_empty_as_null = enabled;
+        self
+    }
+    #[must_use]
+    pub const fn with_always_quote(mut self, enabled: bool) -> Self {
+        self.always_quote = enabled;
+        self
+    }
+    #[must_use]
+    pub const fn with_quote_whitespace(mut self, enabled: bool) -> Self {
+        self.quote_whitespace = enabled;
+        self
+    }
+    pub(crate) const fn delimiter(&self) -> u8 {
+        self.delimiter
+    }
+    pub(crate) const fn newline(&self) -> CsvNewline {
+        self.newline
+    }
+    pub(crate) const fn encoding(&self) -> CsvEncoding {
+        self.encoding
+    }
+    pub(crate) const fn write_bom(&self) -> bool {
+        self.write_bom
+    }
+    pub(crate) const fn read_empty_as_null(&self) -> bool {
+        self.read_empty_as_null
+    }
+    pub(crate) const fn always_quote(&self) -> bool {
+        self.always_quote
+    }
+    pub(crate) const fn quote_whitespace(&self) -> bool {
+        self.quote_whitespace
+    }
+}
+
+impl Default for CsvConfiguration {
+    fn default() -> Self {
+        Self {
+            delimiter: b',',
+            newline: CsvNewline::CrLf,
+            encoding: CsvEncoding::Utf8,
+            write_bom: true,
+            read_empty_as_null: false,
+            always_quote: false,
+            quote_whitespace: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CsvReadOptions {
+    configuration: CsvConfiguration,
+    header_mode: HeaderMode,
+    trim_headers: bool,
+}
+
+impl CsvReadOptions {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    #[must_use]
+    pub fn with_configuration(mut self, configuration: CsvConfiguration) -> Self {
+        self.configuration = configuration;
+        self
+    }
+    #[must_use]
+    pub const fn with_header_mode(mut self, header_mode: HeaderMode) -> Self {
+        self.header_mode = header_mode;
+        self
+    }
+    #[must_use]
+    pub const fn with_trim_headers(mut self, enabled: bool) -> Self {
+        self.trim_headers = enabled;
+        self
+    }
+    pub(crate) const fn configuration(&self) -> &CsvConfiguration {
+        &self.configuration
+    }
+    pub(crate) const fn trim_headers(&self) -> bool {
+        self.trim_headers
+    }
+    pub(crate) const fn uses_headers(&self, typed: bool) -> bool {
+        match self.header_mode {
+            HeaderMode::Auto => typed,
+            HeaderMode::None => false,
+            HeaderMode::FirstRow => true,
+        }
+    }
+}
+
+impl Default for CsvReadOptions {
+    fn default() -> Self {
+        Self {
+            configuration: CsvConfiguration::new(),
+            header_mode: HeaderMode::Auto,
+            trim_headers: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CsvWriteOptions {
+    configuration: CsvConfiguration,
+    print_header: bool,
+    overwrite_file: bool,
+}
+
+impl CsvWriteOptions {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    #[must_use]
+    pub fn with_configuration(mut self, configuration: CsvConfiguration) -> Self {
+        self.configuration = configuration;
+        self
+    }
+    #[must_use]
+    pub const fn with_print_header(mut self, enabled: bool) -> Self {
+        self.print_header = enabled;
+        self
+    }
+    #[must_use]
+    pub const fn with_overwrite_file(mut self, enabled: bool) -> Self {
+        self.overwrite_file = enabled;
+        self
+    }
+    pub(crate) const fn configuration(&self) -> &CsvConfiguration {
+        &self.configuration
+    }
+    pub(crate) const fn print_header(&self) -> bool {
+        self.print_header
+    }
+    pub(crate) const fn overwrite_file(&self) -> bool {
+        self.overwrite_file
+    }
+}
+
+impl Default for CsvWriteOptions {
+    fn default() -> Self {
+        Self { configuration: CsvConfiguration::new(), print_header: true, overwrite_file: false }
+    }
+}
+
 /// Controls how insert operations handle an existing worksheet with the target name.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ExistingSheetPolicy {

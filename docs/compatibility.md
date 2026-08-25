@@ -175,6 +175,7 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | `GetSheetDimensions` | Implemented | Rust tests against .NET fixtures |
 | Named OpenXML `QueryTable` | Implemented | Rust and .NET focused tests against `TestQueryTable.xlsx` |
 | Threaded comments and legacy notes | Implemented | Rust and .NET focused tests against `TestCommentsAndNotes.xlsx` |
+| CSV dynamic/typed query, save, append, and columns | Implemented | Rust tests plus pinned .NET CSV fixtures/baseline tests |
 | New-workbook `SaveAs`, including multiple sheets | Implemented and roundtrip-tested | Not yet |
 | Basic `SaveAsTemplate` scalar/list fill | Implemented and roundtrip-tested | Not yet |
 | Byte-array query/write for WASM | Implemented | Rust/browser tests |
@@ -184,11 +185,11 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | DataReader and broader stream ownership | Deferred | No |
 | Append worksheet to existing `.xlsx` workbook | Implemented and atomically committed | Rust tests; shared parity contract not yet extended |
 | Strict worksheet replacement | Implemented for plain targets and supported target-owned closures | Rust tests; stale calcChain removed and full recalculation requested |
-| CSV and legacy formats | Deferred | No |
-| Advanced templates, pictures, merges, comments | Deferred | No |
+| Legacy `.xls`, `.xlsb`, and `.ods` formats | Deferred | No |
+| Advanced templates, pictures, and merges | Deferred | No |
 
 This matrix is the coverage claim: Rust does not yet provide complete API parity with the current .NET packages.
 
 ## Deferred Work
 
-SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, CSV providers, old Excel formats, advanced template directives and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, async query/export/template I/O, and borrowed lazy readers require separate design and acceptance milestones. See the [Insert migration guide](insert-v1-migration.md) for supported workflows and deliberate differences.
+SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, old Excel formats, advanced template directives and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, async query/export/template I/O, and borrowed XLSX lazy readers require separate design and acceptance milestones. CSV DataReader/DataTable adapters are intentionally replaced by Rust iterators, and a one-call CSV/XLSX converter is not exposed; callers compose query and save APIs. See the [Insert migration guide](insert-v1-migration.md) for supported workflows and deliberate differences.

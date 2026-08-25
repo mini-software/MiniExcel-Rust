@@ -6,7 +6,7 @@
 [![文档](https://docs.rs/miniexcel/badge.svg)](https://docs.rs/miniexcel)
 [![许可证](https://img.shields.io/crates/l/miniexcel.svg)](LICENSE)
 
-一个支持有界内存流式读取、Serde、结构化单元格、数据分析及 RAG 导出的 Rust XLSX 读写库。
+一个支持有界内存流式读取、Serde、结构化单元格、数据分析及 RAG 导出的 Rust XLSX/CSV 读写库。
 
 **[打开 MiniExcel Browser Lab](https://mini-software.github.io/MiniExcel-Rust/)**，可以直接在浏览器本地检查或生成 XLSX，工作簿不会离开浏览器。
 
@@ -34,6 +34,7 @@ pwsh ./benchmarks/compare-rust-dotnet.ps1
 - 结构化读取单元格地址、公式和 number format。
 - 支持工作表选择、A1 范围、表头和空行过滤。
 - 通过 Serde 读写 Rust 类型。
+- 支持动态/类型化 CSV 流式查询、保存、追加、编码与 dialect 选项。
 - 按稳定列顺序动态创建工作簿。
 - 向现有 XLSX 工作簿原子追加 worksheet。
 - 在显式内存限制下执行流式筛选和分组分析。
@@ -241,6 +242,28 @@ for thread in comments.threaded_comments() {
 state、local 或 offset timestamp、reply，以及 legacy note author/text。只有 author marker
 为 `tc={thread-id}` 且 cell 同时匹配 threaded root 的 compatibility-shadow note 才会被
 抑制；同 cell 的无关 note 仍保留。Comment metadata 会物化，但不会读取 worksheet row。
+
+### CSV
+
+CSV 使用独立的流式 provider，动态值保持为字符串：
+
+```rust
+use miniexcel::{CsvConfiguration, CsvEncoding, CsvReadOptions, HeaderMode, MiniExcel};
+
+let options = CsvReadOptions::new()
+    .with_header_mode(HeaderMode::FirstRow)
+    .with_configuration(CsvConfiguration::new().with_encoding(CsvEncoding::Gbk));
+
+for row in MiniExcel::query_csv_with_options("data.csv", &options)? {
+    println!("{:?}", row?["Name"]);
+}
+```
+
+动态与 Serde API 支持 path、byte 和 borrowed reader/writer。Save/append 可推断 schema，也可
+显式指定 schema。配置覆盖单字节 delimiter、CRLF/LF/CR、UTF-8、UTF-16LE/BE、GBK、
+Windows-1252、BOM 输出、empty-as-null 读取与 quoting。默认行为尽量匹配 MiniExcel：逗号、
+CRLF、UTF-8 BOM、包含空格时加引号、空字段作为空字符串。Record 必须保持一致宽度。CLI
+通过 `miniexcel query-csv` 暴露相同 reader。
 
 ## 类型化读取
 
@@ -466,6 +489,6 @@ MiniExcel::save_as_template(
 
 ## 暂不支持
 
-目前不支持 CSV、`.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统，以及任意 worksheet copy/rename/reorder。
+目前不支持 `.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统，以及任意 worksheet copy/rename/reorder。
 
 当前支持范围请查看[兼容性矩阵](docs/compatibility.zh-CN.md)；有意保留的差异见 [MiniExcel v1 Insert 迁移说明](docs/insert-v1-migration.zh-CN.md)。

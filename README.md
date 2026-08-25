@@ -6,7 +6,7 @@
 [![Documentation](https://docs.rs/miniexcel/badge.svg)](https://docs.rs/miniexcel)
 [![License](https://img.shields.io/crates/l/miniexcel.svg)](LICENSE)
 
-A Rust XLSX reader and writer with bounded-memory streaming, Serde integration, structured cell access, analytics, and RAG exports.
+A Rust XLSX and CSV reader/writer with bounded-memory streaming, Serde integration, structured cell access, analytics, and RAG exports.
 
 **[Open the MiniExcel Browser Lab](https://mini-software.github.io/MiniExcel-Rust/)** to inspect or generate XLSX files locally. Workbooks never leave the browser.
 
@@ -34,6 +34,7 @@ This benchmark compares dynamic streaming Query performance: Rust uses `MiniExce
 - Structured reads with cell addresses, formulas, and number formats.
 - Worksheet selection, A1 ranges, headers, and empty-row filtering.
 - Serde-based typed reading and writing.
+- Streaming dynamic and typed CSV query, save, append, encodings, and dialect options.
 - Dynamic workbook creation with stable column ordering.
 - Atomic worksheet append to existing XLSX workbooks.
 - Filtered and grouped streaming analytics with explicit memory limits.
@@ -243,6 +244,28 @@ and user IDs, resolution state, local or offset timestamps, replies, and legacy 
 Compatibility-shadow notes are suppressed only when their `tc={thread-id}` author marker and cell
 both match a threaded root; unrelated notes at the same cell remain visible. Comment metadata is
 materialized, while worksheet rows are never read.
+
+### CSV
+
+CSV uses a separate streaming provider and keeps dynamic values as strings:
+
+```rust
+use miniexcel::{CsvConfiguration, CsvEncoding, CsvReadOptions, HeaderMode, MiniExcel};
+
+let options = CsvReadOptions::new()
+    .with_header_mode(HeaderMode::FirstRow)
+    .with_configuration(CsvConfiguration::new().with_encoding(CsvEncoding::Gbk));
+
+for row in MiniExcel::query_csv_with_options("data.csv", &options)? {
+    println!("{:?}", row?["Name"]);
+}
+```
+
+Dynamic and Serde APIs support paths, bytes, and borrowed readers/writers. Save and append accept
+inferred or explicit schemas. Configuration covers single-byte delimiters, CRLF/LF/CR, UTF-8,
+UTF-16LE/BE, GBK, Windows-1252, BOM output, empty-as-null reads, and quoting. Defaults match
+MiniExcel where practical: comma, CRLF, UTF-8 BOM, quoted spaces, and empty strings. Records must
+have a consistent width. The CLI exposes the same reader as `miniexcel query-csv`.
 
 ## Typed Reading
 
@@ -471,6 +494,6 @@ Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` f
 
 ## Not Supported
 
-CSV, `.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and arbitrary worksheet copying/renaming/reordering are not currently supported.
+`.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and arbitrary worksheet copying/renaming/reordering are not currently supported.
 
 See the [compatibility matrix](docs/compatibility.md) for the current support scope and the [MiniExcel v1 Insert migration guide](docs/insert-v1-migration.md) for deliberate differences.

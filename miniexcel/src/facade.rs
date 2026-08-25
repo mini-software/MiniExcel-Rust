@@ -1,4 +1,5 @@
-use std::io::{Read, Seek, Write};
+use std::fs::File;
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use serde::Serialize;
@@ -15,9 +16,9 @@ use crate::writer::{
     validate_single_sheet_options,
 };
 use crate::{
-    AnalysisResult, ByteQuerySummary, DynamicRow, ExcelRange, QueryPlan, QuerySummary, RagChunk,
-    RagExport, RagExportOptions, RagManifest, ReadOptions, Result, SheetInfo, StructuredRow,
-    TemplateOptions, WriteOptions,
+    AnalysisResult, ByteQuerySummary, CsvReadOptions, CsvWriteOptions, DynamicRow, ExcelRange,
+    QueryPlan, QuerySummary, RagChunk, RagExport, RagExportOptions, RagManifest, ReadOptions,
+    Result, SheetInfo, StructuredRow, TemplateOptions, WriteOptions,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{ExistingSheetPolicy, InsertOptions, TargetRelationshipPolicy};
@@ -150,6 +151,42 @@ impl MiniExcel {
         Ok(Box::new(StreamingTableTypedRows::open(path, table_name, sheet_name)?))
     }
 
+    /// Streams dynamic CSV records. Values remain strings and columns use Excel-style letters.
+    pub fn query_csv(
+        path: impl AsRef<Path>,
+    ) -> Result<Box<dyn Iterator<Item = Result<DynamicRow>> + Send>> {
+        Self::query_csv_with_options(path, &CsvReadOptions::default())
+    }
+
+    /// Streams dynamic CSV records using explicit delimiter, encoding, header, and null options.
+    pub fn query_csv_with_options(
+        path: impl AsRef<Path>,
+        options: &CsvReadOptions,
+    ) -> Result<Box<dyn Iterator<Item = Result<DynamicRow>> + Send>> {
+        Ok(Box::new(crate::csv_io::query_path(path, options)?))
+    }
+
+    /// Streams and deserializes headered CSV records through Serde.
+    pub fn query_csv_as<T>(
+        path: impl AsRef<Path>,
+    ) -> Result<Box<dyn Iterator<Item = Result<T>> + Send>>
+    where
+        T: DeserializeOwned + 'static,
+    {
+        Self::query_csv_as_with_options(path, &CsvReadOptions::default())
+    }
+
+    /// Streams and deserializes CSV records through Serde using explicit options.
+    pub fn query_csv_as_with_options<T>(
+        path: impl AsRef<Path>,
+        options: &CsvReadOptions,
+    ) -> Result<Box<dyn Iterator<Item = Result<T>> + Send>>
+    where
+        T: DeserializeOwned + 'static,
+    {
+        Ok(Box::new(crate::csv_io::query_path_as(path, options)?))
+    }
+
     /// Streams sparse rows while preserving cell coordinates, formulas, and number formats.
     ///
     /// Header mode does not consume the first row because structured reads expose source rows
@@ -189,6 +226,69 @@ impl MiniExcel {
         sheet_name: Option<&str>,
     ) -> Result<Vec<DynamicRow>> {
         crate::streaming::query_table_bytes(bytes, table_name, sheet_name)
+    }
+
+    /// Reads dynamic CSV records from bytes.
+    pub fn query_csv_bytes(bytes: &[u8], options: &CsvReadOptions) -> Result<Vec<DynamicRow>> {
+        crate::csv_io::query_bytes(bytes, options)
+    }
+
+    /// Reads typed CSV records from bytes through Serde.
+    pub fn query_csv_as_bytes<T>(bytes: &[u8], options: &CsvReadOptions) -> Result<Vec<T>>
+    where
+        T: DeserializeOwned,
+    {
+        crate::csv_io::query_bytes_as(bytes, options)
+    }
+
+    /// Streams dynamic CSV records from a borrowed reader and leaves it open.
+    pub fn query_csv_from_reader<'a, R>(
+        reader: &'a mut R,
+        options: &CsvReadOptions,
+    ) -> Result<Box<dyn Iterator<Item = Result<DynamicRow>> + 'a>>
+    where
+        R: Read + 'a,
+    {
+        Ok(Box::new(crate::csv_io::CsvRows::new(reader, options, false)?))
+    }
+
+    /// Streams typed CSV records from a borrowed reader and leaves it open.
+    pub fn query_csv_as_from_reader<'a, T, R>(
+        reader: &'a mut R,
+        options: &CsvReadOptions,
+    ) -> Result<Box<dyn Iterator<Item = Result<T>> + 'a>>
+    where
+        T: DeserializeOwned + 'a,
+        R: Read + 'a,
+    {
+        Ok(Box::new(crate::csv_io::CsvTypedRows::new(reader, options)?))
+    }
+
+    /// Returns dynamic CSV column names, including for header-only input.
+    pub fn get_csv_columns(
+        path: impl AsRef<Path>,
+        options: &CsvReadOptions,
+    ) -> Result<Vec<String>> {
+        crate::csv_io::get_columns(BufReader::new(File::open(path)?), options)
+    }
+
+    /// Returns dynamic CSV column names from bytes.
+    pub fn get_csv_columns_from_bytes(
+        bytes: &[u8],
+        options: &CsvReadOptions,
+    ) -> Result<Vec<String>> {
+        crate::csv_io::get_columns(Cursor::new(bytes), options)
+    }
+
+    /// Returns dynamic CSV column names from a borrowed reader.
+    pub fn get_csv_columns_from_reader<R>(
+        reader: &mut R,
+        options: &CsvReadOptions,
+    ) -> Result<Vec<String>>
+    where
+        R: Read,
+    {
+        crate::csv_io::get_columns(reader, options)
     }
 
     /// Visits in-memory worksheet rows without materializing the complete selection.
@@ -563,6 +663,175 @@ impl MiniExcel {
         }
         writer.save(path, options.overwrite_file())?;
         Ok(row_counts)
+    }
+
+    /// Writes dynamic rows to a CSV path.
+    pub fn save_csv(
+        path: impl AsRef<Path>,
+        rows: &[DynamicRow],
+        options: &CsvWriteOptions,
+    ) -> Result<usize> {
+        crate::csv_io::save_dynamic(path, None, rows, options)
+    }
+
+    /// Writes dynamic rows with an explicit CSV schema.
+    pub fn save_csv_with_schema(
+        path: impl AsRef<Path>,
+        schema: &[String],
+        rows: &[DynamicRow],
+        options: &CsvWriteOptions,
+    ) -> Result<usize> {
+        crate::csv_io::save_dynamic(path, Some(schema), rows, options)
+    }
+
+    /// Writes Serde rows to a CSV path.
+    pub fn save_csv_serialized<T>(
+        path: impl AsRef<Path>,
+        rows: &[T],
+        options: &CsvWriteOptions,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+    {
+        crate::csv_io::save_serialized(path, rows, options)
+    }
+
+    /// Writes dynamic CSV rows to a borrowed writer and leaves it open.
+    pub fn save_csv_to_writer<W>(
+        writer: &mut W,
+        rows: &[DynamicRow],
+        options: &CsvWriteOptions,
+    ) -> Result<usize>
+    where
+        W: Write,
+    {
+        crate::csv_io::write_dynamic(writer, None, rows, options, true)
+    }
+
+    /// Writes explicit-schema dynamic CSV rows to a borrowed writer.
+    pub fn save_csv_with_schema_to_writer<W>(
+        writer: &mut W,
+        schema: &[String],
+        rows: &[DynamicRow],
+        options: &CsvWriteOptions,
+    ) -> Result<usize>
+    where
+        W: Write,
+    {
+        crate::csv_io::write_dynamic(writer, Some(schema), rows, options, true)
+    }
+
+    /// Writes Serde CSV rows to a borrowed writer.
+    pub fn save_csv_serialized_to_writer<T, W>(
+        writer: &mut W,
+        rows: &[T],
+        options: &CsvWriteOptions,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+        W: Write,
+    {
+        crate::csv_io::write_serialized(writer, rows, options, true)
+    }
+
+    /// Creates CSV bytes from dynamic rows.
+    pub fn save_csv_bytes(rows: &[DynamicRow], options: &CsvWriteOptions) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        crate::csv_io::write_dynamic(&mut output, None, rows, options, true)?;
+        Ok(output)
+    }
+
+    /// Creates CSV bytes from explicit-schema dynamic rows.
+    pub fn save_csv_with_schema_bytes(
+        schema: &[String],
+        rows: &[DynamicRow],
+        options: &CsvWriteOptions,
+    ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        crate::csv_io::write_dynamic(&mut output, Some(schema), rows, options, true)?;
+        Ok(output)
+    }
+
+    /// Appends dynamic rows to a CSV path. Existing files receive neither BOM nor header.
+    pub fn append_csv(
+        path: impl AsRef<Path>,
+        rows: &[DynamicRow],
+        options: &CsvWriteOptions,
+    ) -> Result<usize> {
+        crate::csv_io::append_dynamic(path, None, rows, options)
+    }
+
+    /// Appends explicit-schema dynamic rows to a CSV path.
+    pub fn append_csv_with_schema(
+        path: impl AsRef<Path>,
+        schema: &[String],
+        rows: &[DynamicRow],
+        options: &CsvWriteOptions,
+    ) -> Result<usize> {
+        crate::csv_io::append_dynamic(path, Some(schema), rows, options)
+    }
+
+    /// Appends Serde rows to a CSV path.
+    pub fn append_csv_serialized<T>(
+        path: impl AsRef<Path>,
+        rows: &[T],
+        options: &CsvWriteOptions,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+    {
+        crate::csv_io::append_serialized(path, rows, options)
+    }
+
+    /// Appends dynamic rows to a borrowed seekable writer.
+    pub fn append_csv_to_writer<W>(
+        writer: &mut W,
+        rows: &[DynamicRow],
+        options: &CsvWriteOptions,
+    ) -> Result<usize>
+    where
+        W: Write + Seek,
+    {
+        let empty = writer.seek(SeekFrom::End(0))? == 0;
+        crate::csv_io::write_dynamic(writer, None, rows, options, empty)
+    }
+
+    /// Appends explicit-schema dynamic rows to a borrowed seekable writer.
+    pub fn append_csv_with_schema_to_writer<W>(
+        writer: &mut W,
+        schema: &[String],
+        rows: &[DynamicRow],
+        options: &CsvWriteOptions,
+    ) -> Result<usize>
+    where
+        W: Write + Seek,
+    {
+        let empty = writer.seek(SeekFrom::End(0))? == 0;
+        crate::csv_io::write_dynamic(writer, Some(schema), rows, options, empty)
+    }
+
+    /// Appends Serde rows to a borrowed seekable writer.
+    pub fn append_csv_serialized_to_writer<T, W>(
+        writer: &mut W,
+        rows: &[T],
+        options: &CsvWriteOptions,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+        W: Write + Seek,
+    {
+        let empty = writer.seek(SeekFrom::End(0))? == 0;
+        crate::csv_io::write_serialized(writer, rows, options, empty)
+    }
+
+    /// Creates CSV bytes from Serde rows.
+    pub fn save_csv_serialized_bytes<T>(rows: &[T], options: &CsvWriteOptions) -> Result<Vec<u8>>
+    where
+        T: Serialize,
+    {
+        let mut output = Cursor::new(Vec::new());
+        crate::csv_io::write_serialized(&mut output, rows, options, true)?;
+        Ok(output.into_inner())
     }
 
     /// Inserts dynamic rows as a new worksheet, or creates a workbook when the path is missing.

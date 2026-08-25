@@ -56,6 +56,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Async Insert producer | `insert_with_schema_async*()` | Optional `async` feature; bounded producer channel with blocking XLSX work on a dedicated thread |
 | Async path query | `query_async*()` / `query_as_async*()` | Optional `async` feature; bounded dynamic/Serde streams, cooperative cancellation, blocking XLSX workers |
 | Async explicit-schema export | `save_as_with_schema_async*()` | Optional `async` feature; bounded row producer, atomic destination, cooperative cancellation |
+| Async basic template path output | `save_as_template_async*()` | Optional `async` feature; scalar/list renderer, atomic destination, cooperative cancellation |
 | Per-sheet visibility | `WriteOptions::with_sheet_visibility()` | Visible, hidden, and very hidden; first visible sheet is active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | Defaults to `false`; existing paths require explicit opt-in |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | Defaults to one frozen row and zero frozen columns |
@@ -186,6 +187,7 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | Async Insert producer | Implemented behind optional feature | Rust cancellation tests; not shared internals |
 | Async dynamic/typed path query | Implemented behind optional feature | Rust parity, cancellation, error, and cleanup tests |
 | Async explicit-schema path export | Implemented behind optional feature | Rust success, rollback, cancellation, and cleanup tests; pinned .NET async-enumerable baseline |
+| Async basic template path output | Implemented behind optional feature | Rust success, rollback, cancellation, and cleanup tests; scoped pinned .NET async template baseline |
 | DataReader and broader stream ownership | Deferred | No |
 | Append worksheet to existing `.xlsx` workbook | Implemented and atomically committed | Rust tests; shared parity contract not yet extended |
 | Strict worksheet replacement | Implemented for plain targets and supported target-owned closures | Rust tests; stale calcChain removed and full recalculation requested |
@@ -200,4 +202,4 @@ This matrix is the coverage claim: Rust does not yet provide complete API parity
 
 ## Deferred Work
 
-SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, old Excel formats, advanced template directives and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, async template I/O, inferred/typed async export sources, async borrowed readers/writers, and borrowed XLSX lazy readers require separate design and acceptance milestones. CSV DataReader/DataTable adapters are intentionally replaced by Rust iterators, and a one-call CSV/XLSX converter is not exposed; callers compose query and save APIs. See the [Insert migration guide](insert-v1-migration.md) for supported workflows and deliberate differences.
+SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, old Excel formats, advanced template directives and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, async template streams, inferred/typed async export sources, async borrowed readers/writers, and borrowed XLSX lazy readers require separate design and acceptance milestones. CSV DataReader/DataTable adapters are intentionally replaced by Rust iterators, and a one-call CSV/XLSX converter is not exposed; callers compose query and save APIs. See the [Insert migration guide](insert-v1-migration.md) for supported workflows and deliberate differences.

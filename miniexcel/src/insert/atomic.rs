@@ -249,6 +249,63 @@ where
     Ok(row_count)
 }
 
+pub(super) fn template_to_path_with_hook<F, H>(
+    path: &Path,
+    overwrite: bool,
+    renderer: F,
+    mut checkpoint: H,
+) -> Result<()>
+where
+    F: FnOnce(&mut File) -> Result<()>,
+    H: FnMut(AtomicCommitStage) -> Result<()>,
+{
+    checkpoint(AtomicCommitStage::Preflight)?;
+    let _guard = PathMutationGuard::acquire(path, "template export")?;
+    let destination_fingerprint =
+        path.exists().then(|| SourceFingerprint::read(path)).transpose()?;
+    if destination_fingerprint.is_some() && !overwrite {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("destination '{}' already exists", path.display()),
+        )
+        .into());
+    }
+
+    let parent = sibling_directory(path);
+    let mut temporary =
+        tempfile::Builder::new().prefix(".miniexcel-").suffix(".xlsx.tmp").tempfile_in(parent)?;
+    checkpoint(AtomicCommitStage::RowGeneration)?;
+    renderer(temporary.as_file_mut())?;
+    temporary.as_file_mut().flush()?;
+    temporary.as_file().sync_all()?;
+    checkpoint(AtomicCommitStage::Validation)?;
+    validate_complete_package(temporary.reopen()?)?;
+    checkpoint(AtomicCommitStage::Commit)?;
+
+    match destination_fingerprint {
+        Some(fingerprint) => {
+            if SourceFingerprint::read(path)? != fingerprint {
+                return Err(Error::atomic_commit(format!(
+                    "destination workbook '{}' changed during template export",
+                    path.display()
+                )));
+            }
+            let permissions = fs::metadata(path)?.permissions();
+            replace_temporary(temporary, path, permissions)
+        }
+        None => {
+            if path.exists() {
+                return Err(Error::atomic_commit(format!(
+                    "destination workbook '{}' was created during template export",
+                    path.display()
+                )));
+            }
+            let permissions = temporary.as_file().metadata()?.permissions();
+            persist_new_temporary(temporary, path, permissions)
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn copy_and_add_to_path_with_hook<F, H>(
     source_path: &Path,
@@ -756,12 +813,18 @@ fn persist_new_temporary(
 }
 
 fn validate_rewritten_package(mut file: File, sheet_name: &str) -> Result<()> {
-    let inventory = PackageInventory::inspect(&mut file)?;
+    let inventory = validate_complete_package(file.try_clone()?)?;
     if inventory.find_sheet(sheet_name).is_none() {
         return Err(Error::insert_package(format!(
             "rewritten worksheet '{sheet_name}' is missing"
         )));
     }
+    file.rewind()?;
+    Ok(())
+}
+
+fn validate_complete_package(mut file: File) -> Result<PackageInventory> {
+    let inventory = PackageInventory::inspect(&mut file)?;
     if !inventory.sheets.iter().any(|sheet| sheet.visibility == SheetVisibility::Visible) {
         return Err(Error::no_visible_worksheets());
     }
@@ -861,7 +924,7 @@ fn validate_rewritten_package(mut file: File, sheet_name: &str) -> Result<()> {
         })?;
         std::io::copy(&mut entry, &mut std::io::sink())?;
     }
-    Ok(())
+    Ok(inventory)
 }
 
 fn relationship_part_source(path: &str) -> Result<Option<String>> {

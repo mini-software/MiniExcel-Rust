@@ -580,6 +580,13 @@ MiniExcel::save_as_template(
 
 Scalar placeholders use `{{title}}`. A row containing `{{items.name}}` is repeated once per array item. Exact number, boolean, and null placeholders become native cell values; mixed text becomes an inline string. Missing variables are blank by default and can be rejected with `with_ignore_missing_variables(false)`. Path output refuses existing files unless `with_overwrite_file(true)` is set. `save_as_template_bytes()` supports in-memory templates.
 
+With the optional `async` feature, `save_as_template_async()` and
+`save_as_template_async_with_cancellation()` run blocking template ZIP/XML work on a worker thread
+and atomically publish the validated path output. Pre-cancellation, rendering errors, dropped
+futures, and cancellation before commit preserve an existing destination byte-for-byte or leave a
+missing destination absent. This does not make ZIP/filesystem operations asynchronous and retains
+the current in-memory template rendering model.
+
 Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` formula templates, or formula recalculation.
 
 ## Important Semantics

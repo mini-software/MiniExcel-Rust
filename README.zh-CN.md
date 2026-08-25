@@ -570,6 +570,12 @@ MiniExcel::save_as_template(
 
 标量占位符使用 `{{title}}`。包含 `{{items.name}}` 的 row 会按数组 item 数量重复。单独的 number、boolean 和 null 占位符会写成原生 cell value；混合文本写成 inline string。缺失变量默认留空，也可用 `with_ignore_missing_variables(false)` 拒绝。路径输出默认拒绝已有文件，设置 `with_overwrite_file(true)` 后才覆盖。内存模板可使用 `save_as_template_bytes()`。
 
+启用可选 `async` feature 后，`save_as_template_async()` 与
+`save_as_template_async_with_cancellation()` 会在 worker thread 执行 blocking template
+ZIP/XML 工作，并原子发布通过验证的 path output。Pre-cancellation、render error、drop future
+以及 commit 前 cancellation 会保留已有 destination 的原始字节，或让缺失 destination 继续
+不存在。该 API 不会把 ZIP/filesystem 操作变成 async，并保留当前模板内存渲染模型。
+
 版本 1 尚不支持 `@group`、`@if`、参数化 sheet 克隆、`$=` 公式模板或公式重算。
 
 ## 重要语义

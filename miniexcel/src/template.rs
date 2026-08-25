@@ -40,8 +40,56 @@ pub(crate) fn fill_bytes<T>(
 where
     T: Serialize,
 {
-    let value = serde_json::to_value(value)
-        .map_err(|error| Error::template(format!("cannot serialize template data: {error}")))?;
+    let value = serialize_value(value)?;
+    fill_bytes_value(template, &value, options)
+}
+
+pub(crate) fn serialize_value<T>(value: &T) -> Result<Value>
+where
+    T: Serialize,
+{
+    serde_json::to_value(value)
+        .map_err(|error| Error::template(format!("cannot serialize template data: {error}")))
+}
+
+pub(crate) fn fill_bytes_value(
+    template: &[u8],
+    value: &Value,
+    options: &TemplateOptions,
+) -> Result<Vec<u8>> {
+    fill_bytes_value_with_check(template, value, options, &mut || Ok(()))
+}
+
+#[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+pub(crate) fn fill_path_value_to_writer<W, F>(
+    writer: &mut W,
+    template_path: &Path,
+    value: &Value,
+    options: &TemplateOptions,
+    check: &mut F,
+) -> Result<()>
+where
+    W: Write,
+    F: FnMut() -> Result<()>,
+{
+    check()?;
+    let template = std::fs::read(template_path)?;
+    check()?;
+    let output = fill_bytes_value_with_check(&template, value, options, check)?;
+    check()?;
+    writer.write_all(&output)?;
+    Ok(())
+}
+
+fn fill_bytes_value_with_check<F>(
+    template: &[u8],
+    value: &Value,
+    options: &TemplateOptions,
+    check: &mut F,
+) -> Result<Vec<u8>>
+where
+    F: FnMut() -> Result<()>,
+{
     let mut archive = ZipArchive::new(Cursor::new(template))
         .map_err(|error| Error::template(format!("cannot open template workbook: {error}")))?;
     let shared_strings = read_shared_strings(&mut archive)?;
@@ -49,6 +97,7 @@ where
     let mut writer = ZipWriter::new(output);
 
     for index in 0..archive.len() {
+        check()?;
         let mut entry = archive
             .by_index(index)
             .map_err(|error| Error::template(format!("cannot read template entry: {error}")))?;
@@ -63,8 +112,9 @@ where
             let rendered = render_worksheet(
                 &xml,
                 &shared_strings,
-                &value,
+                value,
                 options.ignore_missing_variables(),
+                check,
             )?;
             let mut file_options = SimpleFileOptions::default().compression_method(compression);
             if let Some(modified) = modified {
@@ -145,6 +195,7 @@ fn render_worksheet(
     shared_strings: &[String],
     data: &Value,
     ignore_missing: bool,
+    check: &mut impl FnMut() -> Result<()>,
 ) -> Result<Vec<u8>> {
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -188,6 +239,7 @@ fn render_worksheet(
     let mut previous_source_row = 0_usize;
     let mut max_output_row = 1_usize;
     for row in rows {
+        check()?;
         let source_row = row_number(&row).unwrap_or(previous_source_row.saturating_add(1));
         previous_source_row = source_row;
         let output_row = source_row.saturating_add(shift);

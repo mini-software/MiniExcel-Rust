@@ -1348,6 +1348,56 @@ impl MiniExcel {
         crate::template::fill_path(path, template_path, value, options)
     }
 
+    /// Fills an XLSX template on a blocking worker and atomically publishes the output path.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn save_as_template_async<T>(
+        path: impl AsRef<Path>,
+        template_path: impl AsRef<Path>,
+        value: &T,
+        options: &TemplateOptions,
+    ) -> Result<()>
+    where
+        T: Serialize,
+    {
+        Self::save_as_template_async_with_cancellation(
+            path,
+            template_path,
+            value,
+            options,
+            crate::CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Fills an XLSX template asynchronously with cooperative cancellation.
+    ///
+    /// ZIP/XML/filesystem work remains blocking on a dedicated worker. Producer serialization is
+    /// completed before the worker starts, so `T` does not need `Send` or a static lifetime.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn save_as_template_async_with_cancellation<T>(
+        path: impl AsRef<Path>,
+        template_path: impl AsRef<Path>,
+        value: &T,
+        options: &TemplateOptions,
+        cancellation: crate::CancellationToken,
+    ) -> Result<()>
+    where
+        T: Serialize,
+    {
+        if cancellation.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+        let value = crate::template::serialize_value(value)?;
+        crate::insert::async_template::fill_path_async(
+            path.as_ref().to_owned(),
+            template_path.as_ref().to_owned(),
+            value,
+            options.clone(),
+            cancellation,
+        )
+        .await
+    }
+
     /// Fills an in-memory XLSX template and returns the generated workbook bytes.
     pub fn save_as_template_bytes<T>(
         template_bytes: &[u8],

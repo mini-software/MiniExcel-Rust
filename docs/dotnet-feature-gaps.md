@@ -8,7 +8,7 @@ This report compares observable public capabilities in the local checkouts below
 
 | Project | Revision |
 | --- | --- |
-| MiniExcel-Rust | working tree based on `693dfbf` (`0.3.0`) |
+| MiniExcel-Rust | working tree based on `4078f8f` (`0.3.0`) |
 | MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 The comparison uses the .NET public APIs, their controlling implementations, and focused tests under the sibling `../MiniExcel` checkout. Rust status is based on the public `MiniExcel` facade, options, integration tests, and [compatibility boundary](compatibility.md).
@@ -31,11 +31,11 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Named tables | Implemented | Dynamic/typed path queries, byte queries, and borrowed-reader visitors use table metadata headers and bounds with case-insensitive table-name matching. |
 | DataReader and DataTable | Different by design | Rust exposes iterators and borrowed visitors instead of .NET tabular interfaces. A Rust-native Arrow/record-batch adapter is deferred until a concrete integration requires it and does not block parity completion. |
 | Caller-owned streams | Partial | Borrowed synchronous dynamic/typed/structured visitors, metadata reads, dynamic/schema/typed/multi-sheet writers, and separate reader-to-writer Insert are implemented with leave-open semantics. Borrowed lazy iterators, borrowed async streams, and template streams remain unsupported. |
-| Async and cancellation | Partial | Optional runtime-neutral dynamic/Serde path queries, explicit-schema path export, and explicit-schema Insert support bounded streams and cooperative cancellation. Async template operations, inferred/typed async write sources, borrowed async I/O, and progress callbacks remain unsupported. ZIP and filesystem work remains blocking on dedicated workers. |
+| Async and cancellation | Partial | Optional runtime-neutral dynamic/Serde path queries, explicit-schema path export, basic template path output, and explicit-schema Insert support cooperative cancellation and atomic publication where applicable. Advanced template streams, inferred/typed async write sources, borrowed async I/O, and progress callbacks remain unsupported. ZIP and filesystem work remains blocking on dedicated workers. |
 | General save inputs | Partial | Export from general objects/enumerables, dictionaries, `DataTable`, `IDataReader`, and async enumerables, with progress. Rust accepts dynamic or same-type Serde slices and reports per-sheet row counts. |
 | Multi-sheet export | Partial | Rust creates ordered visible, hidden, and very-hidden worksheets, but does not yet accept heterogeneous Serde row types in one call. |
 | Existing-workbook operations | Implemented | Rust atomically appends, strictly replaces, renames, changes visibility, reorders, and performs .NET-style source-workbook copy-and-add while preserving unrelated package parts and worksheet identity. Rename preserves formula text; visibility rejects hiding the final visible sheet; reorder remaps active/view/local-name indices; copy-and-add preserves the source and atomically publishes a separate destination. |
-| Templates | Partial | Rust fills path/byte templates with scalar values and single-row arrays while preserving package parts. Streams, grouping, conditions, parametrized sheets, `$=` formulas, formula-reference updates, and calculation-chain handling remain unsupported. |
+| Templates | Partial | Rust fills path/byte templates with scalar values and single-row arrays while preserving package parts; path output also has a cancellable async wrapper. Streams, grouping, conditions, parametrized sheets, `$=` formulas, formula-reference updates, and calculation-chain handling remain unsupported. |
 | Pictures and merge processing | Missing | Add anchored pictures and merge adjacent identical cells through the templater surface. Structured reads do not provide authoring parity. |
 | CSV | Implemented | Dynamic/Serde path, byte, and borrowed query/save APIs; column discovery; inferred/explicit-schema append; delimiter/newline/encoding/BOM/null/quoting configuration; and `query-csv` CLI. DataReader/DataTable are replaced by Rust iterators. Async/progress APIs and a one-call CSV/XLSX converter are not exposed. |
 | Comments and notes | Implemented | Path/bytes/borrowed APIs return threaded roots, replies, unresolved person IDs, people/provider/user IDs, resolution state, typed timestamps, and legacy notes. |
@@ -53,6 +53,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Public read/write boundary | `miniexcel/src/facade.rs`, `miniexcel/src/options.rs` | `src/MiniExcel.OpenXml/Api/OpenXmlImporter.cs`, `OpenXmlExporter.cs` |
 | Async query | `MiniExcel::query_async*` and `query_as_async*`; Rust focused parity/cancellation/error/cleanup tests | `OpenXmlImporter.QueryAsync`; `MiniExcelOpenXmlImporterAsyncTests` |
 | Async export | `MiniExcel::save_as_with_schema_async*`; Rust focused rollback/cancellation/cleanup tests | `OpenXmlExporter.ExportAsync`; async-enumerable exporter tests |
+| Async template | `MiniExcel::save_as_template_async*`; Rust focused rollback/cancellation/cleanup tests | `OpenXmlTemplater.SaveAsByTemplateAsync`; scoped basic/cancellation tests |
 | Tables | `MiniExcel::query_table*`; Rust focused tests use the exact `TestQueryTable.xlsx` fixture (SHA-256 `04F719BF9F9E99D9B437A8FB32F8111FD92580A1D29ACAD10B6ED128C0564501`) | `OpenXmlImporter.QueryTableAsync`; `tests/MiniExcel.OpenXml.Tests/Tables/` |
 | Comments | `MiniExcel::get_comments*`; Rust focused tests use `TestCommentsAndNotes.xlsx` (SHA-256 `3A855CE896ED62DC27C91797432DD89EE081F07CD03AB05BF1B0CD745543A3FC`) | `OpenXmlImporter.RetrieveCommentsAsync`; `tests/MiniExcel.OpenXml.Tests/Comments/` |
 | DataReader/DataTable | Rust iterators and borrowed visitors are the native abstraction; no literal .NET tabular adapter is planned | `OpenXmlImporter.GetDataReader`, `GetAsyncDataReader`, `QueryAsDataTableAsync`; `tests/MiniExcel.OpenXml.Tests/DataReader/` |
@@ -67,7 +68,7 @@ The .NET APIs marked with `Async` also have generated synchronous counterparts t
 
 ## Suggested Implementation Order
 
-1. **Async template and broader export APIs**: extend runtime-neutral cancellation to templates and typed/inferred producers without presenting blocking ZIP work as async I/O.
+1. **Broader async export/stream APIs**: extend runtime-neutral cancellation to typed/inferred producers and borrowed streams without presenting blocking ZIP work as async I/O.
 2. **Advanced templates and Fluent Mapping**: add grouped/conditional templates, parametrized sheets, and mapping through separate compatibility milestones.
 3. **Selected-sheet cloning**: not part of .NET `CopyAndAddSheet`; add only for a concrete Rust use case with a relationship-closure cloning contract.
 

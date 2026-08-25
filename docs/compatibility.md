@@ -187,7 +187,9 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | DataReader and broader stream ownership | Deferred | No |
 | Append worksheet to existing `.xlsx` workbook | Implemented and atomically committed | Rust tests; shared parity contract not yet extended |
 | Strict worksheet replacement | Implemented for plain targets and supported target-owned closures | Rust tests; stale calcChain removed and full recalculation requested |
+| Atomic worksheet rename | Implemented for existing `.xlsx` paths | Rust package-preservation tests; pinned .NET `AlterSheet` baseline |
 | Legacy `.xls`, `.xlsb`, and `.ods` formats | Deferred | No |
+| Worksheet copy/reorder/visibility mutation | Deferred | No |
 | Advanced templates, pictures, and merges | Deferred | No |
 
 This matrix is the coverage claim: Rust does not yet provide complete API parity with the current .NET packages.

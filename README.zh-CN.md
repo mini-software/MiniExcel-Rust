@@ -413,6 +413,18 @@ XML depth 与 relationship count；同时拒绝不安全或别名 part path、�
 lock，并在 commit 前校验 source SHA-256 fingerprint；并发 writer 或外部 source 变化会返回
 确定性 conflict，不会静默覆盖更新后的内容。
 
+可以在不改变 package identity 或位置的情况下重命名现有 worksheet：
+
+```rust
+MiniExcel::rename_sheet("book.xlsx", "Sheet1", "Archive")?;
+```
+
+Source 按大小写不敏感匹配，也支持只改变大小写。Path 更新具备原子性，并与 Insert 共用
+lock、fingerprint、package validation、permission preservation 和 raw ZIP copy pipeline。
+Duplicate/非法 target name 会在 commit 前被拒绝。Worksheet relationship、ID、顺序、
+visibility、active state、formula 和 defined name 均保留。与 .NET `AlterSheet` 一样，引用旧
+sheet name 的 formula/defined-name 文本不会自动重写；调用方必须另行更新这些引用。
+
 启用可选 `async` feature 后，可通过 runtime-neutral
 `Stream<Item = miniexcel::Result<DynamicRow>>` 为现有 workbook 的 Insert 提供 row：
 
@@ -510,10 +522,10 @@ MiniExcel::save_as_template(
 - 分组分析保留与不同 group 数量成比例的状态，并在 `max_groups` 停止。
 - RAG 导出不会重新计算公式，hidden sheet 未显式允许时会拒绝处理。
 - 同步流式 query 每个活动 query 使用一个 worker thread。可选 async query/Insert API 通过 bounded channel 包装 blocking XLSX worker；ZIP/XML/filesystem 工作并不是 async I/O。
-- Save 会创建新工作簿，并默认拒绝已有目标路径。`MiniExcel::insert*()` 会向现有 `.xlsx` path 原子 append 或严格 replace worksheet；路径不存在时则创建 workbook。
+- Save 会创建新工作簿，并默认拒绝已有目标路径。`MiniExcel::insert*()` 会向现有 `.xlsx` path 原子 append 或严格 replace worksheet；路径不存在时则创建 workbook。`rename_sheet()` 只原子修改现有 workbook 的 sheet metadata。
 
 ## 暂不支持
 
-目前不支持 `.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统，以及任意 worksheet copy/rename/reorder。
+目前不支持 `.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统，以及任意 worksheet copy/reorder/visibility mutation。
 
 当前支持范围请查看[兼容性矩阵](docs/compatibility.zh-CN.md)；有意保留的差异见 [MiniExcel v1 Insert 迁移说明](docs/insert-v1-migration.zh-CN.md)。

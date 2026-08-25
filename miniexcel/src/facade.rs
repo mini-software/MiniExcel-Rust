@@ -914,6 +914,20 @@ impl MiniExcel {
         Ok(output.into_inner())
     }
 
+    /// Atomically renames an existing XLSX worksheet.
+    ///
+    /// The source lookup is case-insensitive. Sheet order, visibility, identity, relationships,
+    /// formulas, and defined-name formulas are preserved. Formula text that references the old
+    /// sheet name is not rewritten.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn rename_sheet(
+        path: impl AsRef<Path>,
+        sheet_name: &str,
+        new_sheet_name: &str,
+    ) -> Result<()> {
+        crate::insert::atomic::rename_sheet_to_path(path, sheet_name, new_sheet_name)
+    }
+
     /// Inserts dynamic rows as a new worksheet, or creates a workbook when the path is missing.
     ///
     /// Existing workbooks are replaced atomically only after the rewritten package validates.

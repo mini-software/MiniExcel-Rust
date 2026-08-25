@@ -419,6 +419,19 @@ Insert holds a cross-process advisory lock and verifies a source SHA-256 fingerp
 concurrent writers or external source changes return a deterministic conflict instead of silently
 overwriting newer content.
 
+Rename an existing worksheet without changing its package identity or position:
+
+```rust
+MiniExcel::rename_sheet("book.xlsx", "Sheet1", "Archive")?;
+```
+
+Source matching is case-insensitive, including case-only renames. The path update is atomic and
+uses the same lock, fingerprint, package validation, permission preservation, and raw ZIP copy
+pipeline as Insert. Duplicate and invalid target names are rejected before commit. Worksheet
+relationships, IDs, order, visibility, active state, formulas, and defined names are preserved.
+Like .NET `AlterSheet`, formula and defined-name text that references the old sheet name is not
+rewritten; callers must update those references separately.
+
 Enable the optional `async` feature to feed an existing-workbook Insert from a runtime-neutral
 `Stream<Item = miniexcel::Result<DynamicRow>>`:
 
@@ -517,10 +530,10 @@ Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` f
 - Grouped analytics retain state proportional to distinct groups and stop at `max_groups`.
 - RAG exports never recalculate formulas and reject hidden sheets unless explicitly allowed.
 - Synchronous streaming queries use one worker thread per active query. Optional async query and Insert APIs use bounded channels around blocking XLSX workers; ZIP/XML/filesystem work is not async I/O.
-- Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends or strictly replaces a worksheet in an existing `.xlsx` path, or creates a workbook when the path is missing.
+- Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends or strictly replaces a worksheet in an existing `.xlsx` path, or creates a workbook when the path is missing. `rename_sheet()` atomically changes only existing workbook sheet metadata.
 
 ## Not Supported
 
-`.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and arbitrary worksheet copying/renaming/reordering are not currently supported.
+`.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and arbitrary worksheet copying/reordering/visibility mutation are not currently supported.
 
 See the [compatibility matrix](docs/compatibility.md) for the current support scope and the [MiniExcel v1 Insert migration guide](docs/insert-v1-migration.md) for deliberate differences.

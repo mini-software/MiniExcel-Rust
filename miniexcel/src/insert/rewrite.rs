@@ -398,6 +398,114 @@ where
     )
 }
 
+pub(super) fn rename_worksheet_to_writer_with_hook<R, W, F>(
+    mut source: R,
+    destination: W,
+    relationship_id: &str,
+    new_sheet_name: &str,
+    mut checkpoint: F,
+) -> Result<W>
+where
+    R: Read + Seek,
+    W: Write + Seek,
+    F: FnMut(PackageRewriteStage) -> Result<()>,
+{
+    source.seek(SeekFrom::Start(0))?;
+    let mut archive = ZipArchive::new(source).map_err(|error| {
+        Error::insert_package(format!("cannot reopen source workbook: {error}"))
+    })?;
+    let workbook_xml = read_part(&mut archive, WORKBOOK_PATH)?;
+    let workbook_xml = rename_workbook_sheet(&workbook_xml, relationship_id, new_sheet_name)?;
+    let replacements = BTreeMap::from([(WORKBOOK_PATH.to_owned(), workbook_xml)]);
+    write_package(
+        archive,
+        destination,
+        &replacements,
+        &BTreeSet::new(),
+        None,
+        None,
+        &mut checkpoint,
+    )
+}
+
+fn rename_workbook_sheet(
+    xml: &[u8],
+    relationship_id: &str,
+    new_sheet_name: &str,
+) -> Result<Vec<u8>> {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(Vec::with_capacity(xml.len() + new_sheet_name.len()));
+    let mut buffer = Vec::new();
+    let mut depth = 0_usize;
+    let mut in_sheets = false;
+    let mut renamed = 0_usize;
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| Error::insert_package(format!("invalid workbook XML: {error}")))?;
+        match event {
+            Event::Start(start) => {
+                let is_sheets = depth == 1 && local_name(start.name().as_ref()) == b"sheets";
+                if in_sheets
+                    && depth == 2
+                    && local_name(start.name().as_ref()) == b"sheet"
+                    && xml_attribute(&start, b"id")?.as_deref() == Some(relationship_id)
+                {
+                    write_event(
+                        &mut writer,
+                        Event::Start(replace_optional_attribute(
+                            &start,
+                            b"name",
+                            Some(new_sheet_name),
+                        )?),
+                    )?;
+                    renamed += 1;
+                } else {
+                    write_event(&mut writer, Event::Start(start.into_owned()))?;
+                }
+                depth += 1;
+                in_sheets |= is_sheets;
+            }
+            Event::Empty(empty) => {
+                if in_sheets
+                    && depth == 2
+                    && local_name(empty.name().as_ref()) == b"sheet"
+                    && xml_attribute(&empty, b"id")?.as_deref() == Some(relationship_id)
+                {
+                    write_event(
+                        &mut writer,
+                        Event::Empty(replace_optional_attribute(
+                            &empty,
+                            b"name",
+                            Some(new_sheet_name),
+                        )?),
+                    )?;
+                    renamed += 1;
+                } else {
+                    write_event(&mut writer, Event::Empty(empty.into_owned()))?;
+                }
+            }
+            Event::End(end) => {
+                depth = depth.saturating_sub(1);
+                if in_sheets && depth == 1 && local_name(end.name().as_ref()) == b"sheets" {
+                    in_sheets = false;
+                }
+                write_event(&mut writer, Event::End(end.into_owned()))?;
+            }
+            Event::Eof => break,
+            event => write_event(&mut writer, event.into_owned())?,
+        }
+        buffer.clear();
+    }
+    if renamed != 1 {
+        return Err(Error::insert_package(format!(
+            "workbook contains {renamed} worksheets with relationship ID '{relationship_id}'"
+        )));
+    }
+    Ok(writer.into_inner())
+}
+
 pub(super) fn replace_worksheet_to_writer_with_hook<R, W, F>(
     mut source: R,
     destination: W,

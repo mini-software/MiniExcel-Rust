@@ -12,8 +12,9 @@ use super::donor::DonorWorksheet;
 use super::package::PackageInventory;
 use super::rewrite::{
     PackageRewriteStage, ReplacementPlan, append_worksheet_to_writer_with_hook, plan_replacement,
-    replace_worksheet_to_writer_with_hook,
+    rename_worksheet_to_writer_with_hook, replace_worksheet_to_writer_with_hook,
 };
+use crate::writer::validate_sheet_name;
 use crate::{Error, ExistingSheetPolicy, Result, SheetVisibility, TargetRelationshipPolicy};
 
 const WORKSHEET_CONTENT_TYPE: &str =
@@ -29,12 +30,12 @@ pub(super) enum AtomicCommitStage {
     Commit,
 }
 
-struct PathInsertGuard {
+struct PathMutationGuard {
     file: File,
 }
 
-impl PathInsertGuard {
-    fn acquire(path: &Path) -> Result<Self> {
+impl PathMutationGuard {
+    fn acquire(path: &Path, operation: &str) -> Result<Self> {
         let canonical = fs::canonicalize(path)?;
         let digest = Sha256::digest(canonical.to_string_lossy().as_bytes());
         let directory = std::env::temp_dir().join("miniexcel-insert-locks");
@@ -48,7 +49,7 @@ impl PathInsertGuard {
             .open(lock_path)?;
         file.try_lock_exclusive().map_err(|error| {
             Error::atomic_commit(format!(
-                "concurrent Insert conflict for '{}': {error}",
+                "concurrent {operation} conflict for '{}': {error}",
                 path.display()
             ))
         })?;
@@ -56,7 +57,7 @@ impl PathInsertGuard {
     }
 }
 
-impl Drop for PathInsertGuard {
+impl Drop for PathMutationGuard {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.file);
     }
@@ -122,6 +123,82 @@ where
     )
 }
 
+pub(crate) fn rename_sheet_to_path(
+    path: impl AsRef<Path>,
+    sheet_name: &str,
+    new_sheet_name: &str,
+) -> Result<()> {
+    rename_sheet_to_path_with_hook(path.as_ref(), sheet_name, new_sheet_name, |_| Ok(()))
+}
+
+fn rename_sheet_to_path_with_hook<H>(
+    path: &Path,
+    sheet_name: &str,
+    new_sheet_name: &str,
+    mut checkpoint: H,
+) -> Result<()>
+where
+    H: FnMut(AtomicCommitStage) -> Result<()>,
+{
+    validate_sheet_name(sheet_name, &std::collections::HashSet::new())?;
+    validate_sheet_name(new_sheet_name, &std::collections::HashSet::new())?;
+    checkpoint(AtomicCommitStage::Preflight)?;
+    let _guard = PathMutationGuard::acquire(path, "workbook mutation")?;
+    let source_fingerprint = SourceFingerprint::read(path)?;
+    let source_metadata = fs::metadata(path)?;
+    let mut source = File::open(path)?;
+    let inventory = PackageInventory::inspect(&mut source)?;
+    let target = inventory
+        .find_sheet(sheet_name)
+        .cloned()
+        .ok_or_else(|| Error::sheet_not_found(sheet_name))?;
+    if inventory
+        .find_sheet(new_sheet_name)
+        .is_some_and(|sheet| sheet.relationship_id != target.relationship_id)
+    {
+        return Err(Error::duplicate_sheet_name(new_sheet_name));
+    }
+    if target.name == new_sheet_name {
+        return Ok(());
+    }
+
+    let parent = sibling_directory(path);
+    let mut temporary =
+        tempfile::Builder::new().prefix(".miniexcel-").suffix(".xlsx.tmp").tempfile_in(parent)?;
+    source.rewind()?;
+    rename_worksheet_to_writer_with_hook(
+        source,
+        temporary.as_file_mut(),
+        &target.relationship_id,
+        new_sheet_name,
+        |stage| match stage {
+            PackageRewriteStage::Copy => checkpoint(AtomicCommitStage::ZipCopy),
+            PackageRewriteStage::Finish => checkpoint(AtomicCommitStage::ZipFinish),
+        },
+    )?;
+    temporary.as_file_mut().flush()?;
+    temporary.as_file().sync_all()?;
+
+    checkpoint(AtomicCommitStage::Validation)?;
+    validate_rewritten_package(temporary.reopen()?, new_sheet_name)?;
+    let rewritten = PackageInventory::inspect(temporary.reopen()?)?;
+    let mut expected_sheets = inventory.sheets;
+    expected_sheets[target.index].name = new_sheet_name.to_owned();
+    if rewritten.sheets != expected_sheets {
+        return Err(Error::atomic_commit(
+            "worksheet rename changed workbook sheet identity, order, or visibility",
+        ));
+    }
+    checkpoint(AtomicCommitStage::Commit)?;
+    if SourceFingerprint::read(path)? != source_fingerprint {
+        return Err(Error::atomic_commit(format!(
+            "source workbook '{}' changed during worksheet rename",
+            path.display()
+        )));
+    }
+    replace_temporary(temporary, path, source_metadata.permissions())
+}
+
 fn append_to_path_with_hook<F, H>(
     path: &Path,
     sheet_name: &str,
@@ -161,7 +238,7 @@ where
     H: FnMut(AtomicCommitStage) -> Result<()>,
 {
     checkpoint(AtomicCommitStage::Preflight)?;
-    let _guard = PathInsertGuard::acquire(path)?;
+    let _guard = PathMutationGuard::acquire(path, "Insert")?;
     let source_fingerprint = SourceFingerprint::read(path)?;
     let source_metadata = fs::metadata(path)?;
     let mut source = File::open(path)?;
@@ -593,16 +670,85 @@ mod tests {
     }
 
     #[test]
+    fn rename_failures_preserve_source_and_clean_temporary_packages() {
+        for failure in [
+            AtomicCommitStage::Preflight,
+            AtomicCommitStage::ZipCopy,
+            AtomicCommitStage::ZipFinish,
+            AtomicCommitStage::Validation,
+            AtomicCommitStage::Commit,
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("book.xlsx");
+            fs::write(&path, source_package()).unwrap();
+            let before = file_hash(&path);
+            let observed_directory = directory.path().to_owned();
+
+            let result = rename_sheet_to_path_with_hook(&path, "Data", "Renamed", |stage| {
+                if stage == AtomicCommitStage::ZipCopy {
+                    assert!(fs::read_dir(&observed_directory).unwrap().any(|entry| {
+                        entry.unwrap().file_name().to_string_lossy().starts_with(".miniexcel-")
+                    }));
+                }
+                if stage == failure {
+                    Err(Error::atomic_commit(format!("injected {stage:?} failure")))
+                } else {
+                    Ok(())
+                }
+            });
+
+            assert!(result.is_err(), "{failure:?} did not fail");
+            assert_eq!(file_hash(&path), before, "{failure:?} changed the source file");
+            assert_no_temporary_files(directory.path());
+        }
+    }
+
+    #[test]
+    fn source_change_during_rename_preserves_external_content() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("book.xlsx");
+        fs::write(&path, source_package()).unwrap();
+        let external = source_package_with_marker();
+        let replacement = external.clone();
+
+        let error = rename_sheet_to_path_with_hook(&path, "Data", "Renamed", |stage| {
+            if stage == AtomicCommitStage::Commit {
+                fs::write(&path, &replacement)?;
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("changed during worksheet rename"));
+        assert_eq!(fs::read(&path).unwrap(), external);
+        assert_no_temporary_files(directory.path());
+    }
+
+    #[test]
     fn concurrent_path_insert_is_rejected_while_lock_is_held() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("book.xlsx");
         fs::write(&path, source_package()).unwrap();
-        let _guard = PathInsertGuard::acquire(&path).unwrap();
+        let _guard = PathMutationGuard::acquire(&path, "Insert").unwrap();
 
         let error = append_to_path(&path, "Inserted", || donor("Inserted", 1)).unwrap_err();
         assert!(error.to_string().contains("concurrent Insert conflict"));
         let inventory = PackageInventory::inspect(File::open(&path).unwrap()).unwrap();
         assert_eq!(inventory.sheets.len(), 1);
+    }
+
+    #[test]
+    fn concurrent_rename_is_rejected_by_the_insert_path_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("book.xlsx");
+        fs::write(&path, source_package()).unwrap();
+        let before = file_hash(&path);
+        let _guard = PathMutationGuard::acquire(&path, "Insert").unwrap();
+
+        let error = rename_sheet_to_path(&path, "Data", "Renamed").unwrap_err();
+
+        assert!(error.to_string().contains("concurrent workbook mutation conflict"));
+        assert_eq!(file_hash(&path), before);
     }
 
     #[test]

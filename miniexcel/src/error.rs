@@ -77,6 +77,10 @@ enum ErrorKind {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     AtomicCommit(String),
 
+    #[error("Insert operation was cancelled")]
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    Cancelled,
+
     #[error("failed to deserialize worksheet '{sheet}' at Excel row {row}: {source}")]
     Deserialize {
         sheet: String,
@@ -99,6 +103,12 @@ enum ErrorKind {
 }
 
 impl Error {
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self.0, ErrorKind::Cancelled)
+    }
+
     pub(crate) fn template(message: impl Into<String>) -> Self {
         ErrorKind::Template(message.into()).into()
     }
@@ -178,6 +188,11 @@ impl Error {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn atomic_commit(message: impl Into<String>) -> Self {
         ErrorKind::AtomicCommit(message.into()).into()
+    }
+
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub(crate) fn cancelled() -> Self {
+        ErrorKind::Cancelled.into()
     }
 
     pub(crate) fn deserialize(

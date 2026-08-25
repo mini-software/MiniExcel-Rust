@@ -314,6 +314,29 @@ Insert holds a cross-process advisory lock and verifies a source SHA-256 fingerp
 concurrent writers or external source changes return a deterministic conflict instead of silently
 overwriting newer content.
 
+Enable the optional `async` feature to feed an existing-workbook Insert from a runtime-neutral
+`Stream<Item = miniexcel::Result<DynamicRow>>`:
+
+```rust
+use miniexcel::{CancellationToken, InsertOptions, MiniExcel};
+
+let cancellation = CancellationToken::new();
+let count = MiniExcel::insert_with_schema_async_with_cancellation(
+    "book.xlsx",
+    &["Name".to_owned(), "Version".to_owned()],
+    rows,
+    &InsertOptions::new().with_sheet_name("Async"),
+    cancellation,
+).await?;
+```
+
+The async API uses a bounded channel for row backpressure and isolates blocking XLSX work on a
+dedicated thread; ZIP, XML, and filesystem I/O are not async. Explicit cancellation waits for
+worker cleanup before returning. Dropping the future requests cooperative cancellation and cleanup
+finishes in the background. Cancellation that wins before commit preserves the original workbook;
+once atomic replacement begins, cancellation cannot revoke it. No async runtime is enabled by
+default, and Tokio is not a dependency.
+
 Appending a formula-free worksheet preserves an existing calculation chain and workbook calculation properties. Replacement removes the complete stale `calcChain` part, relationship, and content-type override, then sets `fullCalcOnLoad` and `forceFullCalc` so Excel recalculates on the next open. MiniExcel does not evaluate or rewrite formulas; formulas and cached values in untouched worksheets remain byte-identical.
 
 ## Typed Writing

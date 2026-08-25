@@ -3,6 +3,8 @@
 //! Experimental Rust XLSX support for MiniExcel.
 
 mod analytics;
+#[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+mod cancellation;
 mod cell;
 mod error;
 mod facade;
@@ -21,6 +23,8 @@ pub use analytics::{
     AggregateOp, AggregateSpec, AnalysisResult, AnalysisRow, AnalysisStats, ComparisonOp,
     FilterExpr, QueryLiteral, QueryPlan,
 };
+#[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+pub use cancellation::CancellationToken;
 pub use cell::{CellReference, CellValue, DynamicRow, ExcelRange, StructuredCell, StructuredRow};
 pub use error::{Error, Result};
 pub use facade::MiniExcel;

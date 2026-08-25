@@ -647,6 +647,63 @@ impl MiniExcel {
         )
     }
 
+    /// Inserts rows from an async producer while XLSX work runs on a blocking worker thread.
+    ///
+    /// This API is available with the `async` feature. It does not make ZIP or filesystem I/O
+    /// asynchronous. The path must reference an existing XLSX workbook.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn insert_with_schema_async<S>(
+        path: impl AsRef<Path>,
+        schema: &[String],
+        rows: S,
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        S: futures_core::Stream<Item = Result<DynamicRow>>,
+    {
+        Self::insert_with_schema_async_with_cancellation(
+            path,
+            schema,
+            rows,
+            options,
+            crate::CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Inserts rows from an async producer with cooperative cancellation.
+    ///
+    /// Cancellation before the commit boundary preserves the original workbook. Dropping the
+    /// returned future requests cancellation; worker cleanup then completes in the background.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn insert_with_schema_async_with_cancellation<S>(
+        path: impl AsRef<Path>,
+        schema: &[String],
+        rows: S,
+        options: &InsertOptions,
+        cancellation: crate::CancellationToken,
+    ) -> Result<usize>
+    where
+        S: futures_core::Stream<Item = Result<DynamicRow>>,
+    {
+        if cancellation.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+        let path = path.as_ref();
+        validate_insert_options(path, options)?;
+        std::fs::metadata(path)?;
+        validate_schema(schema)?;
+        validate_dimensions(0, schema.len(), options.write_options().print_header())?;
+        crate::insert::async_insert::insert_with_schema_async(
+            path.to_owned(),
+            schema.to_vec(),
+            rows,
+            options.clone(),
+            cancellation,
+        )
+        .await
+    }
+
     /// Fills an existing XLSX template and writes a new workbook.
     ///
     /// Supports `{{name}}` scalar placeholders and single-row expansion for array paths such as

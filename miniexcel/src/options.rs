@@ -647,9 +647,9 @@ impl Default for WriteOptions {
 /// The contained [`WriteOptions`] configure the generated worksheet. Existing worksheets are
 /// rejected by default. Replacement preserves the target worksheet's workbook identity and uses
 /// [`TargetRelationshipPolicy`] to control target-owned package relationships. Path insertion is
-/// available on native targets only. Inserted worksheets must be visible, and
-/// `WriteOptions::with_overwrite_file()` is rejected because workbook replacement is controlled by
-/// [`ExistingSheetPolicy`].
+/// available on native targets only. Appended worksheets may be hidden when another visible sheet
+/// remains, and `WriteOptions::with_overwrite_file()` is rejected because workbook replacement is
+/// controlled by [`ExistingSheetPolicy`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct InsertOptions {
     write_options: WriteOptions,

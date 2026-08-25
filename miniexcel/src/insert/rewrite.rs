@@ -1413,6 +1413,7 @@ where
 
     checkpoint(PackageRewriteStage::Copy)?;
     for index in 0..archive.len() {
+        checkpoint(PackageRewriteStage::Copy)?;
         let entry = archive.by_index_raw(index).map_err(|error| {
             Error::insert_package(format!("cannot copy source ZIP entry: {error}"))
         })?;

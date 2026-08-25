@@ -20,7 +20,7 @@ const WORKSHEET_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AtomicCommitStage {
+pub(super) enum AtomicCommitStage {
     Preflight,
     RowGeneration,
     ZipCopy,
@@ -148,7 +148,7 @@ enum WorksheetMutation {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn insert_to_path_with_hook<F, H>(
+pub(super) fn insert_to_path_with_hook<F, H>(
     path: &Path,
     sheet_name: &str,
     existing_sheet_policy: ExistingSheetPolicy,

@@ -4,6 +4,8 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
 
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
+#[cfg(feature = "async")]
+use futures_util::StreamExt;
 use miniexcel::{
     CellValue, DynamicRow, ExistingSheetPolicy, HeaderMode, HeaderStyle, HorizontalAlignment,
     InsertOptions, MiniExcel, ReadOptions, RgbColor, SheetVisibility, TableStyle,
@@ -1089,6 +1091,91 @@ fn borrowed_io_rejects_nonempty_sink_and_propagates_destination_errors() {
     assert_eq!(source.get_ref(), &source_bytes);
     destination.seek(SeekFrom::Start(0)).unwrap();
     destination.write_all(b"usable").unwrap();
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_producer_public_api_appends_and_stops_on_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("async.xlsx");
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Current", 1)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+
+    let rows = futures_util::stream::iter([
+        Ok(dynamic_insert_row("Async", 2)),
+        Ok(dynamic_insert_row("Async", 3)),
+    ]);
+    let count = futures_executor::block_on(MiniExcel::insert_with_schema_async(
+        &path,
+        &["Name".to_owned(), "Version".to_owned()],
+        rows,
+        &InsertOptions::new().with_sheet_name("Async"),
+    ))
+    .unwrap();
+    assert_eq!(count, 2);
+    assert_eq!(MiniExcel::get_sheet_names(&path).unwrap(), ["Current", "Async"]);
+
+    let before = std::fs::read(&path).unwrap();
+    let polls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&polls);
+    let rows = futures_util::stream::poll_fn(move |_| {
+        let poll = observed.get() + 1;
+        observed.set(poll);
+        match poll {
+            1 => std::task::Poll::Ready(Some(Ok(dynamic_insert_row("Before error", 1)))),
+            2 => std::task::Poll::Ready(Some(Err(
+                std::io::Error::other("async producer failed").into()
+            ))),
+            _ => panic!("async producer was polled after its error"),
+        }
+    });
+    let error = futures_executor::block_on(MiniExcel::insert_with_schema_async(
+        &path,
+        &["Name".to_owned(), "Version".to_owned()],
+        rows,
+        &InsertOptions::new().with_sheet_name("Broken"),
+    ))
+    .unwrap_err();
+    assert!(error.to_string().contains("async producer failed"));
+    assert_eq!(polls.get(), 2);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_producer_pre_cancel_does_not_poll_or_change_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cancelled.xlsx");
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Current", 1)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let cancellation = miniexcel::CancellationToken::new();
+    cancellation.cancel();
+    let polls = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&polls);
+    let rows = futures_util::stream::iter([Ok(dynamic_insert_row("Never read", 2))])
+        .inspect(move |_| observed.set(observed.get() + 1));
+
+    let error = futures_executor::block_on(MiniExcel::insert_with_schema_async_with_cancellation(
+        &path,
+        &["Name".to_owned(), "Version".to_owned()],
+        rows,
+        &InsertOptions::new().with_sheet_name("Cancelled"),
+        cancellation,
+    ))
+    .unwrap_err();
+
+    assert!(error.is_cancelled());
+    assert_eq!(polls.get(), 0);
+    assert_eq!(std::fs::read(path).unwrap(), before);
 }
 
 #[test]

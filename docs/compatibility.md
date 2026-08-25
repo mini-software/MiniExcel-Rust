@@ -11,6 +11,7 @@ The Rust MVP implements the smallest useful MiniExcel-style XLSX read/write surf
 | Dependency | Locked API line | Role | License | MSRV note |
 | --- | --- | --- | --- | --- |
 | `atomicwrites` | 0.4 | Safe cross-platform atomic replacement for Windows path inserts | MIT | Windows-only dependency; checked with Rust 1.85 |
+| `async-channel` / `event-listener` / `futures-*` | 2.5 / 5.4 / 0.3 | Optional runtime-neutral async Insert producer and cancellation | MIT OR Apache-2.0 | Enabled only by the `async` feature; checked with Rust 1.85 |
 | `fs2` | 0.4 | Cross-platform advisory locking for path inserts | MIT OR Apache-2.0 | Checked with Rust 1.85 |
 | `calamine` | 0.35 | XLSX parsing and Serde row deserialization | MIT | 0.35 declares Rust 1.83 |
 | `clap` | 4.6 | Local CLI argument parsing | MIT OR Apache-2.0 | 4.6 declares Rust 1.85 |
@@ -49,6 +50,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Typed export | `save_as_serialized<T>()` | Uses Serde mapping internally |
 | Multi-sheet export | `save_as_sheets()` / `save_as_serialized_sheets()` | Preserves input sheet order and returns data-row counts |
 | `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` / borrowed reader-to-writer variants | Path APIs are atomic; separate borrowed streams require an empty sink and preserve package behavior without atomic commit |
+| Async Insert producer | `insert_with_schema_async*()` | Optional `async` feature; bounded producer channel with blocking XLSX work on a dedicated thread |
 | Per-sheet visibility | `WriteOptions::with_sheet_visibility()` | Visible, hidden, and very hidden; first visible sheet is active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | Defaults to `false`; existing paths require explicit opt-in |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | Defaults to one frozen row and zero frozen columns |

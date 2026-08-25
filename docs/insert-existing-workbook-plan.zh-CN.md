@@ -405,16 +405,22 @@ roundtrip 流式 style-rebase output。
 
 依赖 Task 11；此 task 可选，并应使用 feature flag。
 
-- [ ] 定义 async producer API，不让 Tokio 成为 core mandatory dependency。
-- [ ] 通过 bounded channel 将数据交给 blocking package worker。
-- [ ] 支持 preflight 前、row generation、ZIP copy 与 commit 前 cancellation。
-- [ ] 每个 cancellation point 都保证 cleanup 和原文件保留。
-- [ ] 如果 ZIP backend 仍是 blocking，不得把 async scheduling 描述为 async ZIP I/O。
+- [x] 定义 async producer API，不让 Tokio 成为 core mandatory dependency。
+- [x] 通过 bounded channel 将数据交给 blocking package worker。
+- [x] 支持 preflight 前、row generation、ZIP copy 与 commit 前 cancellation。
+- [x] 每个 cancellation point 都保证 cleanup 和原文件保留。
+- [x] 如果 ZIP backend 仍是 blocking，不得把 async scheduling 描述为 async ZIP I/O。
 
 验收：
 
 - Cancellation test 覆盖全部生命周期阶段。
 - 默认 feature build 保持 runtime-neutral。
+
+已于 2026-08-25 在可选 `async` feature 后完成。Public 显式 schema async producer 使用
+capacity-16 channel、runtime-neutral `CancellationToken` 和一个 blocking XLSX worker
+thread。确定性 phase-hook test 覆盖 preflight 前、row polling 前、row generation、ZIP
+copy、validation、commit 前 cancellation，以及 future-drop cleanup 与 producer-error
+over-poll 防护。默认与 wasm32 build 仍保持 runtime-neutral。
 
 ### Task 13：文档、兼容契约与 Release
 

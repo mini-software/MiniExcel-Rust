@@ -11,6 +11,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | 依赖 | 锁定 API 版本线 | 用途 | 许可证 | MSRV 说明 |
 | --- | --- | --- | --- | --- |
 | `atomicwrites` | 0.4 | Windows path insert 的安全跨平台原子替换 | MIT | 仅 Windows 依赖；已使用 Rust 1.85 检查 |
+| `async-channel` / `event-listener` / `futures-*` | 2.5 / 5.4 / 0.3 | 可选 runtime-neutral async Insert producer 与 cancellation | MIT OR Apache-2.0 | 仅由 `async` feature 启用；已使用 Rust 1.85 检查 |
 | `fs2` | 0.4 | Path insert 的跨平台 advisory lock | MIT OR Apache-2.0 | 已使用 Rust 1.85 检查 |
 | `calamine` | 0.35 | XLSX 解析和 Serde row 反序列化 | MIT | 0.35 声明 Rust 1.83 |
 | `clap` | 4.6 | 本地 CLI 参数解析 | MIT OR Apache-2.0 | 4.6 声明 Rust 1.85 |
@@ -49,6 +50,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | 类型化导出 | `save_as_serialized<T>()` | 内部使用 Serde 映射 |
 | 多工作表导出 | `save_as_sheets()` / `save_as_serialized_sheets()` | 保留输入工作表顺序并返回数据行数 |
 | `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` / borrowed reader-to-writer variants | Path API 为原子操作；独立 borrowed stream 要求空 sink，并在无原子 commit 的情况下保持相同 package 行为 |
+| Async Insert producer | `insert_with_schema_async*()` | 可选 `async` feature；bounded producer channel，XLSX 工作在专用 blocking thread |
 | 每表 visibility | `WriteOptions::with_sheet_visibility()` | visible、hidden、very hidden；第一个 visible sheet 为 active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | 默认 `false`；已有路径需要显式允许覆盖 |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | 默认冻结一行、零列 |

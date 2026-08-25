@@ -12,6 +12,10 @@ documentation = "https://docs.rs/miniexcel"
 keywords = ["excel", "xlsx", "spreadsheet", "serde", "streaming"]
 categories = ["parser-implementations"]
 
+[features]
+default = []
+async = ["dep:async-channel", "dep:event-listener", "dep:futures-core", "dep:futures-util"]
+
 [dependencies]
 calamine.workspace = true
 chrono.workspace = true
@@ -24,7 +28,11 @@ thiserror.workspace = true
 zip.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+async-channel = { workspace = true, optional = true }
+event-listener = { workspace = true, optional = true }
 fs2.workspace = true
+futures-core = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
 rust_xlsxwriter = { workspace = true, features = ["constant_memory"] }
 tempfile.workspace = true
 
@@ -35,6 +43,7 @@ rust_xlsxwriter.workspace = true
 atomicwrites.workspace = true
 
 [dev-dependencies]
+futures-executor.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 

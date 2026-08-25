@@ -312,6 +312,28 @@ XML depth 与 relationship count；同时拒绝不安全或别名 part path、�
 lock，并在 commit 前校验 source SHA-256 fingerprint；并发 writer 或外部 source 变化会返回
 确定性 conflict，不会静默覆盖更新后的内容。
 
+启用可选 `async` feature 后，可通过 runtime-neutral
+`Stream<Item = miniexcel::Result<DynamicRow>>` 为现有 workbook 的 Insert 提供 row：
+
+```rust
+use miniexcel::{CancellationToken, InsertOptions, MiniExcel};
+
+let cancellation = CancellationToken::new();
+let count = MiniExcel::insert_with_schema_async_with_cancellation(
+    "book.xlsx",
+    &["Name".to_owned(), "Version".to_owned()],
+    rows,
+    &InsertOptions::new().with_sheet_name("Async"),
+    cancellation,
+).await?;
+```
+
+Async API 使用 bounded channel 提供 row backpressure，并把 blocking XLSX 工作隔离到专用
+thread；ZIP、XML 和 filesystem I/O 并不是 async。显式 cancellation 会等待 worker cleanup
+后返回；drop future 会请求 cooperative cancellation，cleanup 在后台完成。Commit 前由
+cancellation 获胜时原 workbook 保持不变；atomic replacement 开始后不能撤销。默认不启用
+任何 async runtime，也不依赖 Tokio。
+
 追加 formula-free worksheet 时会保留已有 calculation chain 与 workbook calculation property。Replacement 会完整删除 stale `calcChain` part、relationship 和 content-type override，并设置 `fullCalcOnLoad` 与 `forceFullCalc`，让 Excel 下次打开时重算。MiniExcel 不执行或改写公式；未修改 worksheet 中的 formula 与 cached value 保持原始字节。
 
 ## 类型化写入

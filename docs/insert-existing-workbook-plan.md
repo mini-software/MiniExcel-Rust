@@ -406,16 +406,22 @@ successfully round-tripped the streamed style-rebase output.
 
 Depends on Task 11. This task is optional and should use a feature flag.
 
-- [ ] Define an async producer API without making Tokio a mandatory core dependency.
-- [ ] Feed a blocking package worker through a bounded channel.
-- [ ] Support cancellation before preflight, during row generation, during ZIP copy, and before commit.
-- [ ] Guarantee cleanup and original-file preservation for every cancellation point.
-- [ ] Do not present async scheduling as async ZIP I/O if the ZIP backend remains blocking.
+- [x] Define an async producer API without making Tokio a mandatory core dependency.
+- [x] Feed a blocking package worker through a bounded channel.
+- [x] Support cancellation before preflight, during row generation, during ZIP copy, and before commit.
+- [x] Guarantee cleanup and original-file preservation for every cancellation point.
+- [x] Do not present async scheduling as async ZIP I/O if the ZIP backend remains blocking.
 
 Acceptance:
 
 - Cancellation tests cover all lifecycle phases.
 - Default feature builds remain runtime-neutral.
+
+Completed on 2026-08-25 behind the optional `async` feature. The public explicit-schema async
+producer uses a capacity-16 channel, a runtime-neutral `CancellationToken`, and one blocking XLSX
+worker thread. Deterministic phase-hook tests cover cancellation before preflight, before row
+polling, during row generation, ZIP copy, validation, and before commit, plus future-drop cleanup
+and producer-error over-poll protection. Default and wasm32 builds remain runtime-neutral.
 
 ### Task 13: Documentation, Compatibility, And Release
 

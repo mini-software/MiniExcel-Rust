@@ -9,7 +9,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 use super::donor::DonorWorksheet;
 use super::package::{DefinedName, PackageInventory, WorkbookSheet, WorksheetAllocation};
 use super::style::rebase_styles;
-use crate::{Error, Result, TargetRelationshipPolicy};
+use crate::{Error, Result, SheetVisibility, TargetRelationshipPolicy};
 
 const CONTENT_TYPES_PATH: &str = "[Content_Types].xml";
 const WORKBOOK_PATH: &str = "xl/workbook.xml";
@@ -294,6 +294,7 @@ where
     let workbook_xml = append_workbook(
         &workbook_xml,
         &donor.sheet_name,
+        donor.visibility,
         &allocation,
         inventory.sheets.len(),
         &donor.local_defined_names,
@@ -533,6 +534,7 @@ fn styles_path(inventory: &PackageInventory) -> Result<String> {
 fn append_workbook(
     xml: &[u8],
     sheet_name: &str,
+    visibility: SheetVisibility,
     allocation: &WorksheetAllocation,
     local_sheet_id: usize,
     local_defined_names: &[DefinedName],
@@ -567,6 +569,7 @@ fn append_workbook(
                 write_new_sheet(
                     &mut writer,
                     sheet_name,
+                    visibility,
                     allocation,
                     &prefix,
                     &relationship_prefix,
@@ -1122,6 +1125,7 @@ where
 fn write_new_sheet(
     writer: &mut Writer<Vec<u8>>,
     sheet_name: &str,
+    visibility: SheetVisibility,
     allocation: &WorksheetAllocation,
     element_prefix: &str,
     relationship_prefix: &str,
@@ -1131,6 +1135,11 @@ fn write_new_sheet(
     let relationship_id_name = qualify(relationship_prefix, "id");
     sheet.push_attribute(("name", sheet_name));
     sheet.push_attribute(("sheetId", sheet_id.as_str()));
+    match visibility {
+        SheetVisibility::Visible => {}
+        SheetVisibility::Hidden => sheet.push_attribute(("state", "hidden")),
+        SheetVisibility::VeryHidden => sheet.push_attribute(("state", "veryHidden")),
+    }
     sheet.push_attribute((relationship_id_name.as_str(), allocation.relationship_id.as_str()));
     write_event(writer, Event::Empty(sheet))
 }
@@ -1692,8 +1701,15 @@ mod tests {
             formula: "'New Data'!$A$1:$A$2".to_owned(),
         };
         let workbook = br#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="A" sheetId="1" r:id="rId1"/></sheets><externalReferences><externalReference r:id="rId4"/></externalReferences><calcPr calcId="7"/></workbook>"#;
-        let patched =
-            append_workbook(workbook, "New Data", &allocation, 1, &[defined_name]).unwrap();
+        let patched = append_workbook(
+            workbook,
+            "New Data",
+            SheetVisibility::Visible,
+            &allocation,
+            1,
+            &[defined_name],
+        )
+        .unwrap();
         let text = String::from_utf8(patched).unwrap();
         assert!(text.contains("<definedNames><definedName"));
         assert!(text.find("</sheets>").unwrap() < text.find("<definedNames>").unwrap());
@@ -1705,7 +1721,15 @@ mod tests {
 
         let prefixed_workbook = br#"<x:workbook xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:q="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><x:sheets><x:sheet name="A" sheetId="1" q:id="rId1"/></x:sheets><x:calcPr calcId="7"/></x:workbook>"#;
         let prefixed = String::from_utf8(
-            append_workbook(prefixed_workbook, "New Data", &allocation, 1, &[]).unwrap(),
+            append_workbook(
+                prefixed_workbook,
+                "New Data",
+                SheetVisibility::Visible,
+                &allocation,
+                1,
+                &[],
+            )
+            .unwrap(),
         )
         .unwrap();
         assert!(prefixed.contains("<x:sheet name=\"New Data\" sheetId=\"5\" q:id=\"rId8\"/>"));

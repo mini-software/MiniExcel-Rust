@@ -93,7 +93,7 @@ impl XlsxWriter {
     }
 
     pub(crate) fn save(&mut self, path: impl AsRef<Path>, overwrite_file: bool) -> Result<()> {
-        self.validate_workbook()?;
+        self.validate_workbook(true)?;
         let file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -105,7 +105,12 @@ impl XlsxWriter {
     }
 
     pub(crate) fn save_to_bytes(&mut self) -> Result<Vec<u8>> {
-        self.validate_workbook()?;
+        self.validate_workbook(true)?;
+        Ok(self.workbook.save_to_buffer()?)
+    }
+
+    pub(crate) fn save_insert_donor_to_bytes(&mut self) -> Result<Vec<u8>> {
+        self.validate_workbook(false)?;
         Ok(self.workbook.save_to_buffer()?)
     }
 
@@ -113,7 +118,17 @@ impl XlsxWriter {
     where
         W: Write + Send,
     {
-        self.validate_workbook()?;
+        self.validate_workbook(true)?;
+        self.workbook.save_to_writer(writer)?;
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn save_insert_donor_to_writer<W>(&mut self, writer: &mut W) -> Result<()>
+    where
+        W: Write + Send,
+    {
+        self.validate_workbook(false)?;
         self.workbook.save_to_writer(writer)?;
         Ok(())
     }
@@ -193,13 +208,13 @@ impl XlsxWriter {
         self.sheet_names.insert(normalized_name);
     }
 
-    fn validate_workbook(&self) -> Result<()> {
+    fn validate_workbook(&self, require_visible_worksheet: bool) -> Result<()> {
         if let Some(name) =
             self.requested_visibilities.difference(&self.matched_visibilities).next()
         {
             return Err(Error::unknown_sheet_visibility(name));
         }
-        if self.visible_worksheets == 0 {
+        if require_visible_worksheet && self.visible_worksheets == 0 {
             return Err(Error::no_visible_worksheets());
         }
         Ok(())
@@ -381,6 +396,15 @@ fn validate_auto_width_options(options: &WriteOptions) -> Result<()> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn validate_single_sheet_options(options: &WriteOptions) -> Result<()> {
+    validate_insert_sheet_options(options)?;
+    if options.sheet_visibility(options.sheet_name()) != SheetVisibility::Visible {
+        return Err(Error::no_visible_worksheets());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn validate_insert_sheet_options(options: &WriteOptions) -> Result<()> {
     validate_sheet_name(options.sheet_name(), &HashSet::new())?;
     validate_auto_width_options(options)?;
     validate_column_widths(options)?;
@@ -390,9 +414,6 @@ pub(crate) fn validate_single_sheet_options(options: &WriteOptions) -> Result<()
         options.sheet_visibilities().keys().find(|name| name.as_str() != normalized_name)
     {
         return Err(Error::unknown_sheet_visibility(name));
-    }
-    if options.sheet_visibility(options.sheet_name()) != SheetVisibility::Visible {
-        return Err(Error::no_visible_worksheets());
     }
     Ok(())
 }

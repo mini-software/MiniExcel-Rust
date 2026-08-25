@@ -317,16 +317,22 @@ Acceptance:
 
 Depends on Tasks 6-8.
 
-- [ ] Run inserted sheets through all current write options: headers, AutoFilter, panes, RTL, AutoWidth, fixed/hidden columns, body wrap/alignment, header style, `TableStyle`, number formats, sheet visibility, and case-insensitive names.
-- [ ] Add dynamic, explicit-schema, Serde, empty, header-only, and multi-insert sequences.
-- [ ] Verify that donor style rebasing does not change existing style IDs after repeated inserts.
-- [ ] Add a 100-insert stress test for ID/path collisions and package growth.
+- [x] Run inserted sheets through all current write options: headers, AutoFilter, panes, RTL, AutoWidth, fixed/hidden columns, body wrap/alignment, header style, `TableStyle`, number formats, sheet visibility, and case-insensitive names.
+- [x] Add dynamic, explicit-schema, Serde, empty, header-only, and multi-insert sequences.
+- [x] Verify that donor style rebasing does not change existing style IDs after repeated inserts.
+- [x] Add a 100-insert stress test for ID/path collisions and package growth.
 
 Acceptance:
 
 - Every supported new-workbook option has an Insert test.
 - Repeated inserts remain readable by Rust, LibreOffice, and the .NET Open XML SDK.
 - Focused command: `cargo +1.85.0 test -p miniexcel --test insert write_options_matrix --locked`.
+
+Completed on 2026-08-25. The focused matrix covers dynamic rows, explicit-schema
+iterators, Serde rows, empty/header-only sheets, append visibility, style stability, and a
+100-insert collision/growth run. The generated 101-sheet stress workbook was read by the Rust
+CLI, round-tripped by LibreOffice 26.2.1.2, and validated with zero Office 2019 schema errors by
+the .NET Open XML SDK 3.5.1 before and after the roundtrip.
 
 ### Task 10: Separate Reader/Writer Insert API
 

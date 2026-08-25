@@ -11,7 +11,7 @@ use super::package::{DefinedName, PackageInventory};
 use crate::writer::XlsxWriter;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::writer::validate_dimensions;
-use crate::{DynamicRow, Error, Result, WriteOptions};
+use crate::{DynamicRow, Error, Result, SheetVisibility, WriteOptions};
 
 const STYLES_PATH: &str = "xl/styles.xml";
 const SHARED_STRINGS_PATH: &str = "xl/sharedStrings.xml";
@@ -32,6 +32,7 @@ pub(crate) struct DonorStyleModel {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DonorWorksheet {
     pub(crate) sheet_name: String,
+    pub(crate) visibility: SheetVisibility,
     pub(crate) worksheet_xml: Vec<u8>,
     pub(crate) data_row_count: usize,
     pub(crate) styles: DonorStyleModel,
@@ -47,7 +48,11 @@ impl DonorBuilder {
     ) -> Result<DonorWorksheet> {
         let mut writer = XlsxWriter::new();
         writer.add_rows(rows, options)?;
-        extract_donor(writer.save_to_bytes()?, rows.len())
+        extract_donor(
+            writer.save_insert_donor_to_bytes()?,
+            rows.len(),
+            options.sheet_visibility(options.sheet_name()),
+        )
     }
 
     pub(crate) fn from_dynamic_with_schema(
@@ -57,7 +62,11 @@ impl DonorBuilder {
     ) -> Result<DonorWorksheet> {
         let mut writer = XlsxWriter::new();
         writer.add_rows_with_schema(schema, rows, options)?;
-        extract_donor(writer.save_to_bytes()?, rows.len())
+        extract_donor(
+            writer.save_insert_donor_to_bytes()?,
+            rows.len(),
+            options.sheet_visibility(options.sheet_name()),
+        )
     }
 
     pub(crate) fn from_serialized<T>(rows: &[T], options: &WriteOptions) -> Result<DonorWorksheet>
@@ -66,7 +75,11 @@ impl DonorBuilder {
     {
         let mut writer = XlsxWriter::new();
         writer.add_serialized(rows, options)?;
-        extract_donor(writer.save_to_bytes()?, rows.len())
+        extract_donor(
+            writer.save_insert_donor_to_bytes()?,
+            rows.len(),
+            options.sheet_visibility(options.sheet_name()),
+        )
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -98,8 +111,12 @@ where
     let mut writer = XlsxWriter::new();
     writer.add_rows_iter_with_schema(schema, rows, row_count, options)?;
     let mut package = tempfile::NamedTempFile::new()?;
-    writer.save_to_writer(package.as_file_mut())?;
-    extract_donor_from_reader(package.reopen()?, row_count)
+    writer.save_insert_donor_to_writer(package.as_file_mut())?;
+    extract_donor_from_reader(
+        package.reopen()?,
+        row_count,
+        options.sheet_visibility(options.sheet_name()),
+    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -166,11 +183,19 @@ fn spooled_rows(
         }))
 }
 
-pub(super) fn extract_donor(bytes: Vec<u8>, data_row_count: usize) -> Result<DonorWorksheet> {
-    extract_donor_from_reader(Cursor::new(bytes), data_row_count)
+pub(super) fn extract_donor(
+    bytes: Vec<u8>,
+    data_row_count: usize,
+    visibility: SheetVisibility,
+) -> Result<DonorWorksheet> {
+    extract_donor_from_reader(Cursor::new(bytes), data_row_count, visibility)
 }
 
-fn extract_donor_from_reader<R>(mut source: R, data_row_count: usize) -> Result<DonorWorksheet>
+fn extract_donor_from_reader<R>(
+    mut source: R,
+    data_row_count: usize,
+    visibility: SheetVisibility,
+) -> Result<DonorWorksheet>
 where
     R: Read + std::io::Seek,
 {
@@ -206,7 +231,14 @@ where
     };
     let worksheet_xml = inline_shared_strings(&worksheet_xml, &shared_strings)?;
 
-    Ok(DonorWorksheet { sheet_name, worksheet_xml, data_row_count, styles, local_defined_names })
+    Ok(DonorWorksheet {
+        sheet_name,
+        visibility,
+        worksheet_xml,
+        data_row_count,
+        styles,
+        local_defined_names,
+    })
 }
 
 fn read_part<R>(archive: &mut ZipArchive<R>, path: &str) -> Result<Vec<u8>>

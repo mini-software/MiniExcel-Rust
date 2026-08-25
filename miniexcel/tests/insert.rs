@@ -3,9 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
 use std::rc::Rc;
 
+use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use miniexcel::{
-    CellValue, DynamicRow, ExistingSheetPolicy, HeaderMode, InsertOptions, MiniExcel, ReadOptions,
-    SheetVisibility, TargetRelationshipPolicy, WriteOptions,
+    CellValue, DynamicRow, ExistingSheetPolicy, HeaderMode, HeaderStyle, HorizontalAlignment,
+    InsertOptions, MiniExcel, ReadOptions, RgbColor, SheetVisibility, TableStyle,
+    TargetRelationshipPolicy, VerticalAlignment, WriteOptions,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -196,6 +198,17 @@ struct StyleCounts {
     cell_xfs: usize,
     cell_styles: usize,
     dxfs: usize,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct CellXf {
+    num_fmt_id: usize,
+    font_id: usize,
+    fill_id: usize,
+    border_id: usize,
+    horizontal: Option<String>,
+    vertical: Option<String>,
+    wrap_text: bool,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -436,6 +449,391 @@ fn public_append_creates_missing_path_and_appends_dynamic_rows_atomically() {
     .unwrap();
     assert_eq!(rows[0]["Name"], CellValue::String("Archive".to_owned()));
     assert_eq!(rows[0]["Version"], CellValue::Int(3));
+}
+
+#[test]
+fn write_options_matrix_appends_hidden_sheet() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("hidden.xlsx");
+    let missing_hidden = directory.path().join("missing-hidden.xlsx");
+    assert!(
+        MiniExcel::insert(
+            &missing_hidden,
+            &[dynamic_insert_row("Hidden", 0)],
+            &InsertOptions::new().with_write_options(
+                WriteOptions::new()
+                    .with_sheet_name("Hidden")
+                    .with_sheet_visibility("Hidden", SheetVisibility::Hidden),
+            ),
+        )
+        .is_err()
+    );
+    assert!(!missing_hidden.exists());
+
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Current", 1)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Archive", 2)],
+        &InsertOptions::new().with_write_options(
+            WriteOptions::new()
+                .with_sheet_name("Archive")
+                .with_sheet_visibility("archive", SheetVisibility::Hidden),
+        ),
+    )
+    .unwrap();
+
+    let bytes = std::fs::read(&path).unwrap();
+    let inventory = package_inventory(&bytes);
+    assert_eq!(inventory.sheets[0].state, None);
+    assert_eq!(inventory.sheets[1].state.as_deref(), Some("hidden"));
+}
+
+#[test]
+fn write_options_matrix_preserves_layout_styles_and_formats() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("matrix.xlsx");
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Current", 1)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+
+    let mut row = DynamicRow::new();
+    row.insert("Name".to_owned(), CellValue::String("Matrix".to_owned()));
+    row.insert("Version".to_owned(), CellValue::Int(3));
+    row.insert(
+        "ReleasedOn".to_owned(),
+        CellValue::Date(NaiveDate::from_ymd_opt(2026, 8, 25).unwrap()),
+    );
+    row.insert("At".to_owned(), CellValue::Time(NaiveTime::from_hms_opt(10, 30, 0).unwrap()));
+    row.insert(
+        "RecordedAt".to_owned(),
+        CellValue::DateTime(
+            NaiveDateTime::parse_from_str("2026-08-25 10:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        ),
+    );
+    row.insert("Elapsed".to_owned(), CellValue::Duration(Duration::minutes(90)));
+    let header_style = HeaderStyle::new()
+        .with_wrap_text(true)
+        .with_background_color(RgbColor::new(0x12, 0x34, 0x56))
+        .with_horizontal_alignment(HorizontalAlignment::Center)
+        .with_vertical_alignment(VerticalAlignment::Top);
+    let options = WriteOptions::new()
+        .with_sheet_name("Matrix")
+        .with_auto_filter(true)
+        .with_freeze_row_count(2)
+        .with_freeze_column_count(1)
+        .with_right_to_left(true)
+        .with_auto_width(true)
+        .with_min_width(12.0)
+        .with_max_width(24.0)
+        .with_column_width("Name", 18.0)
+        .with_column_hidden("Version", true)
+        .with_wrap_cell_contents(true)
+        .with_horizontal_alignment(HorizontalAlignment::Center)
+        .with_vertical_alignment(VerticalAlignment::Top)
+        .with_header_style(header_style)
+        .with_table_style(TableStyle::Default)
+        .with_date_format("dd.mm.yyyy")
+        .with_time_format("hh:mm")
+        .with_datetime_format("dd.mm.yyyy hh:mm")
+        .with_duration_format("[h]:mm")
+        .with_sheet_visibility("matrix", SheetVisibility::VeryHidden);
+    MiniExcel::insert(&path, &[row], &InsertOptions::new().with_write_options(options)).unwrap();
+
+    let bytes = std::fs::read(&path).unwrap();
+    let inventory = package_inventory(&bytes);
+    let matrix = inventory.sheets.iter().find(|sheet| sheet.name == "Matrix").unwrap();
+    assert_eq!(matrix.state.as_deref(), Some("veryHidden"));
+    let worksheet = entry_text(&bytes, &format!("xl/{}", matrix.target));
+    assert!(worksheet.contains("rightToLeft=\"1\""));
+    assert!(worksheet.contains("xSplit=\"1\""));
+    assert!(worksheet.contains("ySplit=\"2\""));
+    assert!(worksheet.contains("topLeftCell=\"B3\""));
+    assert!(worksheet.contains("<autoFilter ref=\"A1:F2\""));
+    assert!(worksheet.contains("min=\"1\" max=\"1\" width=\"18.7109375\""));
+    assert!(worksheet.contains("min=\"2\" max=\"2\""));
+    assert!(worksheet.contains("hidden=\"1\""));
+
+    let styles = read_entry(&bytes, "xl/styles.xml");
+    assert!(String::from_utf8_lossy(&styles).contains("rgb=\"FF123456\""));
+    let header = cell_xf(&styles, cell_style_index(&worksheet, "A1"));
+    assert!(header.wrap_text);
+    assert_eq!(header.horizontal.as_deref(), Some("center"));
+    assert_eq!(header.vertical.as_deref(), Some("top"));
+    assert_ne!(header.fill_id, 0);
+    assert_ne!(header.border_id, 0);
+    let body = cell_xf(&styles, cell_style_index(&worksheet, "A2"));
+    assert!(body.wrap_text);
+    assert_eq!(body.horizontal.as_deref(), Some("center"));
+    assert_eq!(body.vertical.as_deref(), Some("top"));
+    assert_ne!(body.border_id, 0);
+    for address in ["C2", "D2", "E2", "F2"] {
+        assert_ne!(cell_xf(&styles, cell_style_index(&worksheet, address)).num_fmt_id, 0);
+    }
+    let styles_text = String::from_utf8_lossy(&styles);
+    for format in ["dd.mm.yyyy", "hh:mm", "dd.mm.yyyy hh:mm", "[h]:mm"] {
+        assert!(styles_text.contains(&format!("formatCode=\"{format}\"")));
+    }
+
+    MiniExcel::insert(
+        &path,
+        &[{
+            let mut row = DynamicRow::new();
+            row.insert("Name".to_owned(), CellValue::String("Minimal".to_owned()));
+            row.insert(
+                "ReleasedOn".to_owned(),
+                CellValue::Date(NaiveDate::from_ymd_opt(2026, 8, 25).unwrap()),
+            );
+            row
+        }],
+        &InsertOptions::new().with_write_options(
+            WriteOptions::new()
+                .with_sheet_name("Minimal")
+                .with_table_style(TableStyle::None)
+                .with_date_format("0.000"),
+        ),
+    )
+    .unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let inventory = package_inventory(&bytes);
+    let minimal = inventory.sheets.iter().find(|sheet| sheet.name == "Minimal").unwrap();
+    let worksheet = entry_text(&bytes, &format!("xl/{}", minimal.target));
+    let styles = read_entry(&bytes, "xl/styles.xml");
+    for address in ["A1", "A2"] {
+        let style = cell_xf(&styles, cell_style_index(&worksheet, address));
+        assert_eq!((style.font_id, style.fill_id, style.border_id), (0, 0, 0));
+        assert!(!style.wrap_text);
+        assert_eq!((style.horizontal, style.vertical), (None, None));
+    }
+    let formatted = cell_xf(&styles, cell_style_index(&worksheet, "B2"));
+    assert_ne!(formatted.num_fmt_id, 0);
+    assert_eq!(formatted.border_id, 0);
+    assert!(String::from_utf8_lossy(&styles).contains("formatCode=\"0.000\""));
+}
+
+#[test]
+fn write_options_matrix_supports_all_insert_input_shapes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("shapes.xlsx");
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Current", 1)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        MiniExcel::insert(
+            &path,
+            &[dynamic_insert_row("Headerless", 2)],
+            &InsertOptions::new().with_write_options(
+                WriteOptions::new().with_sheet_name("Headerless").with_print_header(false),
+            ),
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        MiniExcel::insert_with_schema(
+            &path,
+            &["Name".to_owned(), "Version".to_owned()],
+            std::iter::empty::<miniexcel::Result<DynamicRow>>(),
+            &InsertOptions::new().with_sheet_name("Header Only"),
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        MiniExcel::insert(
+            &path,
+            &[],
+            &InsertOptions::new().with_write_options(
+                WriteOptions::new().with_sheet_name("Empty").with_print_header(false),
+            ),
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        MiniExcel::insert_serialized(
+            &path,
+            &[PublicInsertRelease { name: "Serde".to_owned(), version: 3 }],
+            &InsertOptions::new().with_write_options(
+                WriteOptions::new().with_sheet_name("Serde").with_column_format("Version", "0.00"),
+            ),
+        )
+        .unwrap(),
+        1
+    );
+
+    assert_eq!(
+        MiniExcel::get_sheet_names(&path).unwrap(),
+        ["Current", "Headerless", "Header Only", "Empty", "Serde"]
+    );
+    let bytes = std::fs::read(&path).unwrap();
+    let inventory = package_inventory(&bytes);
+    let worksheet = |name: &str| {
+        let sheet = inventory.sheets.iter().find(|sheet| sheet.name == name).unwrap();
+        entry_text(&bytes, &format!("xl/{}", sheet.target))
+    };
+    assert!(worksheet("Headerless").contains("<autoFilter ref=\"A1:B1\""));
+    assert!(worksheet("Header Only").contains("<autoFilter ref=\"A1:B1\""));
+    assert!(!worksheet("Empty").contains("<autoFilter"));
+    let serde_worksheet = worksheet("Serde");
+    assert!(serde_worksheet.contains("<autoFilter ref=\"A1:B2\""));
+    let styles = read_entry(&bytes, "xl/styles.xml");
+    assert_ne!(cell_xf(&styles, cell_style_index(&serde_worksheet, "B2")).num_fmt_id, 0);
+    assert!(String::from_utf8_lossy(&styles).contains("formatCode=\"0.00\""));
+
+    let before = bytes;
+    assert!(
+        MiniExcel::insert(
+            &path,
+            &[dynamic_insert_row("Duplicate", 4)],
+            &InsertOptions::new().with_sheet_name("sErDe"),
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn write_options_matrix_repeated_inserts_preserve_and_deduplicate_styles() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("styles.xlsx");
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Current", 1)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+    let initial = std::fs::read(&path).unwrap();
+    let initial_inventory = package_inventory(&initial);
+    let initial_styles = cell_xf_signatures(&read_entry(&initial, "xl/styles.xml"));
+    let initial_sheet = read_entry(&initial, &format!("xl/{}", initial_inventory.sheets[0].target));
+
+    let styled_options = |name: String| {
+        InsertOptions::new().with_write_options(
+            WriteOptions::new()
+                .with_sheet_name(name)
+                .with_wrap_cell_contents(true)
+                .with_horizontal_alignment(HorizontalAlignment::Right)
+                .with_vertical_alignment(VerticalAlignment::Center)
+                .with_header_style(
+                    HeaderStyle::new()
+                        .with_wrap_text(true)
+                        .with_background_color(RgbColor::new(0x22, 0x66, 0xAA)),
+                )
+                .with_column_format("Version", "0.000"),
+        )
+    };
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Styled", 2)],
+        &styled_options("Styled0".to_owned()),
+    )
+    .unwrap();
+    let after_first = std::fs::read(&path).unwrap();
+    let styles_after_first = read_entry(&after_first, "xl/styles.xml");
+    for index in 1..10 {
+        MiniExcel::insert(
+            &path,
+            &[dynamic_insert_row("Styled", index + 2)],
+            &styled_options(format!("Styled{index}")),
+        )
+        .unwrap();
+    }
+
+    let final_bytes = std::fs::read(&path).unwrap();
+    let final_inventory = package_inventory(&final_bytes);
+    let final_styles = read_entry(&final_bytes, "xl/styles.xml");
+    assert_eq!(final_styles, styles_after_first);
+    assert_eq!(
+        &cell_xf_signatures(&final_styles)[..initial_styles.len()],
+        initial_styles.as_slice()
+    );
+    assert_eq!(
+        read_entry(&final_bytes, &format!("xl/{}", final_inventory.sheets[0].target)),
+        initial_sheet
+    );
+    assert_eq!(final_inventory.sheets.len(), 11);
+}
+
+#[test]
+fn write_options_matrix_hundred_insert_stress_has_unique_ids_and_bounded_growth() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("stress.xlsx");
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("Current", 0)],
+        &InsertOptions::new().with_sheet_name("Current"),
+    )
+    .unwrap();
+    let base_size = std::fs::metadata(&path).unwrap().len();
+    let mut styles_after_first = None;
+    for index in 0..100 {
+        MiniExcel::insert(
+            &path,
+            &[dynamic_insert_row("Stress", index)],
+            &InsertOptions::new().with_write_options(
+                WriteOptions::new()
+                    .with_sheet_name(format!("Stress{index:03}"))
+                    .with_column_format("Version", "0.000"),
+            ),
+        )
+        .unwrap();
+        if index == 0 {
+            styles_after_first = Some(read_entry(&std::fs::read(&path).unwrap(), "xl/styles.xml"));
+        }
+    }
+
+    let bytes = std::fs::read(&path).unwrap();
+    let inventory = package_inventory(&bytes);
+    assert_eq!(inventory.sheets.len(), 101);
+    assert_eq!(
+        inventory.sheets.iter().map(|sheet| sheet.sheet_id).collect::<BTreeSet<_>>().len(),
+        101
+    );
+    assert_eq!(
+        inventory
+            .sheets
+            .iter()
+            .map(|sheet| sheet.relationship_id.as_str())
+            .collect::<BTreeSet<_>>()
+            .len(),
+        101
+    );
+    assert_eq!(
+        inventory.sheets.iter().map(|sheet| sheet.target.as_str()).collect::<BTreeSet<_>>().len(),
+        101
+    );
+    let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    let entry_names = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(entry_names.iter().collect::<BTreeSet<_>>().len(), entry_names.len());
+    assert_eq!(read_entry(&bytes, "xl/styles.xml"), styles_after_first.unwrap());
+    assert!(bytes.len() as u64 <= base_size + 2_000_000);
+
+    let rows = MiniExcel::query_with_options(
+        &path,
+        &ReadOptions::new().with_sheet_name("Stress099").with_header_mode(HeaderMode::FirstRow),
+    )
+    .unwrap()
+    .collect::<miniexcel::Result<Vec<_>>>()
+    .unwrap();
+    assert_eq!(rows[0]["Version"], CellValue::Int(99));
+    if let Some(output) = std::env::var_os("MINIEXCEL_TEST_INSERT_OUTPUT") {
+        std::fs::write(output, bytes).unwrap();
+    }
 }
 
 #[test]
@@ -1274,6 +1672,84 @@ fn parse_styles(xml: &[u8]) -> StyleCounts {
         }
     }
     counts
+}
+
+fn cell_style_index(worksheet_xml: &str, address: &str) -> usize {
+    let mut reader = Reader::from_str(worksheet_xml);
+    loop {
+        match reader.read_event().expect("parse worksheet XML") {
+            Event::Start(cell) | Event::Empty(cell) if local_name(cell.name().as_ref()) == b"c" => {
+                if attribute(&cell, b"r").as_deref() == Some(address) {
+                    return attribute(&cell, b"s")
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(0);
+                }
+            }
+            Event::Eof => panic!("cell {address} not found"),
+            _ => {}
+        }
+    }
+}
+
+fn cell_xf(styles_xml: &[u8], style_index: usize) -> CellXf {
+    let mut reader = Reader::from_reader(styles_xml);
+    let mut in_cell_xfs = false;
+    let mut next_index = 0;
+    let mut current = None::<CellXf>;
+    loop {
+        match reader.read_event().expect("parse styles XML") {
+            Event::Start(event) if local_name(event.name().as_ref()) == b"cellXfs" => {
+                in_cell_xfs = true;
+            }
+            Event::End(event) if local_name(event.name().as_ref()) == b"cellXfs" => {
+                in_cell_xfs = false;
+            }
+            Event::Start(event) if in_cell_xfs && local_name(event.name().as_ref()) == b"xf" => {
+                let index = next_index;
+                next_index += 1;
+                if index == style_index {
+                    current = Some(cell_xf_attributes(&event));
+                }
+            }
+            Event::Empty(event) if in_cell_xfs && local_name(event.name().as_ref()) == b"xf" => {
+                let index = next_index;
+                next_index += 1;
+                if index == style_index {
+                    return cell_xf_attributes(&event);
+                }
+            }
+            Event::Start(event) | Event::Empty(event)
+                if current.is_some() && local_name(event.name().as_ref()) == b"alignment" =>
+            {
+                let style = current.as_mut().unwrap();
+                style.horizontal = attribute(&event, b"horizontal");
+                style.vertical = attribute(&event, b"vertical");
+                style.wrap_text = attribute(&event, b"wrapText").as_deref() == Some("1");
+            }
+            Event::End(event)
+                if current.is_some() && local_name(event.name().as_ref()) == b"xf" =>
+            {
+                return current.take().unwrap();
+            }
+            Event::Eof => panic!("style {style_index} not found"),
+            _ => {}
+        }
+    }
+}
+
+fn cell_xf_attributes(event: &BytesStart<'_>) -> CellXf {
+    CellXf {
+        num_fmt_id: attribute(event, b"numFmtId").and_then(|value| value.parse().ok()).unwrap_or(0),
+        font_id: attribute(event, b"fontId").and_then(|value| value.parse().ok()).unwrap_or(0),
+        fill_id: attribute(event, b"fillId").and_then(|value| value.parse().ok()).unwrap_or(0),
+        border_id: attribute(event, b"borderId").and_then(|value| value.parse().ok()).unwrap_or(0),
+        ..CellXf::default()
+    }
+}
+
+fn cell_xf_signatures(styles_xml: &[u8]) -> Vec<CellXf> {
+    let count = parse_styles(styles_xml).cell_xfs;
+    (0..count).map(|index| cell_xf(styles_xml, index)).collect()
 }
 
 fn attribute(event: &BytesStart<'_>, key: &[u8]) -> Option<String> {

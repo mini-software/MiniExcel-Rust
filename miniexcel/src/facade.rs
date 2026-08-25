@@ -7,7 +7,10 @@ use serde::de::DeserializeOwned;
 use crate::streaming::{StreamingRows, StreamingStructuredRows, StreamingTypedRows};
 use crate::writer::XlsxWriter;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::writer::{validate_dimensions, validate_schema, validate_single_sheet_options};
+use crate::writer::{
+    validate_dimensions, validate_insert_sheet_options, validate_schema,
+    validate_single_sheet_options,
+};
 use crate::{
     AnalysisResult, ByteQuerySummary, DynamicRow, ExcelRange, QueryPlan, QuerySummary, RagChunk,
     RagExport, RagExportOptions, RagManifest, ReadOptions, Result, SheetInfo, StructuredRow,
@@ -607,5 +610,9 @@ fn validate_insert_options(path: &Path, options: &InsertOptions) -> Result<()> {
             "target relationship removal requires ExistingSheetPolicy::Replace",
         ));
     }
-    validate_single_sheet_options(options.write_options())
+    if path.exists() {
+        validate_insert_sheet_options(options.write_options())
+    } else {
+        validate_single_sheet_options(options.write_options())
+    }
 }

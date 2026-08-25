@@ -317,16 +317,22 @@ Donor-workbook 方案复用经过测试的 `XlsxWriter`，避免重复实现 ser
 
 依赖 Task 6-8。
 
-- [ ] 插入 sheet 覆盖全部当前 write option：header、AutoFilter、pane、RTL、AutoWidth、固定/隐藏列、body wrap/alignment、header style、`TableStyle`、number format、sheet visibility 和大小写不敏感 name。
-- [ ] 增加 dynamic、显式 schema、Serde、empty、header-only 和连续多次 insert。
-- [ ] 验证 donor style rebase 在重复 insert 后不改变现有 style ID。
-- [ ] 增加 100 次 insert 的 ID/path collision 与 package growth stress test。
+- [x] 插入 sheet 覆盖全部当前 write option：header、AutoFilter、pane、RTL、AutoWidth、固定/隐藏列、body wrap/alignment、header style、`TableStyle`、number format、sheet visibility 和大小写不敏感 name。
+- [x] 增加 dynamic、显式 schema、Serde、empty、header-only 和连续多次 insert。
+- [x] 验证 donor style rebase 在重复 insert 后不改变现有 style ID。
+- [x] 增加 100 次 insert 的 ID/path collision 与 package growth stress test。
 
 验收：
 
 - 每个已支持 new-workbook option 都有 Insert test。
 - 重复 insert 后仍可被 Rust、LibreOffice 和 .NET Open XML SDK 读取。
 - 聚焦命令：`cargo +1.85.0 test -p miniexcel --test insert write_options_matrix --locked`。
+
+已于 2026-08-25 完成。聚焦矩阵覆盖 dynamic row、显式 schema iterator、Serde row、
+empty/header-only sheet、append visibility、style 稳定性，以及 100 次 insert 的
+collision/growth 压力测试。生成的 101-sheet 压力工作簿已由 Rust CLI 读取，经
+LibreOffice 26.2.1.2 roundtrip，并在 roundtrip 前后均通过 .NET Open XML SDK 3.5.1
+的 Office 2019 schema 验证，错误数为零。
 
 ### Task 10：分离 Reader/Writer Insert API
 

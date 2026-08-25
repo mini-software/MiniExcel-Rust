@@ -746,7 +746,7 @@ mod tests {
     use super::*;
     use crate::insert::donor::{DonorBuilder, extract_donor};
     use crate::writer::XlsxWriter;
-    use crate::{CellValue, DynamicRow, MiniExcel, ReadOptions, WriteOptions};
+    use crate::{CellValue, DynamicRow, MiniExcel, ReadOptions, SheetVisibility, WriteOptions};
 
     #[derive(Serialize)]
     struct CustomFormatRow {
@@ -800,6 +800,7 @@ mod tests {
         let first = rebase_styles(target_styles().as_bytes(), &donor).unwrap();
         let donor_again = DonorWorksheet {
             sheet_name: donor.sheet_name.clone(),
+            visibility: donor.visibility,
             worksheet_xml: donor.worksheet_xml.clone(),
             data_row_count: donor.data_row_count,
             styles: super::super::donor::DonorStyleModel {
@@ -919,7 +920,7 @@ mod tests {
         let mut writer = XlsxWriter::new();
         writer.add_rows(&[row], &options).unwrap();
         let package = writer.save_to_bytes().unwrap();
-        let extracted = extract_donor(package.clone(), 1).unwrap();
+        let extracted = extract_donor(package.clone(), 1, SheetVisibility::Visible).unwrap();
         assert_eq!(donor, extracted);
         (donor, package)
     }

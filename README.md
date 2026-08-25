@@ -456,6 +456,26 @@ Negative indices clamp to the first position and oversized indices clamp to the 
 formula text, visibility, and worksheet IDs remain unchanged. Moving to the current effective
 index is a byte-for-byte no-op.
 
+Like .NET `CopyAndAddSheet`, Rust can copy a complete source workbook to a separate destination
+and generate or replace one worksheet in the copied package:
+
+```rust
+let count = MiniExcel::copy_and_add_sheet(
+    "source.xlsx",
+    "destination.xlsx",
+    &rows,
+    &InsertOptions::new().with_sheet_name("Added"),
+)?;
+```
+
+Dynamic, explicit-schema one-pass, and Serde variants are available. The source is never modified;
+source aliases are rejected, and the destination is atomically published only after package
+validation. Existing destinations are rejected unless `with_overwrite_file(true)` is set.
+`ExistingSheetPolicy` and `TargetRelationshipPolicy` retain their Insert meanings. Unlike .NET's
+shallow package regeneration, Rust raw-copies unrelated parts and preserves workbook identities,
+relationships, defined names, formulas, tables, drawings, comments, pivots, and external links.
+This API copies the whole workbook and adds data; it does not clone an arbitrary selected worksheet.
+
 Enable the optional `async` feature to feed an existing-workbook Insert from a runtime-neutral
 `Stream<Item = miniexcel::Result<DynamicRow>>`:
 
@@ -554,10 +574,10 @@ Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` f
 - Grouped analytics retain state proportional to distinct groups and stop at `max_groups`.
 - RAG exports never recalculate formulas and reject hidden sheets unless explicitly allowed.
 - Synchronous streaming queries use one worker thread per active query. Optional async query and Insert APIs use bounded channels around blocking XLSX workers; ZIP/XML/filesystem work is not async I/O.
-- Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends or strictly replaces a worksheet in an existing `.xlsx` path, or creates a workbook when the path is missing. `rename_sheet()`, `set_sheet_visibility()`, and `reorder_sheet()` atomically change existing workbook sheet metadata.
+- Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends or strictly replaces a worksheet in an existing `.xlsx` path, or creates a workbook when the path is missing. `copy_and_add_sheet*()` creates a validated source-derived destination. `rename_sheet()`, `set_sheet_visibility()`, and `reorder_sheet()` atomically change existing workbook sheet metadata.
 
 ## Not Supported
 
-`.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and arbitrary worksheet copying are not currently supported.
+`.xls`, `.xlsb`, `.ods`, advanced template directives, macros, image authoring, merged-cell operations, formula authoring, a general style system, and arbitrary selected-worksheet cloning are not currently supported.
 
 See the [compatibility matrix](docs/compatibility.md) for the current support scope and the [MiniExcel v1 Insert migration guide](docs/insert-v1-migration.md) for deliberate differences.

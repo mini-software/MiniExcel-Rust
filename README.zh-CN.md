@@ -448,6 +448,26 @@ MiniExcel::reorder_sheet("book.xlsx", "Archive", 0)?;
 仍归属于原 worksheet。Relationship、formula 文本、visibility 和 worksheet ID 保持不变；
 移动到当前有效 index 是字节级 no-op。
 
+与 .NET `CopyAndAddSheet` 一样，Rust 可将完整 source workbook 复制到独立 destination，
+并在复制后的 package 中生成或 replace 一张 worksheet：
+
+```rust
+let count = MiniExcel::copy_and_add_sheet(
+    "source.xlsx",
+    "destination.xlsx",
+    &rows,
+    &InsertOptions::new().with_sheet_name("Added"),
+)?;
+```
+
+提供 dynamic、显式 schema one-pass 和 Serde 变体。Source 永不修改；source alias 会被拒绝，
+destination 只有在 package validation 后才原子发布。默认拒绝已有 destination，设置
+`with_overwrite_file(true)` 后才允许替换。`ExistingSheetPolicy` 与
+`TargetRelationshipPolicy` 保持 Insert 语义。不同于 .NET 的 shallow package regeneration，
+Rust 会 raw-copy 无关 part，并保留 workbook identity、relationship、defined name、formula、
+table、drawing、comment、pivot 与 external link。该 API 复制整个 workbook 并添加数据，
+并不是克隆任意选定 worksheet。
+
 启用可选 `async` feature 后，可通过 runtime-neutral
 `Stream<Item = miniexcel::Result<DynamicRow>>` 为现有 workbook 的 Insert 提供 row：
 
@@ -545,10 +565,10 @@ MiniExcel::save_as_template(
 - 分组分析保留与不同 group 数量成比例的状态，并在 `max_groups` 停止。
 - RAG 导出不会重新计算公式，hidden sheet 未显式允许时会拒绝处理。
 - 同步流式 query 每个活动 query 使用一个 worker thread。可选 async query/Insert API 通过 bounded channel 包装 blocking XLSX worker；ZIP/XML/filesystem 工作并不是 async I/O。
-- Save 会创建新工作簿，并默认拒绝已有目标路径。`MiniExcel::insert*()` 会向现有 `.xlsx` path 原子 append 或严格 replace worksheet；路径不存在时则创建 workbook。`rename_sheet()`、`set_sheet_visibility()` 和 `reorder_sheet()` 会原子修改现有 workbook 的 sheet metadata。
+- Save 会创建新工作簿，并默认拒绝已有目标路径。`MiniExcel::insert*()` 会向现有 `.xlsx` path 原子 append 或严格 replace worksheet；路径不存在时则创建 workbook。`copy_and_add_sheet*()` 创建经过验证、源自 source 的 destination。`rename_sheet()`、`set_sheet_visibility()` 和 `reorder_sheet()` 会原子修改现有 workbook 的 sheet metadata。
 
 ## 暂不支持
 
-目前不支持 `.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统，以及任意 worksheet copy。
+目前不支持 `.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片写入、合并单元格操作、公式写入、通用样式系统，以及克隆任意选定 worksheet。
 
 当前支持范围请查看[兼容性矩阵](docs/compatibility.zh-CN.md)；有意保留的差异见 [MiniExcel v1 Insert 迁移说明](docs/insert-v1-migration.zh-CN.md)。

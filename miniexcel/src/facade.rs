@@ -957,6 +957,84 @@ impl MiniExcel {
         crate::insert::atomic::reorder_sheet_to_path(path, sheet_name, new_sheet_index)
     }
 
+    /// Copies an existing XLSX workbook to a new path and adds or replaces a dynamic worksheet.
+    ///
+    /// The source is never modified. The destination is published atomically and must not alias
+    /// the source. Use [`InsertOptions::with_overwrite_file`] to replace an existing destination.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn copy_and_add_sheet(
+        source: impl AsRef<Path>,
+        destination: impl AsRef<Path>,
+        rows: &[DynamicRow],
+        options: &InsertOptions,
+    ) -> Result<usize> {
+        validate_copy_and_add_options(source.as_ref(), destination.as_ref(), options)?;
+        crate::insert::atomic::copy_and_add_to_path(
+            source,
+            destination,
+            options.write_options().sheet_name(),
+            options.existing_sheet_policy(),
+            options.target_relationship_policy(),
+            options.write_options().overwrite_file(),
+            || crate::insert::donor::DonorBuilder::from_dynamic(rows, options.write_options()),
+        )
+    }
+
+    /// Copies a workbook and adds or replaces a one-pass explicit-schema worksheet.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn copy_and_add_sheet_with_schema<I>(
+        source: impl AsRef<Path>,
+        destination: impl AsRef<Path>,
+        schema: &[String],
+        rows: I,
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        I: IntoIterator<Item = Result<DynamicRow>>,
+    {
+        validate_copy_and_add_options(source.as_ref(), destination.as_ref(), options)?;
+        validate_schema(schema)?;
+        validate_dimensions(0, schema.len(), options.write_options().print_header())?;
+        crate::insert::atomic::copy_and_add_to_path(
+            source,
+            destination,
+            options.write_options().sheet_name(),
+            options.existing_sheet_policy(),
+            options.target_relationship_policy(),
+            options.write_options().overwrite_file(),
+            || {
+                crate::insert::donor::DonorBuilder::from_dynamic_iter(
+                    schema,
+                    rows,
+                    options.write_options(),
+                )
+            },
+        )
+    }
+
+    /// Copies a workbook and adds or replaces a Serde-serializable worksheet.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn copy_and_add_sheet_serialized<T>(
+        source: impl AsRef<Path>,
+        destination: impl AsRef<Path>,
+        rows: &[T],
+        options: &InsertOptions,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+    {
+        validate_copy_and_add_options(source.as_ref(), destination.as_ref(), options)?;
+        crate::insert::atomic::copy_and_add_to_path(
+            source,
+            destination,
+            options.write_options().sheet_name(),
+            options.existing_sheet_policy(),
+            options.target_relationship_policy(),
+            options.write_options().overwrite_file(),
+            || crate::insert::donor::DonorBuilder::from_serialized(rows, options.write_options()),
+        )
+    }
+
     /// Inserts dynamic rows as a new worksheet, or creates a workbook when the path is missing.
     ///
     /// Existing workbooks are replaced atomically only after the rewritten package validates.
@@ -1263,6 +1341,30 @@ fn validate_insert_policies(options: &InsertOptions) -> Result<()> {
             "overwrite_file does not apply to Insert; use ExistingSheetPolicy",
         ));
     }
+    validate_target_relationship_policy(options)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_copy_and_add_options(
+    source: &Path,
+    destination: &Path,
+    options: &InsertOptions,
+) -> Result<()> {
+    if [source, destination].iter().any(|path| {
+        path.extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsm"))
+    }) {
+        return Err(crate::Error::unsupported_package_feature(
+            "copy-and-add does not support macro-enabled .xlsm paths",
+        ));
+    }
+    validate_target_relationship_policy(options)?;
+    validate_insert_sheet_options(options.write_options())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_target_relationship_policy(options: &InsertOptions) -> Result<()> {
     if options.existing_sheet_policy() == ExistingSheetPolicy::Reject
         && options.target_relationship_policy() != TargetRelationshipPolicy::Reject
     {

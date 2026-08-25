@@ -8,7 +8,7 @@ This report compares observable public capabilities in the local checkouts below
 
 | Project | Revision |
 | --- | --- |
-| MiniExcel-Rust | working tree based on `6df7623` (`0.3.0`) |
+| MiniExcel-Rust | working tree based on `db95441` (`0.3.0`) |
 | MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 The comparison uses the .NET public APIs, their controlling implementations, and focused tests under the sibling `../MiniExcel` checkout. Rust status is based on the public `MiniExcel` facade, options, integration tests, and [compatibility boundary](compatibility.md).
@@ -34,7 +34,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Async and cancellation | Partial | Optional runtime-neutral dynamic/Serde path queries and explicit-schema Insert support bounded streams and cooperative cancellation. Async export/template operations, async write sources, borrowed async readers, and progress callbacks remain unsupported. ZIP and filesystem work remains blocking on dedicated workers. |
 | General save inputs | Partial | Export from general objects/enumerables, dictionaries, `DataTable`, `IDataReader`, and async enumerables, with progress. Rust accepts dynamic or same-type Serde slices and reports per-sheet row counts. |
 | Multi-sheet export | Partial | Rust creates ordered visible, hidden, and very-hidden worksheets, but does not yet accept heterogeneous Serde row types in one call. |
-| Existing-workbook operations | Partial | Rust atomically appends, strictly replaces, renames, changes visibility, or reorders worksheets while preserving unrelated package parts and worksheet identity. Copy-and-add remains unsupported. Rename preserves formula text; visibility rejects hiding the final visible sheet; reorder remaps active/view/local-name indices instead of transferring their ownership. |
+| Existing-workbook operations | Implemented | Rust atomically appends, strictly replaces, renames, changes visibility, reorders, and performs .NET-style source-workbook copy-and-add while preserving unrelated package parts and worksheet identity. Rename preserves formula text; visibility rejects hiding the final visible sheet; reorder remaps active/view/local-name indices; copy-and-add preserves the source and atomically publishes a separate destination. |
 | Templates | Partial | Rust fills path/byte templates with scalar values and single-row arrays while preserving package parts. Streams, grouping, conditions, parametrized sheets, `$=` formulas, formula-reference updates, and calculation-chain handling remain unsupported. |
 | Pictures and merge processing | Missing | Add anchored pictures and merge adjacent identical cells through the templater surface. Structured reads do not provide authoring parity. |
 | CSV | Implemented | Dynamic/Serde path, byte, and borrowed query/save APIs; column discovery; inferred/explicit-schema append; delimiter/newline/encoding/BOM/null/quoting configuration; and `query-csv` CLI. DataReader/DataTable are replaced by Rust iterators. Async/progress APIs and a one-call CSV/XLSX converter are not exposed. |
@@ -55,7 +55,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Tables | `MiniExcel::query_table*`; Rust focused tests use the exact `TestQueryTable.xlsx` fixture (SHA-256 `04F719BF9F9E99D9B437A8FB32F8111FD92580A1D29ACAD10B6ED128C0564501`) | `OpenXmlImporter.QueryTableAsync`; `tests/MiniExcel.OpenXml.Tests/Tables/` |
 | Comments | `MiniExcel::get_comments*`; Rust focused tests use `TestCommentsAndNotes.xlsx` (SHA-256 `3A855CE896ED62DC27C91797432DD89EE081F07CD03AB05BF1B0CD745543A3FC`) | `OpenXmlImporter.RetrieveCommentsAsync`; `tests/MiniExcel.OpenXml.Tests/Comments/` |
 | DataReader/DataTable | Rust iterators and borrowed visitors are the native abstraction; no literal .NET tabular adapter is planned | `OpenXmlImporter.GetDataReader`, `GetAsyncDataReader`, `QueryAsDataTableAsync`; `tests/MiniExcel.OpenXml.Tests/DataReader/` |
-| Multi-sheet and workbook edits | Writer creates multiple sheets; existing workbooks support append, strict replacement, and all independent `AlterSheet` metadata operations with atomic package preservation | `OpenXmlExporter.InsertSheetAsync`, `CopyAndAddSheetAsync`, `AlterSheetAsync`; `tests/MiniExcel.OpenXml.Tests/MultipleSheets/` and `AlterSheets/` |
+| Multi-sheet and workbook edits | Writer creates multiple sheets; existing workbooks support append, strict replacement, every independent `AlterSheet` metadata operation, and source-to-destination `CopyAndAddSheet` with atomic package preservation | `OpenXmlExporter.InsertSheetAsync`, `CopyAndAddSheetAsync`, `AlterSheetAsync`; exporter, `MultipleSheets/`, and `AlterSheets/` tests |
 | Templates/pictures/merges | Basic template fill implemented; advanced directives and authoring remain deferred | `src/MiniExcel.OpenXml/Api/OpenXmlTemplater.cs`; `tests/MiniExcel.OpenXml.Tests/Templates/` |
 | CSV/conversion | `MiniExcel::query_csv*`, `save_csv*`, and `append_csv*`; Rust tests use exact `TestHeader.csv` (`6C2FC27FCA2876F1ECCA17061B8EE23E133ECDB726F8E0B84167E58D86234432`) and GB2312 (`BA8A2505AB271D5575C58CC1FCBE5A5002CEB9E2F43CB95412246E25A50E8B5A`) fixtures | `src/MiniExcel.Csv/Api/`; `src/MiniExcel/MiniExcelConverter.cs`; `tests/MiniExcel.Csv.Tests/` |
 | Mapping | Serde mapping only | `src/MiniExcel.Core/Attributes/MiniExcelColumnAttribute.cs`; `src/MiniExcel.OpenXml.FluentMapping/`; mapping tests |
@@ -68,7 +68,7 @@ The .NET APIs marked with `Async` also have generated synchronous counterparts t
 
 1. **Async export/template APIs**: extend runtime-neutral producer/cancellation patterns without presenting blocking ZIP work as async I/O.
 2. **Advanced templates and Fluent Mapping**: add grouped/conditional templates, parametrized sheets, and mapping through separate compatibility milestones.
-3. **Remaining workbook edits**: copy-and-add requires a relationship-closure cloning contract.
+3. **Selected-sheet cloning**: not part of .NET `CopyAndAddSheet`; add only for a concrete Rust use case with a relationship-closure cloning contract.
 
 DataReader/DataTable are .NET ecosystem abstractions and are intentionally not literal Rust parity requirements. A Rust-native record-batch or tabular adapter is appropriate only when a concrete integration requires it.
 
@@ -78,6 +78,7 @@ DataReader/DataTable are .NET ecosystem abstractions and are intentionally not l
 - The .NET numeric `QueryRange` overload is not counted separately because Rust A1 `CellReference` bounds express the same selection.
 - Internal implementation classes and .NET-specific dependency-injection mechanics are excluded unless they expose observable behavior.
 - CSV DataReader/DataTable and a dedicated CSV/XLSX converter are excluded because Rust iterators and composed query/save calls provide the native equivalents.
+- Arbitrary selected-sheet cloning is not counted because .NET `CopyAndAddSheet` copies the whole source workbook and generates a sheet from row data; Rust now implements that observable operation.
 - Legacy binary Excel formats are excluded because this comparison found no current .NET V2 public provider that would make them a parity requirement.
 
 Re-run this comparison whenever either pinned revision changes. New parity claims should be added to the shared contract only after both public adapters and focused tests cover the behavior.

@@ -37,8 +37,8 @@ struct PathMutationGuard {
 
 impl PathMutationGuard {
     fn acquire(path: &Path, operation: &str) -> Result<Self> {
-        let canonical = fs::canonicalize(path)?;
-        let digest = Sha256::digest(canonical.to_string_lossy().as_bytes());
+        let identity = path_identity(path)?;
+        let digest = Sha256::digest(identity.as_bytes());
         let directory = std::env::temp_dir().join("miniexcel-insert-locks");
         fs::create_dir_all(&directory)?;
         let lock_path = directory.join(format!("{digest:x}.lock"));
@@ -55,6 +55,47 @@ impl PathMutationGuard {
             ))
         })?;
         Ok(Self { file })
+    }
+}
+
+fn path_identity(path: &Path) -> Result<String> {
+    let identity = if path.exists() {
+        fs::canonicalize(path)?
+    } else {
+        let parent = sibling_directory(path);
+        let file_name = path.file_name().ok_or_else(|| {
+            Error::invalid_write_options("destination path must include a file name")
+        })?;
+        fs::canonicalize(parent)?.join(file_name)
+    };
+    let identity = identity.to_string_lossy().into_owned();
+    #[cfg(windows)]
+    let identity = identity.to_lowercase();
+    Ok(identity)
+}
+
+fn acquire_path_pair(
+    source: &Path,
+    destination: &Path,
+) -> Result<(PathMutationGuard, PathMutationGuard)> {
+    let source_identity = path_identity(source)?;
+    let destination_identity = path_identity(destination)?;
+    if source_identity == destination_identity
+        || (destination.exists() && same_file::is_same_file(source, destination)?)
+    {
+        return Err(Error::invalid_write_options(
+            "copy-and-add source and destination must differ",
+        ));
+    }
+    if source_identity < destination_identity {
+        Ok((
+            PathMutationGuard::acquire(source, "copy-and-add")?,
+            PathMutationGuard::acquire(destination, "copy-and-add")?,
+        ))
+    } else {
+        let destination_guard = PathMutationGuard::acquire(destination, "copy-and-add")?;
+        let source_guard = PathMutationGuard::acquire(source, "copy-and-add")?;
+        Ok((source_guard, destination_guard))
     }
 }
 
@@ -122,6 +163,151 @@ where
         donor_builder,
         |_| Ok(()),
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn copy_and_add_to_path<F>(
+    source_path: impl AsRef<Path>,
+    destination_path: impl AsRef<Path>,
+    sheet_name: &str,
+    existing_sheet_policy: ExistingSheetPolicy,
+    target_relationship_policy: TargetRelationshipPolicy,
+    overwrite_destination: bool,
+    donor_builder: F,
+) -> Result<usize>
+where
+    F: FnOnce() -> Result<DonorWorksheet>,
+{
+    copy_and_add_to_path_with_hook(
+        source_path.as_ref(),
+        destination_path.as_ref(),
+        sheet_name,
+        existing_sheet_policy,
+        target_relationship_policy,
+        overwrite_destination,
+        donor_builder,
+        |_| Ok(()),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn copy_and_add_to_path_with_hook<F, H>(
+    source_path: &Path,
+    destination_path: &Path,
+    sheet_name: &str,
+    existing_sheet_policy: ExistingSheetPolicy,
+    target_relationship_policy: TargetRelationshipPolicy,
+    overwrite_destination: bool,
+    donor_builder: F,
+    mut checkpoint: H,
+) -> Result<usize>
+where
+    F: FnOnce() -> Result<DonorWorksheet>,
+    H: FnMut(AtomicCommitStage) -> Result<()>,
+{
+    checkpoint(AtomicCommitStage::Preflight)?;
+    let (_source_guard, _destination_guard) = acquire_path_pair(source_path, destination_path)?;
+    if destination_path.exists() && same_file::is_same_file(source_path, destination_path)? {
+        return Err(Error::invalid_write_options(
+            "copy-and-add source and destination must differ",
+        ));
+    }
+    let source_fingerprint = SourceFingerprint::read(source_path)?;
+    let destination_fingerprint =
+        destination_path.exists().then(|| SourceFingerprint::read(destination_path)).transpose()?;
+    if destination_fingerprint.is_some() && !overwrite_destination {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("destination '{}' already exists", destination_path.display()),
+        )
+        .into());
+    }
+    let source_metadata = fs::metadata(source_path)?;
+    let mut source = File::open(source_path)?;
+    let inventory = PackageInventory::inspect(&mut source)?;
+    let mutation =
+        match (inventory.find_sheet(sheet_name), existing_sheet_policy) {
+            (None, _) => WorksheetMutation::Append,
+            (Some(_), ExistingSheetPolicy::Reject) => {
+                return Err(Error::existing_worksheet(sheet_name));
+            }
+            (Some(_), ExistingSheetPolicy::Replace) => WorksheetMutation::Replace(
+                plan_replacement(&inventory, sheet_name, target_relationship_policy)?,
+            ),
+        };
+
+    checkpoint(AtomicCommitStage::RowGeneration)?;
+    let donor = donor_builder()?;
+    if donor.sheet_name != sheet_name {
+        return Err(Error::insert_package(format!(
+            "donor worksheet '{}' does not match requested worksheet '{sheet_name}'",
+            donor.sheet_name
+        )));
+    }
+    let row_count = donor.data_row_count;
+    let parent = sibling_directory(destination_path);
+    let mut temporary =
+        tempfile::Builder::new().prefix(".miniexcel-").suffix(".xlsx.tmp").tempfile_in(parent)?;
+    source.rewind()?;
+    match &mutation {
+        WorksheetMutation::Append => {
+            append_worksheet_to_writer_with_hook(
+                source,
+                temporary.as_file_mut(),
+                &donor,
+                |stage| match stage {
+                    PackageRewriteStage::Copy => checkpoint(AtomicCommitStage::ZipCopy),
+                    PackageRewriteStage::Finish => checkpoint(AtomicCommitStage::ZipFinish),
+                },
+            )?;
+        }
+        WorksheetMutation::Replace(plan) => {
+            replace_worksheet_to_writer_with_hook(
+                source,
+                temporary.as_file_mut(),
+                &donor,
+                plan,
+                |stage| match stage {
+                    PackageRewriteStage::Copy => checkpoint(AtomicCommitStage::ZipCopy),
+                    PackageRewriteStage::Finish => checkpoint(AtomicCommitStage::ZipFinish),
+                },
+            )?;
+        }
+    }
+    temporary.as_file_mut().flush()?;
+    temporary.as_file().sync_all()?;
+    checkpoint(AtomicCommitStage::Validation)?;
+    validate_rewritten_package(temporary.reopen()?, &donor.sheet_name)?;
+
+    checkpoint(AtomicCommitStage::Commit)?;
+    if SourceFingerprint::read(source_path)? != source_fingerprint {
+        return Err(Error::atomic_commit(format!(
+            "source workbook '{}' changed during copy-and-add",
+            source_path.display()
+        )));
+    }
+    match destination_fingerprint {
+        Some(fingerprint) => {
+            if SourceFingerprint::read(destination_path)? != fingerprint {
+                return Err(Error::atomic_commit(format!(
+                    "destination workbook '{}' changed during copy-and-add",
+                    destination_path.display()
+                )));
+            }
+            let destination_permissions = fs::metadata(destination_path)?.permissions();
+            replace_temporary(temporary, destination_path, destination_permissions)?;
+        }
+        None => {
+            if destination_path.exists() {
+                return Err(Error::atomic_commit(format!(
+                    "destination workbook '{}' was created during copy-and-add",
+                    destination_path.display()
+                )));
+            }
+            persist_new_temporary(temporary, destination_path, source_metadata.permissions())?;
+        }
+    }
+    Ok(row_count)
 }
 
 pub(crate) fn rename_sheet_to_path(
@@ -490,6 +676,24 @@ where
 
 fn sibling_directory(path: &Path) -> &Path {
     path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."))
+}
+
+fn persist_new_temporary(
+    temporary: tempfile::NamedTempFile,
+    path: &Path,
+    permissions: fs::Permissions,
+) -> Result<()> {
+    fs::set_permissions(temporary.path(), permissions)?;
+    temporary.as_file().sync_all()?;
+    temporary.persist_noclobber(path).map_err(|error| {
+        Error::atomic_commit(format!(
+            "cannot create destination '{}' from '{}': {}",
+            path.display(),
+            error.file.path().display(),
+            error.error
+        ))
+    })?;
+    Ok(())
 }
 
 fn validate_rewritten_package(mut file: File, sheet_name: &str) -> Result<()> {
@@ -947,6 +1151,86 @@ mod tests {
     }
 
     #[test]
+    fn copy_and_add_failures_preserve_source_and_destination() {
+        for failure in [
+            AtomicCommitStage::Preflight,
+            AtomicCommitStage::RowGeneration,
+            AtomicCommitStage::ZipCopy,
+            AtomicCommitStage::ZipFinish,
+            AtomicCommitStage::Validation,
+            AtomicCommitStage::Commit,
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let source_path = directory.path().join("source.xlsx");
+            let destination_path = directory.path().join("destination.xlsx");
+            fs::write(&source_path, source_package()).unwrap();
+            fs::write(&destination_path, source_package_with_marker()).unwrap();
+            let source_hash = file_hash(&source_path);
+            let destination_hash = file_hash(&destination_path);
+
+            let result = copy_and_add_to_path_with_hook(
+                &source_path,
+                &destination_path,
+                "Added",
+                ExistingSheetPolicy::Reject,
+                TargetRelationshipPolicy::Reject,
+                true,
+                || donor("Added", 1),
+                |stage| {
+                    if stage == failure {
+                        Err(Error::atomic_commit(format!("injected {stage:?} failure")))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+
+            assert!(result.is_err(), "{failure:?} did not fail");
+            assert_eq!(file_hash(&source_path), source_hash);
+            assert_eq!(file_hash(&destination_path), destination_hash);
+            assert_no_miniexcel_temporary_files(directory.path());
+        }
+    }
+
+    #[test]
+    fn copy_and_add_detects_source_and_destination_changes_before_commit() {
+        for mutate_source in [true, false] {
+            let directory = tempfile::tempdir().unwrap();
+            let source_path = directory.path().join("source.xlsx");
+            let destination_path = directory.path().join("destination.xlsx");
+            fs::write(&source_path, source_package()).unwrap();
+            fs::write(&destination_path, source_package()).unwrap();
+            let external = source_package_with_marker();
+            let replacement = external.clone();
+
+            let error = copy_and_add_to_path_with_hook(
+                &source_path,
+                &destination_path,
+                "Added",
+                ExistingSheetPolicy::Reject,
+                TargetRelationshipPolicy::Reject,
+                true,
+                || donor("Added", 1),
+                |stage| {
+                    if stage == AtomicCommitStage::Commit {
+                        fs::write(
+                            if mutate_source { &source_path } else { &destination_path },
+                            &replacement,
+                        )?;
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+
+            assert!(error.to_string().contains("changed during copy-and-add"));
+            let changed_path = if mutate_source { &source_path } else { &destination_path };
+            assert_eq!(fs::read(changed_path).unwrap(), external);
+            assert_no_miniexcel_temporary_files(directory.path());
+        }
+    }
+
+    #[test]
     fn source_change_during_reorder_preserves_external_content() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("book.xlsx");
@@ -1171,5 +1455,11 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect::<Vec<_>>();
         assert_eq!(names, [std::ffi::OsString::from("book.xlsx")]);
+    }
+
+    fn assert_no_miniexcel_temporary_files(directory: &Path) {
+        assert!(!fs::read_dir(directory).unwrap().any(|entry| {
+            entry.unwrap().file_name().to_string_lossy().starts_with(".miniexcel-")
+        }));
     }
 }

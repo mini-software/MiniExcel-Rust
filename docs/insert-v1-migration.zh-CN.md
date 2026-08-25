@@ -45,7 +45,7 @@ Replacement 会删除 stale calculation chain，并要求应用下次打开时�
 
 ### 不支持的操作
 
-Insert 创建、append 或严格 replace 完整 worksheet。它不会向现有 worksheet 追加 row，不编辑 macro，不计算公式，不复制任意 sheet，也不是通用 workbook editor。独立原子 API 可执行 worksheet rename、reorder 与 visibility 修改，但这些操作不属于 Insert。`.xlsm` package 与 Strict OOXML package 会被拒绝。
+Insert 创建、append 或严格 replace 完整 worksheet。它不会向现有 worksheet 追加 row，不编辑 macro，不计算公式，不克隆任意选定 sheet，也不是通用 workbook editor。独立原子 API 可执行 worksheet rename、reorder、visibility 修改，以及复制完整 source workbook 并添加 row data；这些操作不属于原地 Insert。`.xlsm` package 与 Strict OOXML package 会被拒绝。
 
 ## 验证
 

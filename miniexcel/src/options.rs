@@ -908,6 +908,16 @@ impl InsertOptions {
         self
     }
 
+    /// Allows a copy-and-add operation to atomically replace an existing destination file.
+    ///
+    /// In-place [`crate::MiniExcel::insert`] operations reject this option because their target
+    /// is already controlled by [`ExistingSheetPolicy`].
+    #[must_use]
+    pub fn with_overwrite_file(mut self, overwrite_file: bool) -> Self {
+        self.write_options = self.write_options.with_overwrite_file(overwrite_file);
+        self
+    }
+
     #[must_use]
     /// Sets the behavior for an existing worksheet with the requested name.
     ///

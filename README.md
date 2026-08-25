@@ -580,6 +580,24 @@ MiniExcel::save_as_template(
 
 Scalar placeholders use `{{title}}`. A row containing `{{items.name}}` is repeated once per array item. Exact number, boolean, and null placeholders become native cell values; mixed text becomes an inline string. Missing variables are blank by default and can be rejected with `with_ignore_missing_variables(false)`. Path output refuses existing files unless `with_overwrite_file(true)` is set. `save_as_template_bytes()` supports in-memory templates.
 
+Cells in an enumerable row may select one line of content per item with a multiline conditional
+block:
+
+```text
+@if(name == Jack)
+{{items.name}}
+@elseif(score >= 10)
+Top {{items.name}}
+@else
+{{items.department}}
+@endif
+```
+
+Direct item fields support string `==`/`!=`, numeric comparisons, and boolean `==`/`!=`. Branch
+markers and bodies each occupy one line; every item still emits one row. Malformed blocks and
+missing fields return template errors. Nested blocks, logical expressions, and conditional formula
+branches are not supported.
+
 With the optional `async` feature, `save_as_template_async()` and
 `save_as_template_async_with_cancellation()` run blocking template ZIP/XML work on a worker thread
 and atomically publish the validated path output. Pre-cancellation, rendering errors, dropped
@@ -587,7 +605,7 @@ futures, and cancellation before commit preserve an existing destination byte-fo
 missing destination absent. This does not make ZIP/filesystem operations asynchronous and retains
 the current in-memory template rendering model.
 
-Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` formula templates, or formula recalculation.
+Version 1 does not implement `@group`, parametrized sheet cloning, `$=` formula templates, or formula recalculation.
 
 ## Important Semantics
 

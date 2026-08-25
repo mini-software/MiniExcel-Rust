@@ -343,8 +343,8 @@ fn render_row(
                 let column =
                     address.chars().take_while(char::is_ascii_alphabetic).collect::<String>();
                 let address = format!("{column}{target_row}");
-                if let Some(text) =
-                    cell_text(&row[index..=end], shared_strings)?.filter(|text| text.contains("{{"))
+                if let Some(text) = cell_text(&row[index..=end], shared_strings)?
+                    .filter(|text| text.contains("{{") || is_conditional_template(text))
                 {
                     let rendered = render_text(
                         &text,
@@ -368,6 +368,10 @@ fn render_row(
         }
     }
     Ok(output)
+}
+
+fn is_conditional_template(value: &str) -> bool {
+    value.trim_start().starts_with("@if(")
 }
 
 fn cell_end(events: &[Event<'_>], start: usize) -> Result<usize> {
@@ -438,6 +442,8 @@ fn render_text(
     item_index: usize,
     ignore_missing: bool,
 ) -> Result<RenderedValue> {
+    let conditional = select_conditional_branch(template, item)?;
+    let template = conditional.as_deref().unwrap_or(template);
     let tokens = placeholder_tokens(template);
     if tokens.len() == 1 && template.trim() == format!("{{{{{}}}}}", tokens[0]) {
         let value =
@@ -456,6 +462,133 @@ fn render_text(
         rendered = rendered.replace(&format!("{{{{{token}}}}}"), &value_to_string(&value));
     }
     Ok(RenderedValue::String(safe_string(&rendered)))
+}
+
+fn select_conditional_branch(template: &str, item: Option<&Value>) -> Result<Option<String>> {
+    let normalized = template.replace("\r\n", "\n").replace('\r', "\n");
+    let lines = normalized.lines().map(str::trim).collect::<Vec<_>>();
+    if !lines.first().is_some_and(|line| line.starts_with("@if(")) {
+        return Ok(None);
+    }
+    let item = item
+        .ok_or_else(|| Error::template("conditional template blocks require an enumerable item"))?;
+    let mut index = 0_usize;
+    let mut selected = None;
+    let mut matched = false;
+    let mut saw_else = false;
+    loop {
+        let directive = lines
+            .get(index)
+            .ok_or_else(|| Error::template("conditional template block is missing @endif"))?;
+        if *directive == "@endif" {
+            if index + 1 != lines.len() {
+                return Err(Error::template("conditional template block has content after @endif"));
+            }
+            return Ok(Some(selected.unwrap_or_default()));
+        }
+        let condition = if let Some(condition) =
+            directive.strip_prefix("@if(").and_then(|value| value.strip_suffix(')'))
+        {
+            if index != 0 {
+                return Err(Error::template("@if must begin a conditional template block"));
+            }
+            Some(condition)
+        } else if let Some(condition) =
+            directive.strip_prefix("@elseif(").and_then(|value| value.strip_suffix(')'))
+        {
+            if index == 0 || saw_else {
+                return Err(Error::template("@elseif is out of order"));
+            }
+            Some(condition)
+        } else if *directive == "@else" {
+            if index == 0 || saw_else {
+                return Err(Error::template("@else is out of order"));
+            }
+            saw_else = true;
+            None
+        } else {
+            return Err(Error::template(format!(
+                "invalid conditional template directive '{directive}'"
+            )));
+        };
+        let body = lines
+            .get(index + 1)
+            .ok_or_else(|| Error::template("conditional template directive has no branch body"))?;
+        if body.starts_with('@') {
+            return Err(Error::template("conditional template branch body cannot be a directive"));
+        }
+        if !matched {
+            let branch_matches = match condition {
+                Some(condition) => evaluate_condition(condition, item)?,
+                None => true,
+            };
+            if branch_matches {
+                selected = Some((*body).to_owned());
+                matched = true;
+            }
+        }
+        index += 2;
+    }
+}
+
+fn evaluate_condition(condition: &str, item: &Value) -> Result<bool> {
+    let parts = condition.split_whitespace().collect::<Vec<_>>();
+    if parts.len() != 3 {
+        return Err(Error::template(format!(
+            "conditional expression '{condition}' must use 'field operator value'"
+        )));
+    }
+    let actual = item.get(parts[0]).ok_or_else(|| {
+        Error::template(format!("conditional field '{}' was not found", parts[0]))
+    })?;
+    compare_condition_value(actual, parts[1], parts[2])
+}
+
+fn compare_condition_value(actual: &Value, operator: &str, expected: &str) -> Result<bool> {
+    match actual {
+        Value::String(actual) => match operator {
+            "==" => Ok(actual == expected),
+            "!=" => Ok(actual != expected),
+            _ => Err(Error::template(format!(
+                "conditional operator '{operator}' is not supported for strings"
+            ))),
+        },
+        Value::Number(actual) => {
+            let actual = actual.as_f64().ok_or_else(|| {
+                Error::template("conditional number cannot be represented as f64")
+            })?;
+            let expected = expected.parse::<f64>().map_err(|_| {
+                Error::template(format!("conditional value '{expected}' is not a number"))
+            })?;
+            match operator {
+                "==" => Ok(actual == expected),
+                "!=" => Ok(actual != expected),
+                ">" => Ok(actual > expected),
+                "<" => Ok(actual < expected),
+                ">=" => Ok(actual >= expected),
+                "<=" => Ok(actual <= expected),
+                _ => Err(Error::template(format!(
+                    "conditional operator '{operator}' is not supported for numbers"
+                ))),
+            }
+        }
+        Value::Bool(actual) => {
+            let expected = expected.parse::<bool>().map_err(|_| {
+                Error::template(format!("conditional value '{expected}' is not a boolean"))
+            })?;
+            match operator {
+                "==" => Ok(*actual == expected),
+                "!=" => Ok(*actual != expected),
+                _ => Err(Error::template(format!(
+                    "conditional operator '{operator}' is not supported for booleans"
+                ))),
+            }
+        }
+        Value::Null => Ok(false),
+        Value::Array(_) | Value::Object(_) => {
+            Err(Error::template("conditional fields must contain scalar values"))
+        }
+    }
 }
 
 fn resolve_value(

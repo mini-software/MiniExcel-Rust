@@ -36,6 +36,37 @@ fn async_template_matches_scalar_and_list_rendering() {
 }
 
 #[test]
+fn async_template_renders_enumerable_conditional_blocks() {
+    let directory = tempfile::tempdir().unwrap();
+    let template = directory.path().join("conditional-template.xlsx");
+    let output = directory.path().join("conditional-output.xlsx");
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write_string(0, 0, "{{items.name}}").unwrap();
+    sheet
+        .write_string(0, 1, "@if(name == Jack)\nPrimary\n@else\n{{items.department}}\n@endif")
+        .unwrap();
+    workbook.save(&template).unwrap();
+
+    block_on(MiniExcel::save_as_template_async(
+        &output,
+        &template,
+        &json!({
+            "items": [
+                { "name": "Jack", "department": "HR" },
+                { "name": "Linus", "department": "Kernel" }
+            ]
+        }),
+        &TemplateOptions::new(),
+    ))
+    .unwrap();
+
+    let rows = MiniExcel::query(&output).unwrap().collect::<miniexcel::Result<Vec<_>>>().unwrap();
+    assert_eq!(rows[0]["B"], CellValue::String("Primary".to_owned()));
+    assert_eq!(rows[1]["B"], CellValue::String("Kernel".to_owned()));
+}
+
+#[test]
 fn pre_cancel_and_failures_preserve_destination() {
     let directory = tempfile::tempdir().unwrap();
     let missing_template = directory.path().join("missing.xlsx");

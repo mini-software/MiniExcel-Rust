@@ -149,3 +149,78 @@ fn keeps_one_blank_template_row_for_an_empty_list_and_requires_explicit_overwrit
     assert!(rows[0]["A"].is_empty());
     assert_eq!(rows[1]["A"], CellValue::String("Footer".to_owned()));
 }
+
+#[test]
+fn renders_enumerable_cell_conditional_blocks_and_preserves_styles() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write_string(0, 0, "{{employees.name}}").unwrap();
+    let conditional = "@if(name == Jack)\n{{employees.name}}\n@elseif(name == Neo)\nTest {{employees.name}}\n@else\n{{employees.department}}\n@endif";
+    sheet.write_string_with_format(0, 1, conditional, &Format::new().set_bold()).unwrap();
+    sheet
+        .write_string(
+            0,
+            2,
+            "@if(score >= 20)\nHigh\n@elseif(score > 10)\nMedium\n@else\nLow\n@endif",
+        )
+        .unwrap();
+    sheet.write_string(0, 3, "@if(active == true)\nEnabled\n@else\nDisabled\n@endif").unwrap();
+    sheet.write_string(1, 0, "Footer").unwrap();
+    let template = workbook.save_to_buffer().unwrap();
+
+    let output = MiniExcel::save_as_template_bytes(
+        &template,
+        &json!({
+            "employees": [
+                { "name": "Jack", "department": "HR", "score": 5, "active": true },
+                { "name": "Neo", "department": "IT", "score": 15, "active": false },
+                { "name": "Linus", "department": "Kernel", "score": 25, "active": true }
+            ]
+        }),
+        &TemplateOptions::new(),
+    )
+    .unwrap();
+    let rows = MiniExcel::query_bytes(&output, &ReadOptions::new()).unwrap();
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0]["B"], CellValue::String("Jack".to_owned()));
+    assert_eq!(rows[1]["B"], CellValue::String("Test Neo".to_owned()));
+    assert_eq!(rows[2]["B"], CellValue::String("Kernel".to_owned()));
+    assert_eq!(rows[0]["C"], CellValue::String("Low".to_owned()));
+    assert_eq!(rows[1]["C"], CellValue::String("Medium".to_owned()));
+    assert_eq!(rows[2]["C"], CellValue::String("High".to_owned()));
+    assert_eq!(rows[0]["D"], CellValue::String("Enabled".to_owned()));
+    assert_eq!(rows[1]["D"], CellValue::String("Disabled".to_owned()));
+    assert_eq!(rows[3]["A"], CellValue::String("Footer".to_owned()));
+
+    let mut reader = std::io::Cursor::new(output);
+    let mut styled_rows = Vec::new();
+    MiniExcel::visit_structured_rows_from_reader(&mut reader, &ReadOptions::new(), |row| {
+        styled_rows.push(row.clone());
+        Ok(true)
+    })
+    .unwrap();
+    assert_ne!(styled_rows[0].cells()[1].style_id(), 0);
+    assert_eq!(styled_rows[0].cells()[1].style_id(), styled_rows[2].cells()[1].style_id());
+}
+
+#[test]
+fn rejects_malformed_or_missing_conditional_fields() {
+    for conditional in [
+        "@if(name==Jack)\nJack\n@endif",
+        "@if(name == Jack)\nJack",
+        "@if(missing == Jack)\nJack\n@else\nOther\n@endif",
+    ] {
+        let mut workbook = Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.write_string(0, 0, "{{employees.name}}").unwrap();
+        sheet.write_string(0, 1, conditional).unwrap();
+        let template = workbook.save_to_buffer().unwrap();
+        let error = MiniExcel::save_as_template_bytes(
+            &template,
+            &json!({ "employees": [{ "name": "Jack" }] }),
+            &TemplateOptions::new(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("conditional"), "{error}");
+    }
+}

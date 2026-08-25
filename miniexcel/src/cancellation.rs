@@ -9,7 +9,7 @@ struct CancellationState {
     event: Event,
 }
 
-/// A runtime-neutral cooperative cancellation signal for async Insert operations.
+/// A runtime-neutral cooperative cancellation signal for async operations.
 #[derive(Clone, Debug, Default)]
 pub struct CancellationToken {
     state: Arc<CancellationState>,

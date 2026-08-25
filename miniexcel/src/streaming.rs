@@ -1,3 +1,5 @@
+#[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+mod async_query;
 mod comments;
 mod ooxml;
 mod shared_strings;
@@ -15,6 +17,9 @@ use crate::reader::{column_names, header_names, row_to_range, to_cell_value, tri
 use crate::{DynamicRow, Error, ReadOptions, Result, StructuredCell, StructuredRow};
 
 use self::ooxml::{StreamingRawRows, StreamingTableRawRows};
+
+#[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+pub(crate) use async_query::spawn as spawn_async_query;
 
 pub(crate) fn comments(
     path: impl AsRef<Path>,

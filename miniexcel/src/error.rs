@@ -98,7 +98,7 @@ enum ErrorKind {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     AtomicCommit(String),
 
-    #[error("Insert operation was cancelled")]
+    #[error("operation was cancelled")]
     #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
     Cancelled,
 

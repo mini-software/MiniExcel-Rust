@@ -98,6 +98,31 @@ for record in MiniExcel::query_as::<Record>("book.xlsx")? {
 
 `MiniExcel::query()` 和 `query_as()` 接收路径，因为迭代器存活期间由 worker 持有 ZIP archive。
 
+### Async Query
+
+启用可选 `async` feature 后，可以 runtime-neutral stream 消费动态或 Serde 类型化 path query：
+
+```rust
+use futures_util::StreamExt;
+use miniexcel::{CancellationToken, MiniExcel, ReadOptions};
+
+let cancellation = CancellationToken::new();
+let mut rows = MiniExcel::query_async_with_options_and_cancellation(
+    "book.xlsx",
+    &ReadOptions::new(),
+    cancellation.clone(),
+)?;
+
+while let Some(row) = rows.next().await {
+    println!("{:?}", row?);
+}
+```
+
+`query_async*()` 与 `query_as_async*()` 使用 bounded channel，将 blocking ZIP/XML 工作移出
+async executor。它们不会把 filesystem access 变成 async I/O，也不依赖 Tokio。显式取消会
+返回可由 `Error::is_cancelled()` 识别的错误；丢弃 stream 会请求取消，但不会阻塞 executor。
+Parser 初始化或当前 row 可能会在后台清理完成前继续执行。
+
 ## 借用 Reader 与 Writer
 
 对调用方持有的 `Read + Seek` source，可使用 visitor API 流式处理，不会物化全部 row 或转移所有权：
@@ -484,7 +509,7 @@ MiniExcel::save_as_template(
 - `MiniExcel::query()` 和 `query_as()` 会从路径严格流式解析 worksheet XML。
 - 分组分析保留与不同 group 数量成比例的状态，并在 `max_groups` 停止。
 - RAG 导出不会重新计算公式，hidden sheet 未显式允许时会拒绝处理。
-- 流式 query 是同步接口，每个活动 query 使用一个 worker thread。可选 async Insert API 只让 row production 异步，不是 async ZIP I/O。
+- 同步流式 query 每个活动 query 使用一个 worker thread。可选 async query/Insert API 通过 bounded channel 包装 blocking XLSX worker；ZIP/XML/filesystem 工作并不是 async I/O。
 - Save 会创建新工作簿，并默认拒绝已有目标路径。`MiniExcel::insert*()` 会向现有 `.xlsx` path 原子 append 或严格 replace worksheet；路径不存在时则创建 workbook。
 
 ## 暂不支持

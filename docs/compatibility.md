@@ -11,7 +11,7 @@ The Rust MVP implements the smallest useful MiniExcel-style XLSX read/write surf
 | Dependency | Locked API line | Role | License | MSRV note |
 | --- | --- | --- | --- | --- |
 | `atomicwrites` | 0.4 | Safe cross-platform atomic replacement for Windows path inserts | MIT | Windows-only dependency; checked with Rust 1.85 |
-| `async-channel` / `event-listener` / `futures-*` | 2.5 / 5.4 / 0.3 | Optional runtime-neutral async Insert producer and cancellation | MIT OR Apache-2.0 | Enabled only by the `async` feature; checked with Rust 1.85 |
+| `async-channel` / `event-listener` / `futures-*` | 2.5 / 5.4 / 0.3 | Optional runtime-neutral async query/Insert and cancellation | MIT OR Apache-2.0 | Enabled only by the `async` feature; checked with Rust 1.85 |
 | `fs2` | 0.4 | Cross-platform advisory locking for path inserts | MIT OR Apache-2.0 | Checked with Rust 1.85 |
 | `calamine` | 0.35 | XLSX parsing and Serde row deserialization | MIT | 0.35 declares Rust 1.83 |
 | `clap` | 4.6 | Local CLI argument parsing | MIT OR Apache-2.0 | 4.6 declares Rust 1.85 |
@@ -54,6 +54,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Multi-sheet export | `save_as_sheets()` / `save_as_serialized_sheets()` | Preserves input sheet order and returns data-row counts |
 | `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` / borrowed reader-to-writer variants | Path APIs are atomic; separate borrowed streams require an empty sink and preserve package behavior without atomic commit |
 | Async Insert producer | `insert_with_schema_async*()` | Optional `async` feature; bounded producer channel with blocking XLSX work on a dedicated thread |
+| Async path query | `query_async*()` / `query_as_async*()` | Optional `async` feature; bounded dynamic/Serde streams, cooperative cancellation, blocking XLSX workers |
 | Per-sheet visibility | `WriteOptions::with_sheet_visibility()` | Visible, hidden, and very hidden; first visible sheet is active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | Defaults to `false`; existing paths require explicit opt-in |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | Defaults to one frozen row and zero frozen columns |
@@ -162,7 +163,7 @@ dotnet test ../MiniExcel/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.c
 
 The Rust workflow runs the Rust contract on Linux and Windows. Its .NET parity job checks out the MiniExcel repository, copies this revision's contract into that checkout, and runs the .NET adapter on Linux. A compatibility change is complete only when the shared contract is updated deliberately and both adapters pass it.
 
-The contract covers only the current common surface: dynamic/typed path queries, inclusive range queries, column-name discovery, header behavior, sheet selection/order, A1 starts, empty/style-only rows, inferred cell references, scalar/date/duration mapping, trimmed typed headers, and conversion-error row/value context. Structured provenance is a Rust research extension and is not a .NET parity claim. Async APIs, DataReader, templates, and writing parity remain outside version 1 and must not be described as equivalent yet.
+The contract covers only the current common surface: dynamic/typed path queries, inclusive range queries, column-name discovery, header behavior, sheet selection/order, A1 starts, empty/style-only rows, inferred cell references, scalar/date/duration mapping, trimmed typed headers, and conversion-error row/value context. Structured provenance is a Rust research extension and is not a .NET parity claim. Async APIs are tested against the same fixtures but are not part of the shared contract; DataReader, templates, and writing parity also remain outside version 1.
 
 ## .NET Coverage Boundary
 
@@ -182,6 +183,7 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | Versioned grouped analytics | Rust research extension | No |
 | Addressed JSONL/Markdown/manifest RAG export | Rust research extension | No |
 | Async Insert producer | Implemented behind optional feature | Rust cancellation tests; not shared internals |
+| Async dynamic/typed path query | Implemented behind optional feature | Rust parity, cancellation, error, and cleanup tests |
 | DataReader and broader stream ownership | Deferred | No |
 | Append worksheet to existing `.xlsx` workbook | Implemented and atomically committed | Rust tests; shared parity contract not yet extended |
 | Strict worksheet replacement | Implemented for plain targets and supported target-owned closures | Rust tests; stale calcChain removed and full recalculation requested |
@@ -192,4 +194,4 @@ This matrix is the coverage claim: Rust does not yet provide complete API parity
 
 ## Deferred Work
 
-SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, old Excel formats, advanced template directives and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, async query/export/template I/O, and borrowed XLSX lazy readers require separate design and acceptance milestones. CSV DataReader/DataTable adapters are intentionally replaced by Rust iterators, and a one-call CSV/XLSX converter is not exposed; callers compose query and save APIs. See the [Insert migration guide](insert-v1-migration.md) for supported workflows and deliberate differences.
+SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, old Excel formats, advanced template directives and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, async export/template I/O, async borrowed readers, and borrowed XLSX lazy readers require separate design and acceptance milestones. CSV DataReader/DataTable adapters are intentionally replaced by Rust iterators, and a one-call CSV/XLSX converter is not exposed; callers compose query and save APIs. See the [Insert migration guide](insert-v1-migration.md) for supported workflows and deliberate differences.

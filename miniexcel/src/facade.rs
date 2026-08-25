@@ -127,6 +127,43 @@ impl MiniExcel {
         Ok(Box::new(StreamingRows::open(path, options)?))
     }
 
+    /// Streams dynamic rows asynchronously using the default read options.
+    ///
+    /// XLSX work remains blocking and runs on worker threads. The returned stream is
+    /// runtime-neutral and bounded; dropping it requests worker cancellation.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub fn query_async(path: impl AsRef<Path>) -> Result<crate::AsyncQuery<DynamicRow>> {
+        Self::query_async_with_options(path, &ReadOptions::default())
+    }
+
+    /// Streams dynamic rows asynchronously using explicit read options.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub fn query_async_with_options(
+        path: impl AsRef<Path>,
+        options: &ReadOptions,
+    ) -> Result<crate::AsyncQuery<DynamicRow>> {
+        Self::query_async_with_options_and_cancellation(
+            path,
+            options,
+            crate::CancellationToken::new(),
+        )
+    }
+
+    /// Streams dynamic rows asynchronously with cooperative cancellation.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub fn query_async_with_options_and_cancellation(
+        path: impl AsRef<Path>,
+        options: &ReadOptions,
+        cancellation: crate::CancellationToken,
+    ) -> Result<crate::AsyncQuery<DynamicRow>> {
+        let path = path.as_ref().to_owned();
+        let options = options.clone();
+        crate::streaming::spawn_async_query(
+            move || StreamingRows::open(path, &options),
+            cancellation,
+        )
+    }
+
     /// Streams dynamic rows from a named OpenXML table.
     ///
     /// Table names are matched case-insensitively. When `sheet_name` is `None`, only the first
@@ -458,6 +495,49 @@ impl MiniExcel {
         T: DeserializeOwned + 'static,
     {
         Ok(Box::new(StreamingTypedRows::open(path, options)?))
+    }
+
+    /// Streams and deserializes rows asynchronously using the default read options.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub fn query_as_async<T>(path: impl AsRef<Path>) -> Result<crate::AsyncQuery<T>>
+    where
+        T: DeserializeOwned + Send + 'static,
+    {
+        Self::query_as_async_with_options(path, &ReadOptions::default())
+    }
+
+    /// Streams and deserializes rows asynchronously using explicit read options.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub fn query_as_async_with_options<T>(
+        path: impl AsRef<Path>,
+        options: &ReadOptions,
+    ) -> Result<crate::AsyncQuery<T>>
+    where
+        T: DeserializeOwned + Send + 'static,
+    {
+        Self::query_as_async_with_options_and_cancellation(
+            path,
+            options,
+            crate::CancellationToken::new(),
+        )
+    }
+
+    /// Streams and deserializes rows asynchronously with cooperative cancellation.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub fn query_as_async_with_options_and_cancellation<T>(
+        path: impl AsRef<Path>,
+        options: &ReadOptions,
+        cancellation: crate::CancellationToken,
+    ) -> Result<crate::AsyncQuery<T>>
+    where
+        T: DeserializeOwned + Send + 'static,
+    {
+        let path = path.as_ref().to_owned();
+        let options = options.clone();
+        crate::streaming::spawn_async_query(
+            move || StreamingTypedRows::open(path, &options),
+            cancellation,
+        )
     }
 
     /// Creates a new XLSX workbook from dynamic rows.

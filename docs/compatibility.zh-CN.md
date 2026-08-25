@@ -11,7 +11,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | 依赖 | 锁定 API 版本线 | 用途 | 许可证 | MSRV 说明 |
 | --- | --- | --- | --- | --- |
 | `atomicwrites` | 0.4 | Windows path insert 的安全跨平台原子替换 | MIT | 仅 Windows 依赖；已使用 Rust 1.85 检查 |
-| `async-channel` / `event-listener` / `futures-*` | 2.5 / 5.4 / 0.3 | 可选 runtime-neutral async Insert producer 与 cancellation | MIT OR Apache-2.0 | 仅由 `async` feature 启用；已使用 Rust 1.85 检查 |
+| `async-channel` / `event-listener` / `futures-*` | 2.5 / 5.4 / 0.3 | 可选 runtime-neutral async query/Insert 与 cancellation | MIT OR Apache-2.0 | 仅由 `async` feature 启用；已使用 Rust 1.85 检查 |
 | `fs2` | 0.4 | Path insert 的跨平台 advisory lock | MIT OR Apache-2.0 | 已使用 Rust 1.85 检查 |
 | `calamine` | 0.35 | XLSX 解析和 Serde row 反序列化 | MIT | 0.35 声明 Rust 1.83 |
 | `clap` | 4.6 | 本地 CLI 参数解析 | MIT OR Apache-2.0 | 4.6 声明 Rust 1.85 |
@@ -54,6 +54,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | 多工作表导出 | `save_as_sheets()` / `save_as_serialized_sheets()` | 保留输入工作表顺序并返回数据行数 |
 | `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` / borrowed reader-to-writer variants | Path API 为原子操作；独立 borrowed stream 要求空 sink，并在无原子 commit 的情况下保持相同 package 行为 |
 | Async Insert producer | `insert_with_schema_async*()` | 可选 `async` feature；bounded producer channel，XLSX 工作在专用 blocking thread |
+| Async path query | `query_async*()` / `query_as_async*()` | 可选 `async` feature；bounded 动态/Serde stream、协作式 cancellation、blocking XLSX worker |
 | 每表 visibility | `WriteOptions::with_sheet_visibility()` | visible、hidden、very hidden；第一个 visible sheet 为 active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | 默认 `false`；已有路径需要显式允许覆盖 |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | 默认冻结一行、零列 |
@@ -162,7 +163,7 @@ dotnet test ../MiniExcel/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.c
 
 Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity job 会 checkout MiniExcel 仓库，将当前 revision 的契约复制到该 checkout，并在 Linux 上运行 .NET adapter。只有在共享契约被有意识地更新且两个 adapter 都通过后，兼容性修改才算完成。
 
-契约只覆盖当前公共交集：动态/类型化路径 query、包含端点的 range query、column name 发现、header 行为、sheet 选择/顺序、A1 起点、空 row/仅 style row、推断 cell reference、scalar/date/duration 映射、trim 后的类型化 header，以及转换 error 的 row/value 上下文。Structured provenance 是 Rust 研究扩展，不构成 .NET 等价声明。Async API、DataReader、template 和写入等价行为仍不属于版本 1，当前不得描述为等价。
+契约只覆盖当前公共交集：动态/类型化路径 query、包含端点的 range query、column name 发现、header 行为、sheet 选择/顺序、A1 起点、空 row/仅 style row、推断 cell reference、scalar/date/duration 映射、trim 后的类型化 header，以及转换 error 的 row/value 上下文。Structured provenance 是 Rust 研究扩展，不构成 .NET 等价声明。Async API 使用相同 fixture 测试，但尚未纳入共享契约；DataReader、template 和写入等价行为也仍不属于版本 1。
 
 ## .NET 覆盖边界
 
@@ -182,6 +183,7 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | 版本化分组分析 | Rust 研究扩展 | 否 |
 | 带地址 JSONL/Markdown/manifest RAG 导出 | Rust 研究扩展 | 否 |
 | Async Insert producer | 已通过可选 feature 实现 | Rust cancellation test；不共享内部行为 |
+| Async 动态/类型化 path query | 已通过可选 feature 实现 | Rust parity、cancellation、error 与 cleanup 测试 |
 | DataReader 与更广泛的 stream ownership | 延后 | 否 |
 | 向现有 `.xlsx` workbook 追加 worksheet | 已实现并原子提交 | Rust 测试；共享 parity contract 尚未扩展 |
 | 严格 worksheet replacement | 已支持 plain target 与受支持的 target-owned closure | Rust 测试；删除 stale calcChain 并要求 full recalculation |
@@ -192,4 +194,4 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 
 ## 延后工作
 
-SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、旧 Excel 格式、高级 template 指令与 sheet 克隆、image authoring、merged-cell API、公式计算/依赖展开、公式编写、通用 style、async query/export/template I/O，以及 borrowed XLSX lazy reader，都需要独立的设计与验收里程碑。CSV DataReader/DataTable adapter 已有意替换为 Rust iterator；当前不提供一步式 CSV/XLSX converter，调用方可组合 query 与 save API。支持工作流与有意保留的差异见 [Insert 迁移说明](insert-v1-migration.zh-CN.md)。
+SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、旧 Excel 格式、高级 template 指令与 sheet 克隆、image authoring、merged-cell API、公式计算/依赖展开、公式编写、通用 style、async export/template I/O、async borrowed reader，以及 borrowed XLSX lazy reader，都需要独立的设计与验收里程碑。CSV DataReader/DataTable adapter 已有意替换为 Rust iterator；当前不提供一步式 CSV/XLSX converter，调用方可组合 query 与 save API。支持工作流与有意保留的差异见 [Insert 迁移说明](insert-v1-migration.zh-CN.md)。

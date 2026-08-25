@@ -34,6 +34,9 @@ pub use comments::{
 };
 pub use error::{Error, Result};
 pub use facade::MiniExcel;
+#[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+pub type AsyncQuery<T> =
+    std::pin::Pin<Box<dyn futures_core::Stream<Item = Result<T>> + Send + 'static>>;
 pub use options::{
     CsvConfiguration, CsvEncoding, CsvNewline, CsvReadOptions, CsvWriteOptions,
     ExistingSheetPolicy, HeaderMode, HeaderStyle, HorizontalAlignment, InsertOptions, ReadOptions,

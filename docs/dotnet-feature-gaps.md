@@ -8,7 +8,7 @@ This report compares observable public capabilities in the local checkouts below
 
 | Project | Revision |
 | --- | --- |
-| MiniExcel-Rust | working tree based on `33be429a4791be0751a693b639bd696ecd75ed68` (`0.3.0`) |
+| MiniExcel-Rust | working tree based on `b166b708606a2046b62eefafa7893944bb3a2251` (`0.3.0`) |
 | MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 The comparison uses the .NET public APIs, their controlling implementations, and focused tests under the sibling `../MiniExcel` checkout. Rust status is based on the public `MiniExcel` facade, options, integration tests, and [compatibility boundary](compatibility.md).
@@ -31,7 +31,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Named tables | Implemented | Dynamic/typed path queries, byte queries, and borrowed-reader visitors use table metadata headers and bounds with case-insensitive table-name matching. |
 | DataReader and DataTable | Different by design | Rust exposes iterators and borrowed visitors instead of .NET tabular interfaces. A Rust-native Arrow/record-batch adapter is deferred until a concrete integration requires it and does not block parity completion. |
 | Caller-owned streams | Partial | Borrowed synchronous dynamic/typed/structured visitors, metadata reads, dynamic/schema/typed/multi-sheet writers, and separate reader-to-writer Insert are implemented with leave-open semantics. Borrowed lazy iterators, async streams, and template streams remain unsupported. |
-| Async and cancellation | Partial | Optional runtime-neutral async row production and cancellation are implemented for explicit-schema path Insert. Async query/export/template operations, typed async sources, and progress callbacks remain unsupported. ZIP and filesystem work remains blocking on a dedicated worker. |
+| Async and cancellation | Partial | Optional runtime-neutral dynamic/Serde path queries and explicit-schema Insert support bounded streams and cooperative cancellation. Async export/template operations, async write sources, borrowed async readers, and progress callbacks remain unsupported. ZIP and filesystem work remains blocking on dedicated workers. |
 | General save inputs | Partial | Export from general objects/enumerables, dictionaries, `DataTable`, `IDataReader`, and async enumerables, with progress. Rust accepts dynamic or same-type Serde slices and reports per-sheet row counts. |
 | Multi-sheet export | Partial | Rust creates ordered visible, hidden, and very-hidden worksheets, but does not yet accept heterogeneous Serde row types in one call. |
 | Existing-workbook operations | Partial | Rust appends or strictly replaces worksheets through atomic path APIs or separate borrowed streams, preserving unrelated package parts and worksheet identity. Copy-and-add, rename, reorder, and standalone visibility mutation remain unsupported. |
@@ -51,6 +51,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Area | Rust evidence | .NET evidence in `../MiniExcel` |
 | --- | --- | --- |
 | Public read/write boundary | `miniexcel/src/facade.rs`, `miniexcel/src/options.rs` | `src/MiniExcel.OpenXml/Api/OpenXmlImporter.cs`, `OpenXmlExporter.cs` |
+| Async query | `MiniExcel::query_async*` and `query_as_async*`; Rust focused parity/cancellation/error/cleanup tests | `OpenXmlImporter.QueryAsync`; `MiniExcelOpenXmlImporterAsyncTests` |
 | Tables | `MiniExcel::query_table*`; Rust focused tests use the exact `TestQueryTable.xlsx` fixture (SHA-256 `04F719BF9F9E99D9B437A8FB32F8111FD92580A1D29ACAD10B6ED128C0564501`) | `OpenXmlImporter.QueryTableAsync`; `tests/MiniExcel.OpenXml.Tests/Tables/` |
 | Comments | `MiniExcel::get_comments*`; Rust focused tests use `TestCommentsAndNotes.xlsx` (SHA-256 `3A855CE896ED62DC27C91797432DD89EE081F07CD03AB05BF1B0CD745543A3FC`) | `OpenXmlImporter.RetrieveCommentsAsync`; `tests/MiniExcel.OpenXml.Tests/Comments/` |
 | DataReader/DataTable | Rust iterators and borrowed visitors are the native abstraction; no literal .NET tabular adapter is planned | `OpenXmlImporter.GetDataReader`, `GetAsyncDataReader`, `QueryAsDataTableAsync`; `tests/MiniExcel.OpenXml.Tests/DataReader/` |
@@ -65,7 +66,7 @@ The .NET APIs marked with `Async` also have generated synchronous counterparts t
 
 ## Suggested Implementation Order
 
-1. **Async query/export/template APIs**: extend runtime-neutral producer/cancellation patterns without presenting blocking ZIP work as async I/O.
+1. **Async export/template APIs**: extend runtime-neutral producer/cancellation patterns without presenting blocking ZIP work as async I/O.
 2. **Advanced templates and Fluent Mapping**: add grouped/conditional templates, parametrized sheets, and mapping through separate compatibility milestones.
 3. **Remaining workbook edits**: copy/add, rename, reorder, and standalone visibility mutation require their own preservation contracts.
 

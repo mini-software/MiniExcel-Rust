@@ -98,6 +98,33 @@ for record in MiniExcel::query_as::<Record>("book.xlsx")? {
 
 `MiniExcel::query()` and `query_as()` accept paths because a worker owns the ZIP archive while the iterator is alive.
 
+### Async Query
+
+Enable the optional `async` feature to consume dynamic or Serde-typed path queries as a
+runtime-neutral stream:
+
+```rust
+use futures_util::StreamExt;
+use miniexcel::{CancellationToken, MiniExcel, ReadOptions};
+
+let cancellation = CancellationToken::new();
+let mut rows = MiniExcel::query_async_with_options_and_cancellation(
+    "book.xlsx",
+    &ReadOptions::new(),
+    cancellation.clone(),
+)?;
+
+while let Some(row) = rows.next().await {
+    println!("{:?}", row?);
+}
+```
+
+`query_async*()` and `query_as_async*()` use bounded channels and keep blocking ZIP/XML work off
+the async executor. They do not turn filesystem access into async I/O and do not require Tokio.
+Explicit cancellation yields an error recognized by `Error::is_cancelled()`; dropping the stream
+requests cancellation without blocking the executor. Parser initialization or the current row may
+finish before background cleanup completes.
+
 ## Borrowed Readers And Writers
 
 Use visitor APIs for caller-owned `Read + Seek` sources without materializing all rows or transferring ownership:
@@ -489,7 +516,7 @@ Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` f
 - `MiniExcel::query()` and `query_as()` strictly stream worksheet XML from paths.
 - Grouped analytics retain state proportional to distinct groups and stop at `max_groups`.
 - RAG exports never recalculate formulas and reject hidden sheets unless explicitly allowed.
-- Streaming queries are synchronous and use one worker thread per active query. The optional async Insert API makes row production asynchronous, not ZIP I/O.
+- Synchronous streaming queries use one worker thread per active query. Optional async query and Insert APIs use bounded channels around blocking XLSX workers; ZIP/XML/filesystem work is not async I/O.
 - Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends or strictly replaces a worksheet in an existing `.xlsx` path, or creates a workbook when the path is missing.
 
 ## Not Supported

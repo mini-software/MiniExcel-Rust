@@ -444,6 +444,18 @@ The active-tab index is preserved even when the active worksheet is hidden. Unli
 `AlterSheet`, Rust rejects hiding the final visible worksheet so the committed workbook always
 retains at least one visible sheet. Setting the current state again is a byte-for-byte no-op.
 
+Worksheets can also be moved by zero-based index:
+
+```rust
+MiniExcel::reorder_sheet("book.xlsx", "Archive", 0)?;
+```
+
+Negative indices clamp to the first position and oversized indices clamp to the last, matching
+.NET `AlterSheet`. Rust additionally remaps `activeTab`, `firstSheet`, and defined-name
+`localSheetId` values so those references remain attached to the same worksheet. Relationships,
+formula text, visibility, and worksheet IDs remain unchanged. Moving to the current effective
+index is a byte-for-byte no-op.
+
 Enable the optional `async` feature to feed an existing-workbook Insert from a runtime-neutral
 `Stream<Item = miniexcel::Result<DynamicRow>>`:
 
@@ -542,10 +554,10 @@ Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` f
 - Grouped analytics retain state proportional to distinct groups and stop at `max_groups`.
 - RAG exports never recalculate formulas and reject hidden sheets unless explicitly allowed.
 - Synchronous streaming queries use one worker thread per active query. Optional async query and Insert APIs use bounded channels around blocking XLSX workers; ZIP/XML/filesystem work is not async I/O.
-- Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends or strictly replaces a worksheet in an existing `.xlsx` path, or creates a workbook when the path is missing. `rename_sheet()` and `set_sheet_visibility()` atomically change only existing workbook sheet metadata.
+- Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends or strictly replaces a worksheet in an existing `.xlsx` path, or creates a workbook when the path is missing. `rename_sheet()`, `set_sheet_visibility()`, and `reorder_sheet()` atomically change existing workbook sheet metadata.
 
 ## Not Supported
 
-`.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and arbitrary worksheet copying/reordering are not currently supported.
+`.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and arbitrary worksheet copying are not currently supported.
 
 See the [compatibility matrix](docs/compatibility.md) for the current support scope and the [MiniExcel v1 Insert migration guide](docs/insert-v1-migration.md) for deliberate differences.

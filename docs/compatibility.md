@@ -189,8 +189,9 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | Strict worksheet replacement | Implemented for plain targets and supported target-owned closures | Rust tests; stale calcChain removed and full recalculation requested |
 | Atomic worksheet rename | Implemented for existing `.xlsx` paths | Rust package-preservation tests; pinned .NET `AlterSheet` baseline |
 | Atomic worksheet visibility mutation | Implemented for existing `.xlsx` paths | Rust invariant/rollback tests; pinned .NET `AlterSheet` baseline |
+| Atomic worksheet reorder | Implemented for existing `.xlsx` paths | Rust positional-reference/rollback tests; pinned .NET `AlterSheet` baseline |
 | Legacy `.xls`, `.xlsb`, and `.ods` formats | Deferred | No |
-| Worksheet copy/reorder | Deferred | No |
+| Worksheet copy-and-add | Deferred | No |
 | Advanced templates, pictures, and merges | Deferred | No |
 
 This matrix is the coverage claim: Rust does not yet provide complete API parity with the current .NET packages.

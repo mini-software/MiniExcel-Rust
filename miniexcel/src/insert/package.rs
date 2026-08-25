@@ -226,8 +226,22 @@ impl PackageInventory {
         if sheets.is_empty() {
             return Err(Error::no_worksheets());
         }
-        if views.iter().any(|view| view.active_tab >= sheets.len()) {
-            return Err(Error::unsafe_package("workbook activeTab is outside the sheet list"));
+        if views
+            .iter()
+            .any(|view| view.active_tab >= sheets.len() || view.first_sheet >= sheets.len())
+        {
+            return Err(Error::unsafe_package(
+                "workbook activeTab or firstSheet is outside the sheet list",
+            ));
+        }
+        if defined_names
+            .iter()
+            .filter_map(|name| name.local_sheet_id)
+            .any(|index| index >= sheets.len())
+        {
+            return Err(Error::unsafe_package(
+                "definedName localSheetId is outside the sheet list",
+            ));
         }
 
         Ok(Self { entry_names, content_types, relationships, sheets, views, defined_names })
@@ -553,12 +567,8 @@ fn parse_workbook(xml: &[u8]) -> Result<(Vec<SheetElement>, Vec<WorkbookView>, V
                 if local_name(event.name().as_ref()) == b"workbookView" =>
             {
                 views.push(WorkbookView {
-                    active_tab: xml_attribute(&event, b"activeTab")?
-                        .and_then(|value| value.parse().ok())
-                        .unwrap_or(0),
-                    first_sheet: xml_attribute(&event, b"firstSheet")?
-                        .and_then(|value| value.parse().ok())
-                        .unwrap_or(0),
+                    active_tab: optional_index_attribute(&event, b"activeTab")?.unwrap_or(0),
+                    first_sheet: optional_index_attribute(&event, b"firstSheet")?.unwrap_or(0),
                 });
             }
             Event::Start(event) | Event::Empty(event)
@@ -593,8 +603,7 @@ fn parse_workbook(xml: &[u8]) -> Result<(Vec<SheetElement>, Vec<WorkbookView>, V
                 current_defined_name = Some(DefinedName {
                     name: xml_attribute(&event, b"name")?
                         .ok_or_else(|| Error::insert_package("definedName has no name"))?,
-                    local_sheet_id: xml_attribute(&event, b"localSheetId")?
-                        .and_then(|value| value.parse().ok()),
+                    local_sheet_id: optional_index_attribute(&event, b"localSheetId")?,
                     hidden: xml_attribute(&event, b"hidden")?.as_deref() == Some("1"),
                     formula: String::new(),
                 });
@@ -622,6 +631,19 @@ fn parse_workbook(xml: &[u8]) -> Result<(Vec<SheetElement>, Vec<WorkbookView>, V
         }
     }
     Ok((sheets, views, defined_names))
+}
+
+fn optional_index_attribute(event: &BytesStart<'_>, name: &[u8]) -> Result<Option<usize>> {
+    xml_attribute(event, name)?
+        .map(|value| {
+            value.parse().map_err(|_| {
+                Error::insert_package(format!(
+                    "workbook attribute '{}' has invalid index '{value}'",
+                    String::from_utf8_lossy(name)
+                ))
+            })
+        })
+        .transpose()
 }
 
 fn reject_unsupported_content_types(content_types: &ContentTypes) -> Result<()> {
@@ -1090,6 +1112,37 @@ mod tests {
             ("xl/worksheets/sheet3.xml", "<worksheet/>"),
         ]);
         assert!(PackageInventory::inspect(Cursor::new(malformed)).is_err());
+    }
+
+    #[test]
+    fn preflight_rejects_invalid_positional_workbook_metadata() {
+        let worksheet_entries = [
+            ("xl/worksheets/data.xml", "<worksheet/>"),
+            ("xl/worksheets/sheet1.xml", "<worksheet/>"),
+            ("xl/worksheets/sheet3.xml", "<worksheet/>"),
+        ];
+        for workbook in [
+            WORKBOOK.replace("activeTab=\"0\"", "activeTab=\"x\""),
+            WORKBOOK.replace("firstSheet=\"0\"", "firstSheet=\"3\""),
+            WORKBOOK.replace(
+                "<definedName name=\"GlobalTotal\"",
+                "<definedName name=\"GlobalTotal\" localSheetId=\"x\"",
+            ),
+            WORKBOOK.replace(
+                "<definedName name=\"GlobalTotal\"",
+                "<definedName name=\"GlobalTotal\" localSheetId=\"3\"",
+            ),
+        ] {
+            let package = zip_entries(&[
+                (CONTENT_TYPES_PATH, TYPES),
+                (WORKBOOK_PATH, &workbook),
+                (WORKBOOK_RELS_PATH, WORKBOOK_RELS),
+                worksheet_entries[0],
+                worksheet_entries[1],
+                worksheet_entries[2],
+            ]);
+            assert!(PackageInventory::inspect(Cursor::new(package)).is_err());
+        }
     }
 
     #[test]

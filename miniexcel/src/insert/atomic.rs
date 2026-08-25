@@ -12,8 +12,8 @@ use super::donor::DonorWorksheet;
 use super::package::PackageInventory;
 use super::rewrite::{
     PackageRewriteStage, ReplacementPlan, append_worksheet_to_writer_with_hook,
-    mutate_worksheet_metadata_to_writer_with_hook, plan_replacement,
-    replace_worksheet_to_writer_with_hook,
+    mutate_worksheet_metadata_to_writer_with_hook, plan_replacement, remap_sheet_index,
+    reorder_worksheet_to_writer_with_hook, replace_worksheet_to_writer_with_hook,
 };
 use crate::writer::validate_sheet_name;
 use crate::{Error, ExistingSheetPolicy, Result, SheetVisibility, TargetRelationshipPolicy};
@@ -138,6 +138,107 @@ pub(crate) fn set_sheet_visibility_to_path(
     visibility: SheetVisibility,
 ) -> Result<()> {
     set_sheet_visibility_to_path_with_hook(path.as_ref(), sheet_name, visibility, |_| Ok(()))
+}
+
+pub(crate) fn reorder_sheet_to_path(
+    path: impl AsRef<Path>,
+    sheet_name: &str,
+    new_sheet_index: i32,
+) -> Result<()> {
+    reorder_sheet_to_path_with_hook(path.as_ref(), sheet_name, new_sheet_index, |_| Ok(()))
+}
+
+fn reorder_sheet_to_path_with_hook<H>(
+    path: &Path,
+    sheet_name: &str,
+    new_sheet_index: i32,
+    mut checkpoint: H,
+) -> Result<()>
+where
+    H: FnMut(AtomicCommitStage) -> Result<()>,
+{
+    validate_sheet_name(sheet_name, &std::collections::HashSet::new())?;
+    checkpoint(AtomicCommitStage::Preflight)?;
+    let _guard = PathMutationGuard::acquire(path, "workbook mutation")?;
+    let source_fingerprint = SourceFingerprint::read(path)?;
+    let source_metadata = fs::metadata(path)?;
+    let mut source = File::open(path)?;
+    let inventory = PackageInventory::inspect(&mut source)?;
+    let target = inventory
+        .find_sheet(sheet_name)
+        .cloned()
+        .ok_or_else(|| Error::sheet_not_found(sheet_name))?;
+    let destination_index =
+        usize::try_from(new_sheet_index).unwrap_or(0).min(inventory.sheets.len() - 1);
+    if target.index == destination_index {
+        return Ok(());
+    }
+
+    let parent = sibling_directory(path);
+    let mut temporary =
+        tempfile::Builder::new().prefix(".miniexcel-").suffix(".xlsx.tmp").tempfile_in(parent)?;
+    source.rewind()?;
+    reorder_worksheet_to_writer_with_hook(
+        source,
+        temporary.as_file_mut(),
+        &target.relationship_id,
+        target.index,
+        destination_index,
+        |stage| match stage {
+            PackageRewriteStage::Copy => checkpoint(AtomicCommitStage::ZipCopy),
+            PackageRewriteStage::Finish => checkpoint(AtomicCommitStage::ZipFinish),
+        },
+    )?;
+    temporary.as_file_mut().flush()?;
+    temporary.as_file().sync_all()?;
+
+    checkpoint(AtomicCommitStage::Validation)?;
+    validate_rewritten_package(temporary.reopen()?, &target.name)?;
+    let rewritten = PackageInventory::inspect(temporary.reopen()?)?;
+    let mut expected_sheets = inventory.sheets.clone();
+    let moved = expected_sheets.remove(target.index);
+    expected_sheets.insert(destination_index, moved);
+    for (index, sheet) in expected_sheets.iter_mut().enumerate() {
+        sheet.index = index;
+    }
+    let expected_views = inventory
+        .views
+        .iter()
+        .cloned()
+        .map(|mut view| {
+            view.active_tab = remap_sheet_index(view.active_tab, target.index, destination_index);
+            view.first_sheet = remap_sheet_index(view.first_sheet, target.index, destination_index);
+            view
+        })
+        .collect::<Vec<_>>();
+    let expected_defined_names = inventory
+        .defined_names
+        .iter()
+        .cloned()
+        .map(|mut name| {
+            name.local_sheet_id = name
+                .local_sheet_id
+                .map(|index| remap_sheet_index(index, target.index, destination_index));
+            name
+        })
+        .collect::<Vec<_>>();
+    if rewritten.sheets != expected_sheets
+        || rewritten.views != expected_views
+        || rewritten.defined_names != expected_defined_names
+        || rewritten.relationships != inventory.relationships
+        || rewritten.entry_names != inventory.entry_names
+        || rewritten.content_types != inventory.content_types
+    {
+        return Err(Error::atomic_commit("worksheet reorder changed unrelated workbook metadata"));
+    }
+    checkpoint(AtomicCommitStage::Commit)?;
+    if SourceFingerprint::read(path)? != source_fingerprint {
+        return Err(Error::atomic_commit(format!(
+            "source workbook '{}' changed during worksheet reorder",
+            path.display()
+        )));
+    }
+    replace_temporary(temporary, path, source_metadata.permissions())
 }
 
 fn rename_sheet_to_path_with_hook<H>(
@@ -814,6 +915,57 @@ mod tests {
             assert_eq!(file_hash(&path), before, "{failure:?} changed the source file");
             assert_no_temporary_files(directory.path());
         }
+    }
+
+    #[test]
+    fn reorder_failures_preserve_source_and_clean_temporary_packages() {
+        for failure in [
+            AtomicCommitStage::Preflight,
+            AtomicCommitStage::ZipCopy,
+            AtomicCommitStage::ZipFinish,
+            AtomicCommitStage::Validation,
+            AtomicCommitStage::Commit,
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("book.xlsx");
+            fs::write(&path, source_package()).unwrap();
+            append_to_path(&path, "Second", || donor("Second", 1)).unwrap();
+            let before = file_hash(&path);
+
+            let result = reorder_sheet_to_path_with_hook(&path, "Data", 1, |stage| {
+                if stage == failure {
+                    Err(Error::atomic_commit(format!("injected {stage:?} failure")))
+                } else {
+                    Ok(())
+                }
+            });
+
+            assert!(result.is_err(), "{failure:?} did not fail");
+            assert_eq!(file_hash(&path), before, "{failure:?} changed the source file");
+            assert_no_temporary_files(directory.path());
+        }
+    }
+
+    #[test]
+    fn source_change_during_reorder_preserves_external_content() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("book.xlsx");
+        fs::write(&path, source_package()).unwrap();
+        append_to_path(&path, "Second", || donor("Second", 1)).unwrap();
+        let external = source_package_with_marker();
+        let replacement = external.clone();
+
+        let error = reorder_sheet_to_path_with_hook(&path, "Data", 1, |stage| {
+            if stage == AtomicCommitStage::Commit {
+                fs::write(&path, &replacement)?;
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("changed during worksheet reorder"));
+        assert_eq!(fs::read(&path).unwrap(), external);
+        assert_no_temporary_files(directory.path());
     }
 
     #[test]

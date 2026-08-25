@@ -189,8 +189,9 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | 严格 worksheet replacement | 已支持 plain target 与受支持的 target-owned closure | Rust 测试；删除 stale calcChain 并要求 full recalculation |
 | 原子 worksheet rename | 已支持现有 `.xlsx` path | Rust package-preservation 测试；固定 .NET `AlterSheet` 基准 |
 | 原子 worksheet visibility mutation | 已支持现有 `.xlsx` path | Rust invariant/rollback 测试；固定 .NET `AlterSheet` 基准 |
+| 原子 worksheet reorder | 已支持现有 `.xlsx` path | Rust positional-reference/rollback 测试；固定 .NET `AlterSheet` 基准 |
 | 旧式 `.xls`、`.xlsb` 与 `.ods` 格式 | 延后 | 否 |
-| Worksheet copy/reorder | 延后 | 否 |
+| Worksheet copy-and-add | 延后 | 否 |
 | 高级 template、picture 与 merge | 延后 | 否 |
 
 此矩阵就是覆盖声明：Rust 目前尚未提供与当前 .NET package 完整的 API 等价性。

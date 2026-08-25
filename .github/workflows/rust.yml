@@ -251,6 +251,7 @@ jobs:
         run: |
           cargo +1.85.0 test -p miniexcel --test rename_sheet --locked
           cargo +1.85.0 test -p miniexcel --test sheet_visibility --locked
+          cargo +1.85.0 test -p miniexcel --test reorder_sheet --locked
       - name: Run MiniExcel .NET AlterSheet baseline tests
         run: >-
           dotnet test dotnet-source/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.csproj

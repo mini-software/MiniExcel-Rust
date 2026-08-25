@@ -430,6 +430,259 @@ where
     )
 }
 
+pub(super) fn reorder_worksheet_to_writer_with_hook<R, W, F>(
+    mut source: R,
+    destination: W,
+    relationship_id: &str,
+    source_index: usize,
+    destination_index: usize,
+    mut checkpoint: F,
+) -> Result<W>
+where
+    R: Read + Seek,
+    W: Write + Seek,
+    F: FnMut(PackageRewriteStage) -> Result<()>,
+{
+    source.seek(SeekFrom::Start(0))?;
+    let mut archive = ZipArchive::new(source).map_err(|error| {
+        Error::insert_package(format!("cannot reopen source workbook: {error}"))
+    })?;
+    let workbook_xml = read_part(&mut archive, WORKBOOK_PATH)?;
+    let workbook_xml =
+        reorder_workbook_sheets(&workbook_xml, relationship_id, source_index, destination_index)?;
+    let replacements = BTreeMap::from([(WORKBOOK_PATH.to_owned(), workbook_xml)]);
+    write_package(
+        archive,
+        destination,
+        &replacements,
+        &BTreeSet::new(),
+        None,
+        None,
+        &mut checkpoint,
+    )
+}
+
+pub(super) const fn remap_sheet_index(
+    index: usize,
+    source_index: usize,
+    destination_index: usize,
+) -> usize {
+    if index == source_index {
+        destination_index
+    } else if source_index < destination_index && index > source_index && index <= destination_index
+    {
+        index - 1
+    } else if destination_index < source_index && index >= destination_index && index < source_index
+    {
+        index + 1
+    } else {
+        index
+    }
+}
+
+fn reorder_workbook_sheets(
+    xml: &[u8],
+    relationship_id: &str,
+    source_index: usize,
+    destination_index: usize,
+) -> Result<Vec<u8>> {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(Vec::with_capacity(xml.len() + 64));
+    let mut buffer = Vec::new();
+    let mut depth = 0_usize;
+    let mut sheets_seen = 0_usize;
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| Error::insert_package(format!("invalid workbook XML: {error}")))?;
+        match event {
+            Event::Start(start) if depth == 1 && local_name(start.name().as_ref()) == b"sheets" => {
+                write_event(&mut writer, Event::Start(start.into_owned()))?;
+                let (mut sheets, separators, end) = read_sheet_elements(&mut reader)?;
+                let mut matching_indices = Vec::new();
+                for (index, sheet) in sheets.iter().enumerate() {
+                    if sheet_relationship_id(sheet)?.as_deref() == Some(relationship_id) {
+                        matching_indices.push(index);
+                    }
+                }
+                if matching_indices != [source_index] {
+                    return Err(Error::insert_package(format!(
+                        "worksheet relationship ID '{relationship_id}' is not at expected index {source_index}"
+                    )));
+                }
+                if destination_index >= sheets.len() {
+                    return Err(Error::insert_package(
+                        "worksheet destination index is out of range",
+                    ));
+                }
+                let sheet = sheets.remove(source_index);
+                sheets.insert(destination_index, sheet);
+                write_events(&mut writer, &separators[0])?;
+                for (index, sheet) in sheets.iter().enumerate() {
+                    write_events(&mut writer, sheet)?;
+                    write_events(&mut writer, &separators[index + 1])?;
+                }
+                write_event(&mut writer, Event::End(end))?;
+                sheets_seen += 1;
+            }
+            Event::Start(start) => {
+                let start =
+                    remap_workbook_position_element(&start, source_index, destination_index)?;
+                write_event(&mut writer, Event::Start(start))?;
+                depth += 1;
+            }
+            Event::Empty(empty) => {
+                let empty =
+                    remap_workbook_position_element(&empty, source_index, destination_index)?;
+                write_event(&mut writer, Event::Empty(empty))?;
+            }
+            Event::End(end) => {
+                depth = depth.saturating_sub(1);
+                write_event(&mut writer, Event::End(end.into_owned()))?;
+            }
+            Event::Eof => break,
+            event => write_event(&mut writer, event.into_owned())?,
+        }
+        buffer.clear();
+    }
+    if sheets_seen != 1 {
+        return Err(Error::insert_package(format!(
+            "workbook contains {sheets_seen} sheets collections"
+        )));
+    }
+    Ok(writer.into_inner())
+}
+
+type OwnedXmlEvent = Event<'static>;
+type SheetElements = (Vec<Vec<OwnedXmlEvent>>, Vec<Vec<OwnedXmlEvent>>, BytesEnd<'static>);
+
+fn read_sheet_elements(reader: &mut Reader<&[u8]>) -> Result<SheetElements> {
+    let mut sheets = Vec::new();
+    let mut separators = vec![Vec::new()];
+    let mut buffer = Vec::new();
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| Error::insert_package(format!("invalid workbook XML: {error}")))?;
+        match event {
+            Event::Empty(empty) if local_name(empty.name().as_ref()) == b"sheet" => {
+                sheets.push(vec![Event::Empty(empty.into_owned())]);
+                separators.push(Vec::new());
+            }
+            Event::Start(start) if local_name(start.name().as_ref()) == b"sheet" => {
+                let mut sheet = vec![Event::Start(start.into_owned())];
+                let mut sheet_depth = 1_usize;
+                while sheet_depth > 0 {
+                    let event = reader.read_event_into(&mut buffer).map_err(|error| {
+                        Error::insert_package(format!("invalid workbook XML: {error}"))
+                    })?;
+                    match &event {
+                        Event::Start(_) => sheet_depth += 1,
+                        Event::End(_) => sheet_depth -= 1,
+                        Event::Eof => {
+                            return Err(Error::insert_package(
+                                "worksheet element ended at end of workbook XML",
+                            ));
+                        }
+                        _ => {}
+                    }
+                    sheet.push(event.into_owned());
+                    buffer.clear();
+                }
+                sheets.push(sheet);
+                separators.push(Vec::new());
+            }
+            Event::End(end) if local_name(end.name().as_ref()) == b"sheets" => {
+                return Ok((sheets, separators, end.into_owned()));
+            }
+            Event::Start(start) | Event::Empty(start) => {
+                return Err(Error::insert_package(format!(
+                    "unexpected '{}' element in workbook sheets",
+                    String::from_utf8_lossy(local_name(start.name().as_ref()))
+                )));
+            }
+            Event::Eof => {
+                return Err(Error::insert_package("workbook sheets ended at end of workbook XML"));
+            }
+            event => separators.last_mut().expect("separator exists").push(event.into_owned()),
+        }
+        buffer.clear();
+    }
+}
+
+fn sheet_relationship_id(events: &[OwnedXmlEvent]) -> Result<Option<String>> {
+    match events.first() {
+        Some(Event::Start(start) | Event::Empty(start)) => xml_attribute(start, b"id"),
+        _ => Err(Error::insert_package("worksheet XML event is missing")),
+    }
+}
+
+fn write_events<W>(writer: &mut Writer<W>, events: &[OwnedXmlEvent]) -> Result<()>
+where
+    W: Write,
+{
+    for event in events {
+        write_event(writer, event.clone())?;
+    }
+    Ok(())
+}
+
+fn remap_workbook_position_element(
+    element: &BytesStart<'_>,
+    source_index: usize,
+    destination_index: usize,
+) -> Result<BytesStart<'static>> {
+    match local_name(element.name().as_ref()) {
+        b"workbookView" => {
+            let active_tab = remapped_index_attribute(
+                element,
+                b"activeTab",
+                source_index,
+                destination_index,
+                true,
+            )?;
+            remapped_index_attribute(
+                &active_tab,
+                b"firstSheet",
+                source_index,
+                destination_index,
+                true,
+            )
+        }
+        b"definedName" => remapped_index_attribute(
+            element,
+            b"localSheetId",
+            source_index,
+            destination_index,
+            false,
+        ),
+        _ => Ok(element.to_owned()),
+    }
+}
+
+fn remapped_index_attribute(
+    element: &BytesStart<'_>,
+    name: &[u8],
+    source_index: usize,
+    destination_index: usize,
+    default_zero: bool,
+) -> Result<BytesStart<'static>> {
+    let value = xml_attribute(element, name)?;
+    let index = match value.as_deref() {
+        Some(value) => value.parse().map_err(|_| {
+            Error::insert_package(format!(
+                "workbook attribute '{}' has invalid index '{value}'",
+                String::from_utf8_lossy(name)
+            ))
+        })?,
+        None if default_zero => 0,
+        None => return Ok(element.to_owned()),
+    };
+    let remapped = remap_sheet_index(index, source_index, destination_index).to_string();
+    replace_optional_attribute(element, name, Some(&remapped))
+}
+
 fn mutate_workbook_sheet(
     xml: &[u8],
     relationship_id: &str,

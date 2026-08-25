@@ -437,6 +437,17 @@ MiniExcel::set_sheet_visibility("book.xlsx", "Archive", SheetVisibility::VeryHid
 拒绝隐藏最后一张 visible worksheet，保证 commit 后的 workbook 至少保留一张 visible sheet。
 重复设置当前状态是字节级 no-op。
 
+Worksheet 也可按 0-based index 移动：
+
+```rust
+MiniExcel::reorder_sheet("book.xlsx", "Archive", 0)?;
+```
+
+负数 index 会 clamp 到第一位，过大的 index 会 clamp 到最后一位，与 .NET `AlterSheet`
+一致。Rust 还会 remap `activeTab`、`firstSheet` 和 defined-name `localSheetId`，使这些引用
+仍归属于原 worksheet。Relationship、formula 文本、visibility 和 worksheet ID 保持不变；
+移动到当前有效 index 是字节级 no-op。
+
 启用可选 `async` feature 后，可通过 runtime-neutral
 `Stream<Item = miniexcel::Result<DynamicRow>>` 为现有 workbook 的 Insert 提供 row：
 
@@ -534,10 +545,10 @@ MiniExcel::save_as_template(
 - 分组分析保留与不同 group 数量成比例的状态，并在 `max_groups` 停止。
 - RAG 导出不会重新计算公式，hidden sheet 未显式允许时会拒绝处理。
 - 同步流式 query 每个活动 query 使用一个 worker thread。可选 async query/Insert API 通过 bounded channel 包装 blocking XLSX worker；ZIP/XML/filesystem 工作并不是 async I/O。
-- Save 会创建新工作簿，并默认拒绝已有目标路径。`MiniExcel::insert*()` 会向现有 `.xlsx` path 原子 append 或严格 replace worksheet；路径不存在时则创建 workbook。`rename_sheet()` 和 `set_sheet_visibility()` 只原子修改现有 workbook 的 sheet metadata。
+- Save 会创建新工作簿，并默认拒绝已有目标路径。`MiniExcel::insert*()` 会向现有 `.xlsx` path 原子 append 或严格 replace worksheet；路径不存在时则创建 workbook。`rename_sheet()`、`set_sheet_visibility()` 和 `reorder_sheet()` 会原子修改现有 workbook 的 sheet metadata。
 
 ## 暂不支持
 
-目前不支持 `.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统，以及任意 worksheet copy/reorder。
+目前不支持 `.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片、合并单元格操作、公式写入、通用样式系统，以及任意 worksheet copy。
 
 当前支持范围请查看[兼容性矩阵](docs/compatibility.zh-CN.md)；有意保留的差异见 [MiniExcel v1 Insert 迁移说明](docs/insert-v1-migration.zh-CN.md)。

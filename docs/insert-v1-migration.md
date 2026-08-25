@@ -45,7 +45,7 @@ The optional `async` feature makes row production asynchronous through a bounded
 
 ### Unsupported Operations
 
-Insert creates, appends, or strictly replaces complete worksheets. It does not append rows to an existing worksheet, edit macros, calculate formulas, copy arbitrary sheets, rename/reorder sheets, or provide a general workbook editor. `.xlsm` packages and Strict OOXML packages are rejected.
+Insert creates, appends, or strictly replaces complete worksheets. It does not append rows to an existing worksheet, edit macros, calculate formulas, copy arbitrary sheets, or provide a general workbook editor. Separate atomic APIs rename, reorder, and change worksheet visibility without becoming part of the Insert operation. `.xlsm` packages and Strict OOXML packages are rejected.
 
 ## Validation
 

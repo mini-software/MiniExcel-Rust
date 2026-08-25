@@ -942,6 +942,21 @@ impl MiniExcel {
         crate::insert::atomic::set_sheet_visibility_to_path(path, sheet_name, visibility)
     }
 
+    /// Atomically moves an existing XLSX worksheet to a zero-based index.
+    ///
+    /// Negative indices clamp to the first position and oversized indices clamp to the last.
+    /// Active-tab, first-visible-tab, and local defined-name indices are remapped to retain their
+    /// worksheet ownership. Sheet identity, relationships, visibility, and formula text remain
+    /// unchanged.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn reorder_sheet(
+        path: impl AsRef<Path>,
+        sheet_name: &str,
+        new_sheet_index: i32,
+    ) -> Result<()> {
+        crate::insert::atomic::reorder_sheet_to_path(path, sheet_name, new_sheet_index)
+    }
+
     /// Inserts dynamic rows as a new worksheet, or creates a workbook when the path is missing.
     ///
     /// Existing workbooks are replaced atomically only after the rewritten package validates.

@@ -21,7 +21,7 @@ use crate::{
     Result, SheetInfo, StructuredRow, TemplateOptions, WriteOptions,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use crate::{ExistingSheetPolicy, InsertOptions, TargetRelationshipPolicy};
+use crate::{ExistingSheetPolicy, InsertOptions, SheetVisibility, TargetRelationshipPolicy};
 
 /// Convenience entry points for the common path-based MiniExcel workflow.
 pub struct MiniExcel;
@@ -926,6 +926,20 @@ impl MiniExcel {
         new_sheet_name: &str,
     ) -> Result<()> {
         crate::insert::atomic::rename_sheet_to_path(path, sheet_name, new_sheet_name)
+    }
+
+    /// Atomically changes the visibility of an existing XLSX worksheet.
+    ///
+    /// Source lookup is case-insensitive. The last visible worksheet cannot be hidden. Sheet
+    /// order, identity, relationships, formulas, defined names, and active-tab metadata are
+    /// preserved.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_sheet_visibility(
+        path: impl AsRef<Path>,
+        sheet_name: &str,
+        visibility: SheetVisibility,
+    ) -> Result<()> {
+        crate::insert::atomic::set_sheet_visibility_to_path(path, sheet_name, visibility)
     }
 
     /// Inserts dynamic rows as a new worksheet, or creates a workbook when the path is missing.

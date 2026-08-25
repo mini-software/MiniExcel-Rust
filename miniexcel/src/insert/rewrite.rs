@@ -398,11 +398,12 @@ where
     )
 }
 
-pub(super) fn rename_worksheet_to_writer_with_hook<R, W, F>(
+pub(super) fn mutate_worksheet_metadata_to_writer_with_hook<R, W, F>(
     mut source: R,
     destination: W,
     relationship_id: &str,
-    new_sheet_name: &str,
+    new_sheet_name: Option<&str>,
+    new_visibility: Option<SheetVisibility>,
     mut checkpoint: F,
 ) -> Result<W>
 where
@@ -415,7 +416,8 @@ where
         Error::insert_package(format!("cannot reopen source workbook: {error}"))
     })?;
     let workbook_xml = read_part(&mut archive, WORKBOOK_PATH)?;
-    let workbook_xml = rename_workbook_sheet(&workbook_xml, relationship_id, new_sheet_name)?;
+    let workbook_xml =
+        mutate_workbook_sheet(&workbook_xml, relationship_id, new_sheet_name, new_visibility)?;
     let replacements = BTreeMap::from([(WORKBOOK_PATH.to_owned(), workbook_xml)]);
     write_package(
         archive,
@@ -428,18 +430,20 @@ where
     )
 }
 
-fn rename_workbook_sheet(
+fn mutate_workbook_sheet(
     xml: &[u8],
     relationship_id: &str,
-    new_sheet_name: &str,
+    new_sheet_name: Option<&str>,
+    new_visibility: Option<SheetVisibility>,
 ) -> Result<Vec<u8>> {
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
-    let mut writer = Writer::new(Vec::with_capacity(xml.len() + new_sheet_name.len()));
+    let mut writer =
+        Writer::new(Vec::with_capacity(xml.len() + new_sheet_name.map_or(0, str::len) + 24));
     let mut buffer = Vec::new();
     let mut depth = 0_usize;
     let mut in_sheets = false;
-    let mut renamed = 0_usize;
+    let mut mutated = 0_usize;
     loop {
         let event = reader
             .read_event_into(&mut buffer)
@@ -454,13 +458,9 @@ fn rename_workbook_sheet(
                 {
                     write_event(
                         &mut writer,
-                        Event::Start(replace_optional_attribute(
-                            &start,
-                            b"name",
-                            Some(new_sheet_name),
-                        )?),
+                        Event::Start(mutate_sheet_element(&start, new_sheet_name, new_visibility)?),
                     )?;
-                    renamed += 1;
+                    mutated += 1;
                 } else {
                     write_event(&mut writer, Event::Start(start.into_owned()))?;
                 }
@@ -475,13 +475,9 @@ fn rename_workbook_sheet(
                 {
                     write_event(
                         &mut writer,
-                        Event::Empty(replace_optional_attribute(
-                            &empty,
-                            b"name",
-                            Some(new_sheet_name),
-                        )?),
+                        Event::Empty(mutate_sheet_element(&empty, new_sheet_name, new_visibility)?),
                     )?;
-                    renamed += 1;
+                    mutated += 1;
                 } else {
                     write_event(&mut writer, Event::Empty(empty.into_owned()))?;
                 }
@@ -498,12 +494,32 @@ fn rename_workbook_sheet(
         }
         buffer.clear();
     }
-    if renamed != 1 {
+    if mutated != 1 {
         return Err(Error::insert_package(format!(
-            "workbook contains {renamed} worksheets with relationship ID '{relationship_id}'"
+            "workbook contains {mutated} worksheets with relationship ID '{relationship_id}'"
         )));
     }
     Ok(writer.into_inner())
+}
+
+fn mutate_sheet_element(
+    element: &BytesStart<'_>,
+    new_sheet_name: Option<&str>,
+    new_visibility: Option<SheetVisibility>,
+) -> Result<BytesStart<'static>> {
+    let mut output = element.to_owned();
+    if let Some(new_sheet_name) = new_sheet_name {
+        output = replace_optional_attribute(&output, b"name", Some(new_sheet_name))?;
+    }
+    if let Some(new_visibility) = new_visibility {
+        let state = match new_visibility {
+            SheetVisibility::Visible => None,
+            SheetVisibility::Hidden => Some("hidden"),
+            SheetVisibility::VeryHidden => Some("veryHidden"),
+        };
+        output = replace_optional_attribute(&output, b"state", state)?;
+    }
+    Ok(output)
 }
 
 pub(super) fn replace_worksheet_to_writer_with_hook<R, W, F>(

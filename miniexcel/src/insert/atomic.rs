@@ -11,8 +11,9 @@ use sha2::{Digest, Sha256};
 use super::donor::DonorWorksheet;
 use super::package::PackageInventory;
 use super::rewrite::{
-    PackageRewriteStage, ReplacementPlan, append_worksheet_to_writer_with_hook, plan_replacement,
-    rename_worksheet_to_writer_with_hook, replace_worksheet_to_writer_with_hook,
+    PackageRewriteStage, ReplacementPlan, append_worksheet_to_writer_with_hook,
+    mutate_worksheet_metadata_to_writer_with_hook, plan_replacement,
+    replace_worksheet_to_writer_with_hook,
 };
 use crate::writer::validate_sheet_name;
 use crate::{Error, ExistingSheetPolicy, Result, SheetVisibility, TargetRelationshipPolicy};
@@ -131,17 +132,66 @@ pub(crate) fn rename_sheet_to_path(
     rename_sheet_to_path_with_hook(path.as_ref(), sheet_name, new_sheet_name, |_| Ok(()))
 }
 
+pub(crate) fn set_sheet_visibility_to_path(
+    path: impl AsRef<Path>,
+    sheet_name: &str,
+    visibility: SheetVisibility,
+) -> Result<()> {
+    set_sheet_visibility_to_path_with_hook(path.as_ref(), sheet_name, visibility, |_| Ok(()))
+}
+
 fn rename_sheet_to_path_with_hook<H>(
     path: &Path,
     sheet_name: &str,
     new_sheet_name: &str,
-    mut checkpoint: H,
+    checkpoint: H,
 ) -> Result<()>
 where
     H: FnMut(AtomicCommitStage) -> Result<()>,
 {
     validate_sheet_name(sheet_name, &std::collections::HashSet::new())?;
     validate_sheet_name(new_sheet_name, &std::collections::HashSet::new())?;
+    mutate_sheet_metadata_to_path_with_hook(
+        path,
+        sheet_name,
+        Some(new_sheet_name),
+        None,
+        "worksheet rename",
+        checkpoint,
+    )
+}
+
+fn set_sheet_visibility_to_path_with_hook<H>(
+    path: &Path,
+    sheet_name: &str,
+    visibility: SheetVisibility,
+    checkpoint: H,
+) -> Result<()>
+where
+    H: FnMut(AtomicCommitStage) -> Result<()>,
+{
+    validate_sheet_name(sheet_name, &std::collections::HashSet::new())?;
+    mutate_sheet_metadata_to_path_with_hook(
+        path,
+        sheet_name,
+        None,
+        Some(visibility),
+        "worksheet visibility update",
+        checkpoint,
+    )
+}
+
+fn mutate_sheet_metadata_to_path_with_hook<H>(
+    path: &Path,
+    sheet_name: &str,
+    new_sheet_name: Option<&str>,
+    new_visibility: Option<SheetVisibility>,
+    operation: &str,
+    mut checkpoint: H,
+) -> Result<()>
+where
+    H: FnMut(AtomicCommitStage) -> Result<()>,
+{
     checkpoint(AtomicCommitStage::Preflight)?;
     let _guard = PathMutationGuard::acquire(path, "workbook mutation")?;
     let source_fingerprint = SourceFingerprint::read(path)?;
@@ -152,13 +202,29 @@ where
         .find_sheet(sheet_name)
         .cloned()
         .ok_or_else(|| Error::sheet_not_found(sheet_name))?;
-    if inventory
-        .find_sheet(new_sheet_name)
-        .is_some_and(|sheet| sheet.relationship_id != target.relationship_id)
-    {
-        return Err(Error::duplicate_sheet_name(new_sheet_name));
+    if let Some(new_sheet_name) = new_sheet_name {
+        if inventory
+            .find_sheet(new_sheet_name)
+            .is_some_and(|sheet| sheet.relationship_id != target.relationship_id)
+        {
+            return Err(Error::duplicate_sheet_name(new_sheet_name));
+        }
     }
-    if target.name == new_sheet_name {
+    if new_visibility.is_some_and(|visibility| {
+        visibility != SheetVisibility::Visible
+            && target.visibility == SheetVisibility::Visible
+            && inventory
+                .sheets
+                .iter()
+                .filter(|sheet| sheet.visibility == SheetVisibility::Visible)
+                .count()
+                == 1
+    }) {
+        return Err(Error::no_visible_worksheets());
+    }
+    if new_sheet_name.is_none_or(|name| target.name == name)
+        && new_visibility.is_none_or(|visibility| target.visibility == visibility)
+    {
         return Ok(());
     }
 
@@ -166,11 +232,12 @@ where
     let mut temporary =
         tempfile::Builder::new().prefix(".miniexcel-").suffix(".xlsx.tmp").tempfile_in(parent)?;
     source.rewind()?;
-    rename_worksheet_to_writer_with_hook(
+    mutate_worksheet_metadata_to_writer_with_hook(
         source,
         temporary.as_file_mut(),
         &target.relationship_id,
         new_sheet_name,
+        new_visibility,
         |stage| match stage {
             PackageRewriteStage::Copy => checkpoint(AtomicCommitStage::ZipCopy),
             PackageRewriteStage::Finish => checkpoint(AtomicCommitStage::ZipFinish),
@@ -180,20 +247,32 @@ where
     temporary.as_file().sync_all()?;
 
     checkpoint(AtomicCommitStage::Validation)?;
-    validate_rewritten_package(temporary.reopen()?, new_sheet_name)?;
+    let expected_name = new_sheet_name.unwrap_or(&target.name);
+    validate_rewritten_package(temporary.reopen()?, expected_name)?;
     let rewritten = PackageInventory::inspect(temporary.reopen()?)?;
-    let mut expected_sheets = inventory.sheets;
-    expected_sheets[target.index].name = new_sheet_name.to_owned();
-    if rewritten.sheets != expected_sheets {
+    let mut expected_sheets = inventory.sheets.clone();
+    if let Some(new_sheet_name) = new_sheet_name {
+        expected_sheets[target.index].name = new_sheet_name.to_owned();
+    }
+    if let Some(new_visibility) = new_visibility {
+        expected_sheets[target.index].visibility = new_visibility;
+    }
+    if rewritten.sheets != expected_sheets
+        || rewritten.views != inventory.views
+        || rewritten.defined_names != inventory.defined_names
+        || rewritten.relationships != inventory.relationships
+        || rewritten.entry_names != inventory.entry_names
+        || rewritten.content_types != inventory.content_types
+    {
         return Err(Error::atomic_commit(
-            "worksheet rename changed workbook sheet identity, order, or visibility",
+            "worksheet metadata update changed unrelated workbook metadata",
         ));
     }
     checkpoint(AtomicCommitStage::Commit)?;
     if SourceFingerprint::read(path)? != source_fingerprint {
         return Err(Error::atomic_commit(format!(
-            "source workbook '{}' changed during worksheet rename",
-            path.display()
+            "source workbook '{}' changed during {operation}",
+            path.display(),
         )));
     }
     replace_temporary(temporary, path, source_metadata.permissions())
@@ -696,6 +775,40 @@ mod tests {
                     Ok(())
                 }
             });
+
+            assert!(result.is_err(), "{failure:?} did not fail");
+            assert_eq!(file_hash(&path), before, "{failure:?} changed the source file");
+            assert_no_temporary_files(directory.path());
+        }
+    }
+
+    #[test]
+    fn visibility_failures_preserve_source_and_clean_temporary_packages() {
+        for failure in [
+            AtomicCommitStage::Preflight,
+            AtomicCommitStage::ZipCopy,
+            AtomicCommitStage::ZipFinish,
+            AtomicCommitStage::Validation,
+            AtomicCommitStage::Commit,
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("book.xlsx");
+            fs::write(&path, source_package()).unwrap();
+            append_to_path(&path, "Second", || donor("Second", 1)).unwrap();
+            let before = file_hash(&path);
+
+            let result = set_sheet_visibility_to_path_with_hook(
+                &path,
+                "Data",
+                SheetVisibility::Hidden,
+                |stage| {
+                    if stage == failure {
+                        Err(Error::atomic_commit(format!("injected {stage:?} failure")))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
 
             assert!(result.is_err(), "{failure:?} did not fail");
             assert_eq!(file_hash(&path), before, "{failure:?} changed the source file");

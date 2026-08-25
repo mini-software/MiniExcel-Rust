@@ -432,6 +432,18 @@ relationships, IDs, order, visibility, active state, formulas, and defined names
 Like .NET `AlterSheet`, formula and defined-name text that references the old sheet name is not
 rewritten; callers must update those references separately.
 
+Visibility can be changed through the same atomic metadata pipeline:
+
+```rust
+use miniexcel::SheetVisibility;
+
+MiniExcel::set_sheet_visibility("book.xlsx", "Archive", SheetVisibility::VeryHidden)?;
+```
+
+The active-tab index is preserved even when the active worksheet is hidden. Unlike .NET
+`AlterSheet`, Rust rejects hiding the final visible worksheet so the committed workbook always
+retains at least one visible sheet. Setting the current state again is a byte-for-byte no-op.
+
 Enable the optional `async` feature to feed an existing-workbook Insert from a runtime-neutral
 `Stream<Item = miniexcel::Result<DynamicRow>>`:
 
@@ -530,10 +542,10 @@ Version 1 does not implement `@group`, `@if`, parametrized sheet cloning, `$=` f
 - Grouped analytics retain state proportional to distinct groups and stop at `max_groups`.
 - RAG exports never recalculate formulas and reject hidden sheets unless explicitly allowed.
 - Synchronous streaming queries use one worker thread per active query. Optional async query and Insert APIs use bounded channels around blocking XLSX workers; ZIP/XML/filesystem work is not async I/O.
-- Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends or strictly replaces a worksheet in an existing `.xlsx` path, or creates a workbook when the path is missing. `rename_sheet()` atomically changes only existing workbook sheet metadata.
+- Save creates new workbooks and refuses existing target paths by default. `MiniExcel::insert*()` atomically appends or strictly replaces a worksheet in an existing `.xlsx` path, or creates a workbook when the path is missing. `rename_sheet()` and `set_sheet_visibility()` atomically change only existing workbook sheet metadata.
 
 ## Not Supported
 
-`.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and arbitrary worksheet copying/reordering/visibility mutation are not currently supported.
+`.xls`, `.xlsb`, `.ods`, advanced template directives, macros, images, merged-cell operations, formula authoring, a general style system, and arbitrary worksheet copying/reordering are not currently supported.
 
 See the [compatibility matrix](docs/compatibility.md) for the current support scope and the [MiniExcel v1 Insert migration guide](docs/insert-v1-migration.md) for deliberate differences.

@@ -225,7 +225,7 @@ jobs:
           --filter "FullyQualifiedName~MiniExcelOpenXmlImporterAsyncTests"
           --verbosity minimal
 
-  rename-sheet-parity:
+  alter-sheet-parity:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -242,13 +242,15 @@ jobs:
         uses: dtolnay/rust-toolchain@1.85.0
       - uses: Swatinem/rust-cache@v2
         with:
-          key: rename-sheet-parity-${{ matrix.os }}
+          key: alter-sheet-parity-${{ matrix.os }}
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - name: Run Rust worksheet rename tests
-        run: cargo +1.85.0 test -p miniexcel --test rename_sheet --locked
+      - name: Run Rust worksheet metadata tests
+        run: |
+          cargo +1.85.0 test -p miniexcel --test rename_sheet --locked
+          cargo +1.85.0 test -p miniexcel --test sheet_visibility --locked
       - name: Run MiniExcel .NET AlterSheet baseline tests
         run: >-
           dotnet test dotnet-source/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.csproj

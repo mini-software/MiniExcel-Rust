@@ -586,13 +586,28 @@ Top {{items.name}}
 和正文各占一行；每个 item 仍输出一行。Malformed block 与缺失 field 会返回 template error。
 Nested block、逻辑表达式和 conditional formula branch 尚不支持。
 
+可使用精确 marker row，让 multirow block 按 array item 重复：
+
+```text
+@group
+@header{{items.name}}
+{{items.name}} | {{items.department}}
+@endgroup
+```
+
+Marker row 会被移除。每个 item 按源顺序重复 marker 之间的 row；仅当
+`@header{{root.field}}` 的 rendered key 与紧邻的前一个 header key 相同时，才跳过该 header
+row。Group body 可使用上述 conditional block，并保留 row/cell style。Rust 会拒绝空 array、
+nested/unmatched group、多 array root、formula 和 grouped worksheet 中的 merged cell，避免
+生成含歧义或无效 reference 的 workbook。
+
 启用可选 `async` feature 后，`save_as_template_async()` 与
 `save_as_template_async_with_cancellation()` 会在 worker thread 执行 blocking template
 ZIP/XML 工作，并原子发布通过验证的 path output。Pre-cancellation、render error、drop future
 以及 commit 前 cancellation 会保留已有 destination 的原始字节，或让缺失 destination 继续
 不存在。该 API 不会把 ZIP/filesystem 操作变成 async，并保留当前模板内存渲染模型。
 
-版本 1 尚不支持 `@group`、参数化 sheet 克隆、`$=` 公式模板或公式重算。
+版本 1 尚不支持参数化 sheet 克隆、`$=` 公式模板或公式重算。
 
 ## 重要语义
 

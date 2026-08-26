@@ -182,6 +182,7 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | 新 workbook `SaveAs`（含多工作表） | 已实现并完成 roundtrip 测试 | 尚未 |
 | 基础 `SaveAsTemplate` 标量/列表填充 | 已实现并完成 roundtrip 测试 | 尚未 |
 | Enumerable-cell conditional template block | 已支持 string/number/bool 比较 | Rust sync/async 测试；scoped .NET conditional test |
+| Enumerable grouped template block | 已支持 JSON array 与相邻 header suppression | Rust sync/async 测试；scoped .NET sync/async group 测试 |
 | 用于 WASM 的字节数组 query/write | 已实现 | Rust/browser 测试 |
 | 版本化分组分析 | Rust 研究扩展 | 否 |
 | 带地址 JSONL/Markdown/manifest RAG 导出 | Rust 研究扩展 | 否 |
@@ -203,4 +204,4 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 
 ## 延后工作
 
-SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、旧 Excel 格式、template grouping、nested/logical condition、formula template 与 sheet cloning、image authoring、merged-cell API、公式计算/依赖展开、公式编写、通用 style、async template stream、推断/类型化 async export source、async borrowed reader/writer，以及 borrowed XLSX lazy reader，都需要独立的设计与验收里程碑。CSV DataReader/DataTable adapter 已有意替换为 Rust iterator；当前不提供一步式 CSV/XLSX converter，调用方可组合 query 与 save API。支持工作流与有意保留的差异见 [Insert 迁移说明](insert-v1-migration.zh-CN.md)。
+SQL 文本解析、`HAVING`、`ORDER BY`、join、window、pivot、磁盘 spill 聚合、向量索引、模型调用、旧 Excel 格式、nested/logical template condition、grouped formula/merge、formula template 与 sheet cloning、image authoring、merged-cell API、公式计算/依赖展开、公式编写、通用 style、async template stream、推断/类型化 async export source、async borrowed reader/writer，以及 borrowed XLSX lazy reader，都需要独立的设计与验收里程碑。CSV DataReader/DataTable adapter 已有意替换为 Rust iterator；当前不提供一步式 CSV/XLSX converter，调用方可组合 query 与 save API。支持工作流与有意保留的差异见 [Insert 迁移说明](insert-v1-migration.zh-CN.md)。

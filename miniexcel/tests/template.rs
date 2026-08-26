@@ -224,3 +224,115 @@ fn rejects_malformed_or_missing_conditional_fields() {
         assert!(error.to_string().contains("conditional"), "{error}");
     }
 }
+
+#[test]
+fn repeats_group_blocks_and_suppresses_only_adjacent_duplicate_headers() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write_string(0, 0, "Name").unwrap();
+    sheet.write_string(0, 1, "Department").unwrap();
+    sheet.write_string(1, 0, "@group").unwrap();
+    sheet
+        .write_string_with_format(2, 0, "@header{{employees.name}}", &Format::new().set_bold())
+        .unwrap();
+    sheet.write_string(3, 0, "{{employees.name}}").unwrap();
+    sheet.write_string(3, 1, "{{employees.department}}").unwrap();
+    sheet.write_string(3, 2, "@if(department == IT)\nTechnical\n@else\nPeople\n@endif").unwrap();
+    sheet.write_string(4, 0, "@endgroup").unwrap();
+    sheet.write_string(5, 0, "Footer").unwrap();
+    let template = workbook.save_to_buffer().unwrap();
+
+    let output = MiniExcel::save_as_template_bytes(
+        &template,
+        &json!({
+            "employees": [
+                { "name": "Jack", "department": "HR" },
+                { "name": "Jack", "department": "IT" },
+                { "name": "Loan", "department": "IT" },
+                { "name": "Jack", "department": "HR" }
+            ]
+        }),
+        &TemplateOptions::new(),
+    )
+    .unwrap();
+    let rows = MiniExcel::query_bytes(&output, &ReadOptions::new()).unwrap();
+    assert_eq!(rows.len(), 9);
+    assert_eq!(rows[1]["A"], CellValue::String("Jack".to_owned()));
+    assert_eq!(rows[2]["A"], CellValue::String("Jack".to_owned()));
+    assert_eq!(rows[2]["C"], CellValue::String("People".to_owned()));
+    assert_eq!(rows[3]["A"], CellValue::String("Jack".to_owned()));
+    assert_eq!(rows[3]["C"], CellValue::String("Technical".to_owned()));
+    assert_eq!(rows[4]["A"], CellValue::String("Loan".to_owned()));
+    assert_eq!(rows[5]["A"], CellValue::String("Loan".to_owned()));
+    assert_eq!(rows[6]["A"], CellValue::String("Jack".to_owned()));
+    assert_eq!(rows[7]["A"], CellValue::String("Jack".to_owned()));
+    assert_eq!(rows[8]["A"], CellValue::String("Footer".to_owned()));
+
+    let mut reader = std::io::Cursor::new(output);
+    let mut styled_rows = Vec::new();
+    MiniExcel::visit_structured_rows_from_reader(&mut reader, &ReadOptions::new(), |row| {
+        styled_rows.push(row.clone());
+        Ok(true)
+    })
+    .unwrap();
+    assert_ne!(styled_rows[1].cells()[0].style_id(), 0);
+    assert_eq!(styled_rows[1].cells()[0].style_id(), styled_rows[6].cells()[0].style_id());
+}
+
+#[test]
+fn rejects_invalid_or_unsupported_group_blocks() {
+    let cases = [
+        (vec!["@group", "{{items.name}}"], json!({ "items": [{ "name": "A" }] })),
+        (
+            vec!["@group", "@group", "{{items.name}}", "@endgroup", "@endgroup"],
+            json!({ "items": [{ "name": "A" }] }),
+        ),
+        (vec!["@group", "{{items.name}}", "@endgroup"], json!({ "items": [] })),
+        (
+            vec!["@group", "{{items.name}} {{others.name}}", "@endgroup"],
+            json!({ "items": [{ "name": "A" }], "others": [{ "name": "B" }] }),
+        ),
+        (vec!["@endgroup"], json!({ "items": [{ "name": "A" }] })),
+    ];
+    for (rows, value) in cases {
+        let mut workbook = Workbook::new();
+        let sheet = workbook.add_worksheet();
+        for (index, value) in rows.into_iter().enumerate() {
+            sheet.write_string(index as u32, 0, value).unwrap();
+        }
+        let template = workbook.save_to_buffer().unwrap();
+        let error = MiniExcel::save_as_template_bytes(&template, &value, &TemplateOptions::new())
+            .unwrap_err();
+        assert!(error.to_string().contains("group"), "{error}");
+    }
+
+    let mut formula_workbook = Workbook::new();
+    let sheet = formula_workbook.add_worksheet();
+    sheet.write_string(0, 0, "@group").unwrap();
+    sheet.write_string(1, 0, "{{items.name}}").unwrap();
+    sheet.write_formula(1, 1, "=1+1").unwrap();
+    sheet.write_string(2, 0, "@endgroup").unwrap();
+    let template = formula_workbook.save_to_buffer().unwrap();
+    let error = MiniExcel::save_as_template_bytes(
+        &template,
+        &json!({ "items": [{ "name": "A" }] }),
+        &TemplateOptions::new(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("formula"), "{error}");
+
+    let mut merged_workbook = Workbook::new();
+    let sheet = merged_workbook.add_worksheet();
+    sheet.write_string(0, 0, "@group").unwrap();
+    sheet.write_string(1, 0, "{{items.name}}").unwrap();
+    sheet.write_string(2, 0, "@endgroup").unwrap();
+    sheet.merge_range(3, 0, 3, 1, "Merged", &Format::new()).unwrap();
+    let template = merged_workbook.save_to_buffer().unwrap();
+    let error = MiniExcel::save_as_template_bytes(
+        &template,
+        &json!({ "items": [{ "name": "A" }] }),
+        &TemplateOptions::new(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("merged"), "{error}");
+}

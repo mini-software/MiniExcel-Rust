@@ -598,6 +598,21 @@ markers and bodies each occupy one line; every item still emits one row. Malform
 missing fields return template errors. Nested blocks, logical expressions, and conditional formula
 branches are not supported.
 
+Multirow blocks can be repeated for each array item with exact marker rows:
+
+```text
+@group
+@header{{items.name}}
+{{items.name}} | {{items.department}}
+@endgroup
+```
+
+The marker rows are removed. Every item repeats the rows between them in source order, while an
+`@header{{root.field}}` row is skipped only when its rendered key equals the immediately preceding
+header key. Group bodies may use the conditional blocks above and retain row/cell styles. Rust
+rejects empty arrays, nested/unmatched groups, multiple array roots, formulas, and merged cells in
+grouped worksheets instead of emitting ambiguous or invalid references.
+
 With the optional `async` feature, `save_as_template_async()` and
 `save_as_template_async_with_cancellation()` run blocking template ZIP/XML work on a worker thread
 and atomically publish the validated path output. Pre-cancellation, rendering errors, dropped
@@ -605,7 +620,7 @@ futures, and cancellation before commit preserve an existing destination byte-fo
 missing destination absent. This does not make ZIP/filesystem operations asynchronous and retains
 the current in-memory template rendering model.
 
-Version 1 does not implement `@group`, parametrized sheet cloning, `$=` formula templates, or formula recalculation.
+Version 1 does not implement parametrized sheet cloning, `$=` formula templates, or formula recalculation.
 
 ## Important Semantics
 

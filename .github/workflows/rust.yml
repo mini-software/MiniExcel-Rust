@@ -344,12 +344,14 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - name: Run Rust async template tests
-        run: cargo +1.85.0 test -p miniexcel --test template_async --features async --locked
+        run: |
+          cargo +1.85.0 test -p miniexcel --test template --locked
+          cargo +1.85.0 test -p miniexcel --test template_async --features async --locked
       - name: Run scoped MiniExcel .NET async template tests
         run: >-
           dotnet test dotnet-source/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.csproj
           --framework net10.0
-          --filter "FullyQualifiedName~MiniExcelTemplateAsyncTests.TemplateAsyncBasicTest|FullyQualifiedName~MiniExcelTemplateAsyncTests.SaveAsByTemplateAsync_TakeCancel_Throws_TaskCanceledException|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestIEnumerableConditional"
+          --filter "FullyQualifiedName~MiniExcelTemplateAsyncTests.TemplateAsyncBasicTest|FullyQualifiedName~MiniExcelTemplateAsyncTests.SaveAsByTemplateAsync_TakeCancel_Throws_TaskCanceledException|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestIEnumerableConditional|FullyQualifiedName~MiniExcelTemplateTests.GroupTemplateTest|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestIEnumerableGrouped"
           --verbosity minimal
 
   msrv:

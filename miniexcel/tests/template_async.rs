@@ -67,6 +67,43 @@ fn async_template_renders_enumerable_conditional_blocks() {
 }
 
 #[test]
+fn async_template_renders_grouped_enumerables() {
+    let directory = tempfile::tempdir().unwrap();
+    let template = directory.path().join("group-template.xlsx");
+    let output = directory.path().join("group-output.xlsx");
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write_string(0, 0, "@group").unwrap();
+    sheet.write_string(1, 0, "@header{{items.name}}").unwrap();
+    sheet.write_string(2, 0, "{{items.name}}").unwrap();
+    sheet.write_string(2, 1, "{{items.department}}").unwrap();
+    sheet.write_string(3, 0, "@endgroup").unwrap();
+    workbook.save(&template).unwrap();
+
+    block_on(MiniExcel::save_as_template_async(
+        &output,
+        &template,
+        &json!({
+            "items": [
+                { "name": "Jack", "department": "HR" },
+                { "name": "Jack", "department": "IT" },
+                { "name": "Neo", "department": "IT" }
+            ]
+        }),
+        &TemplateOptions::new(),
+    ))
+    .unwrap();
+
+    let rows = MiniExcel::query(&output).unwrap().collect::<miniexcel::Result<Vec<_>>>().unwrap();
+    assert_eq!(rows.len(), 5);
+    assert_eq!(rows[0]["A"], CellValue::String("Jack".to_owned()));
+    assert_eq!(rows[1]["B"], CellValue::String("HR".to_owned()));
+    assert_eq!(rows[2]["B"], CellValue::String("IT".to_owned()));
+    assert_eq!(rows[3]["A"], CellValue::String("Neo".to_owned()));
+    assert_eq!(rows[4]["B"], CellValue::String("IT".to_owned()));
+}
+
+#[test]
 fn pre_cancel_and_failures_preserve_destination() {
     let directory = tempfile::tempdir().unwrap();
     let missing_template = directory.path().join("missing.xlsx");

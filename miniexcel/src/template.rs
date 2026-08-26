@@ -234,16 +234,97 @@ fn render_worksheet(
         return Err(Error::template("worksheet does not contain sheetData"));
     }
 
+    let has_groups = rows
+        .iter()
+        .map(|row| row_group_marker(row, shared_strings))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .any(|marker| marker.is_some());
+    if has_groups
+        && suffix.iter().any(|event| {
+            matches!(event, Event::Start(start) | Event::Empty(start) if start.name().as_ref() == b"mergeCell")
+        })
+    {
+        return Err(Error::template(
+            "grouped template blocks do not support merged cells",
+        ));
+    }
+
     let mut rendered_rows = Vec::new();
-    let mut shift = 0_usize;
+    let mut shift = 0_isize;
     let mut previous_source_row = 0_usize;
     let mut max_output_row = 1_usize;
-    for row in rows {
+    let mut row_index = 0_usize;
+    while row_index < rows.len() {
         check()?;
-        let source_row = row_number(&row).unwrap_or(previous_source_row.saturating_add(1));
+        let row = &rows[row_index];
+        let source_row = row_number(row).unwrap_or(previous_source_row.saturating_add(1));
         previous_source_row = source_row;
-        let output_row = source_row.saturating_add(shift);
-        let expansion = expansion_for_row(&row, shared_strings, data)?;
+        match row_group_marker(row, shared_strings)? {
+            Some(GroupMarker::Start) => {
+                let end_index = find_group_end(&rows, row_index + 1, shared_strings)?;
+                let block = &rows[row_index + 1..end_index];
+                let (root, values, header_row) = group_descriptor(block, shared_strings, data)?;
+                if block.iter().any(|row| row_has_formula(row)) {
+                    return Err(Error::template(
+                        "grouped template blocks do not support formula cells",
+                    ));
+                }
+                let output_start = shifted_row(source_row, shift)?;
+                let mut emitted = 0_usize;
+                let mut previous_header = None::<String>;
+                for (item_index, item) in values.iter().enumerate() {
+                    for (block_index, block_row) in block.iter().enumerate() {
+                        if Some(block_index) == header_row {
+                            let key = group_header_key(
+                                block_row,
+                                shared_strings,
+                                data,
+                                &root,
+                                item,
+                                item_index,
+                                ignore_missing,
+                            )?;
+                            if previous_header.as_deref() == Some(&key) {
+                                continue;
+                            }
+                            previous_header = Some(key);
+                        }
+                        let target_row = output_start.checked_add(emitted).ok_or_else(|| {
+                            Error::template("grouped template row index overflow")
+                        })?;
+                        rendered_rows.push(render_row(
+                            block_row,
+                            target_row,
+                            shared_strings,
+                            data,
+                            Some(&root),
+                            Some(item),
+                            item_index,
+                            ignore_missing,
+                            Some(block_index) == header_row,
+                        )?);
+                        emitted += 1;
+                        max_output_row = max_output_row.max(target_row);
+                    }
+                }
+                let end_source_row = row_number(&rows[end_index])
+                    .unwrap_or(source_row.saturating_add(end_index - row_index));
+                let consumed = end_source_row.saturating_sub(source_row).saturating_add(1);
+                shift = shift
+                    .checked_add(emitted as isize - consumed as isize)
+                    .ok_or_else(|| Error::template("grouped template row shift overflow"))?;
+                previous_source_row = end_source_row;
+                row_index = end_index + 1;
+                continue;
+            }
+            Some(GroupMarker::End) => {
+                return Err(Error::template("template contains unmatched @endgroup"));
+            }
+            None => {}
+        }
+        let output_row = shifted_row(source_row, shift)?;
+        let expansion = expansion_for_row(row, shared_strings, data)?;
         let items: Vec<Option<&Value>> = match expansion.as_ref() {
             Some((_, values)) if !values.is_empty() => values.iter().map(Some).collect(),
             Some(_) => vec![None],
@@ -252,7 +333,7 @@ fn render_worksheet(
         for (item_index, item) in items.iter().enumerate() {
             let target_row = output_row.saturating_add(item_index);
             rendered_rows.push(render_row(
-                &row,
+                row,
                 target_row,
                 shared_strings,
                 data,
@@ -260,10 +341,14 @@ fn render_worksheet(
                 *item,
                 item_index,
                 ignore_missing,
+                false,
             )?);
             max_output_row = max_output_row.max(target_row);
         }
-        shift = shift.saturating_add(items.len().saturating_sub(1));
+        shift = shift
+            .checked_add(items.len().saturating_sub(1) as isize)
+            .ok_or_else(|| Error::template("template row shift overflow"))?;
+        row_index += 1;
     }
 
     update_dimension(&mut prefix, max_output_row)?;
@@ -274,6 +359,138 @@ fn render_worksheet(
             .map_err(|error| Error::template(format!("cannot write worksheet XML: {error}")))?;
     }
     Ok(output.into_inner())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroupMarker {
+    Start,
+    End,
+}
+
+fn row_group_marker(row: &[Event<'_>], shared_strings: &[String]) -> Result<Option<GroupMarker>> {
+    let texts = cell_texts(row, shared_strings)?;
+    let marker = texts.iter().find_map(|text| match text.trim() {
+        "@group" => Some(GroupMarker::Start),
+        "@endgroup" => Some(GroupMarker::End),
+        _ => None,
+    });
+    if marker.is_some()
+        && texts.iter().any(|text| {
+            let text = text.trim();
+            !text.is_empty() && !matches!(text, "@group" | "@endgroup")
+        })
+    {
+        return Err(Error::template("group marker rows cannot contain other text"));
+    }
+    Ok(marker)
+}
+
+fn find_group_end(
+    rows: &[Vec<Event<'static>>],
+    start: usize,
+    shared_strings: &[String],
+) -> Result<usize> {
+    for (index, row) in rows.iter().enumerate().skip(start) {
+        match row_group_marker(row, shared_strings)? {
+            Some(GroupMarker::Start) => {
+                return Err(Error::template("nested @group blocks are not supported"));
+            }
+            Some(GroupMarker::End) => {
+                if index == start {
+                    return Err(Error::template("grouped template block cannot be empty"));
+                }
+                return Ok(index);
+            }
+            None => {}
+        }
+    }
+    Err(Error::template("template @group block is missing @endgroup"))
+}
+
+fn group_descriptor<'a>(
+    rows: &[Vec<Event<'static>>],
+    shared_strings: &[String],
+    data: &'a Value,
+) -> Result<(String, &'a Vec<Value>, Option<usize>)> {
+    let mut root = None::<String>;
+    let mut header_row = None;
+    for (row_index, row) in rows.iter().enumerate() {
+        for text in cell_texts(row, shared_strings)? {
+            if text.starts_with("@header") && header_row.replace(row_index).is_some() {
+                return Err(Error::template(
+                    "grouped template block can contain only one @header row",
+                ));
+            }
+            for token in placeholder_tokens(&text) {
+                let Some((candidate, _)) = token.split_once('.') else {
+                    continue;
+                };
+                if data.get(candidate).is_some_and(Value::is_array) {
+                    if root.as_deref().is_some_and(|root| root != candidate) {
+                        return Err(Error::template(
+                            "grouped template block cannot use multiple array roots",
+                        ));
+                    }
+                    root = Some(candidate.to_owned());
+                }
+            }
+        }
+    }
+    let root =
+        root.ok_or_else(|| Error::template("grouped template block does not reference an array"))?;
+    let values = data.get(&root).and_then(Value::as_array).expect("validated array root");
+    if values.is_empty() {
+        return Err(Error::template("grouped template array cannot be empty"));
+    }
+    Ok((root, values, header_row))
+}
+
+fn row_has_formula(row: &[Event<'_>]) -> bool {
+    row.iter().any(|event| {
+        matches!(event, Event::Start(start) | Event::Empty(start) if start.name().as_ref() == b"f")
+    })
+}
+
+fn shifted_row(source_row: usize, shift: isize) -> Result<usize> {
+    source_row
+        .checked_add_signed(shift)
+        .filter(|row| *row > 0)
+        .ok_or_else(|| Error::template("template row index is outside the worksheet"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn group_header_key(
+    row: &[Event<'_>],
+    shared_strings: &[String],
+    data: &Value,
+    collection_root: &str,
+    item: &Value,
+    item_index: usize,
+    ignore_missing: bool,
+) -> Result<String> {
+    let mut key = String::new();
+    for text in cell_texts(row, shared_strings)? {
+        if let Some(template) = text.strip_prefix("@header") {
+            let rendered = render_text(
+                template,
+                data,
+                Some(collection_root),
+                Some(item),
+                item_index,
+                ignore_missing,
+            )?;
+            key.push_str(&rendered_value_text(&rendered));
+        }
+    }
+    Ok(key)
+}
+
+fn rendered_value_text(value: &RenderedValue) -> String {
+    match value {
+        RenderedValue::Empty => String::new(),
+        RenderedValue::Bool(value) => value.to_string(),
+        RenderedValue::Number(value) | RenderedValue::String(value) => value.clone(),
+    }
 }
 
 fn row_number(events: &[Event<'_>]) -> Option<usize> {
@@ -328,6 +545,7 @@ fn render_row(
     item: Option<&Value>,
     item_index: usize,
     ignore_missing: bool,
+    group_header: bool,
 ) -> Result<Vec<Event<'static>>> {
     let mut output = Vec::new();
     let mut index = 0;
@@ -343,9 +561,12 @@ fn render_row(
                 let column =
                     address.chars().take_while(char::is_ascii_alphabetic).collect::<String>();
                 let address = format!("{column}{target_row}");
-                if let Some(text) = cell_text(&row[index..=end], shared_strings)?
+                if let Some(mut text) = cell_text(&row[index..=end], shared_strings)?
                     .filter(|text| text.contains("{{") || is_conditional_template(text))
                 {
+                    if group_header {
+                        text = text.strip_prefix("@header").unwrap_or(&text).to_owned();
+                    }
                     let rendered = render_text(
                         &text,
                         data,

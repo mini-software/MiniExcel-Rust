@@ -14,6 +14,143 @@ use futures_util::{StreamExt, stream};
 use miniexcel::{
     CancellationToken, CellValue, DynamicRow, HeaderMode, MiniExcel, ReadOptions, WriteOptions,
 };
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct TypedExportRow {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(
+        rename = "Released",
+        serialize_with = "miniexcel::serde_helpers::serialize_date_to_excel"
+    )]
+    released: chrono::NaiveDate,
+}
+
+#[test]
+fn infers_schema_and_exports_serde_rows_from_async_streams() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("typed-async.xlsx");
+    let rows = [
+        TypedExportRow {
+            name: "MiniExcel".to_owned(),
+            released: chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap(),
+        },
+        TypedExportRow {
+            name: "Rust".to_owned(),
+            released: chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap(),
+        },
+    ];
+
+    let count = block_on(MiniExcel::save_as_serialized_async(
+        &path,
+        stream::iter(rows.map(Ok)),
+        &WriteOptions::new().with_column_format("Released", "yyyy-mm-dd"),
+    ))
+    .unwrap();
+
+    assert_eq!(count, 2);
+    let rows = MiniExcel::query_with_options(
+        &path,
+        &ReadOptions::new().with_header_mode(HeaderMode::FirstRow),
+    )
+    .unwrap()
+    .collect::<miniexcel::Result<Vec<_>>>()
+    .unwrap();
+    assert_eq!(rows[0]["Name"], CellValue::String("MiniExcel".to_owned()));
+    assert_eq!(rows[1]["Name"], CellValue::String("Rust".to_owned()));
+    assert_eq!(
+        rows[0]["Released"],
+        CellValue::DateTime(
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap().and_hms_opt(0, 0, 0).unwrap()
+        )
+    );
+}
+
+#[test]
+fn typed_async_export_handles_empty_streams_and_preflights_before_polling() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing_schema = directory.path().join("missing-schema.xlsx");
+    let error = block_on(MiniExcel::save_as_serialized_async::<TypedExportRow, _>(
+        &missing_schema,
+        stream::empty(),
+        &WriteOptions::new(),
+    ))
+    .unwrap_err();
+    assert!(error.to_string().contains("without an explicit schema"));
+    assert!(!missing_schema.exists());
+
+    let empty = directory.path().join("empty.xlsx");
+    let count = block_on(MiniExcel::save_as_serialized_async::<TypedExportRow, _>(
+        &empty,
+        stream::empty(),
+        &WriteOptions::new().with_print_header(false),
+    ))
+    .unwrap();
+    assert_eq!(count, 0);
+    assert_eq!(MiniExcel::get_sheet_names(&empty).unwrap(), ["Sheet1"]);
+
+    let existing = directory.path().join("existing.xlsx");
+    std::fs::write(&existing, b"existing").unwrap();
+    let polls = Rc::new(Cell::new(0_usize));
+    let observed = Rc::clone(&polls);
+    let rows = stream::poll_fn(move |_| {
+        observed.set(observed.get() + 1);
+        Poll::Ready(Some(Ok(TypedExportRow {
+            name: "Unexpected".to_owned(),
+            released: chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap(),
+        })))
+    });
+    let error =
+        block_on(MiniExcel::save_as_serialized_async(&existing, rows, &WriteOptions::new()))
+            .unwrap_err();
+    assert!(error.to_string().contains("already exists"));
+    assert_eq!(polls.get(), 0);
+    assert_eq!(std::fs::read(existing).unwrap(), b"existing");
+}
+
+#[test]
+fn typed_async_export_rejects_schema_drift_and_honors_precancellation() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("schema-drift.xlsx");
+    std::fs::write(&path, b"existing").unwrap();
+    let rows = stream::iter([
+        Ok(serde_json::json!({"Name": "First"})),
+        Ok(serde_json::json!({"Name": "Second", "Extra": 2})),
+    ]);
+    let error = block_on(MiniExcel::save_as_serialized_async(
+        &path,
+        rows,
+        &WriteOptions::new().with_overwrite_file(true),
+    ))
+    .unwrap_err();
+    assert!(error.to_string().contains("fields do not match the inferred schema"));
+    assert_eq!(std::fs::read(&path).unwrap(), b"existing");
+    assert_no_temporary_files(directory.path());
+
+    let cancelled = directory.path().join("cancelled-typed.xlsx");
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let polls = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&polls);
+    let rows = stream::poll_fn(move |_| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        Poll::Ready(Some(Ok(TypedExportRow {
+            name: "Never".to_owned(),
+            released: chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap(),
+        })))
+    });
+    let error = block_on(MiniExcel::save_as_serialized_async_with_cancellation(
+        &cancelled,
+        rows,
+        &WriteOptions::new(),
+        cancellation,
+    ))
+    .unwrap_err();
+    assert!(error.is_cancelled());
+    assert_eq!(polls.load(Ordering::SeqCst), 0);
+    assert!(!cancelled.exists());
+}
 
 #[test]
 fn exports_rows_and_header_only_workbooks_from_async_streams() {

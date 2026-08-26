@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use futures_core::Stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select_biased};
+use serde::Serialize;
 
 use super::atomic::{AtomicCommitStage, export_to_path_with_hook};
 use super::donor::save_dynamic_iter_to_writer;
-use crate::{CancellationToken, DynamicRow, Error, Result, WriteOptions};
+use crate::{CancellationToken, CellValue, DynamicRow, Error, Result, WriteOptions};
 
 const ROW_CHANNEL_CAPACITY: usize = 16;
 
@@ -18,6 +19,11 @@ enum RowMessage {
 enum WorkerStatus {
     Ready,
     Finished(Result<usize>),
+}
+
+enum ExportSchema {
+    Explicit(Vec<String>),
+    Inferred,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,13 +56,42 @@ pub(crate) async fn save_with_schema_async<S>(
 where
     S: Stream<Item = Result<DynamicRow>>,
 {
-    save_with_schema_async_with_hook(path, schema, rows, options, cancellation, Arc::new(|_| {}))
-        .await
+    save_async_with_hook(
+        path,
+        ExportSchema::Explicit(schema),
+        rows,
+        options,
+        cancellation,
+        Arc::new(|_| {}),
+    )
+    .await
 }
 
-async fn save_with_schema_async_with_hook<S>(
+pub(crate) async fn save_serialized_async<T, S>(
     path: PathBuf,
-    schema: Vec<String>,
+    rows: S,
+    options: WriteOptions,
+    cancellation: CancellationToken,
+) -> Result<usize>
+where
+    T: Serialize,
+    S: Stream<Item = Result<T>>,
+{
+    let rows = rows.map(|row| row.and_then(|row| serialized_row_to_dynamic(&row)));
+    save_async_with_hook(
+        path,
+        ExportSchema::Inferred,
+        rows,
+        options,
+        cancellation,
+        Arc::new(|_| {}),
+    )
+    .await
+}
+
+async fn save_async_with_hook<S>(
+    path: PathBuf,
+    schema: ExportSchema,
     rows: S,
     options: WriteOptions,
     cancellation: CancellationToken,
@@ -163,7 +198,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn run_worker(
     path: &Path,
-    schema: &[String],
+    schema: &ExportSchema,
     options: &WriteOptions,
     row_receiver: async_channel::Receiver<RowMessage>,
     cancellation: &CancellationToken,
@@ -201,7 +236,12 @@ fn run_worker(
                     }
                 }
             });
-            save_dynamic_iter_to_writer(writer, schema, rows, options)
+            match schema {
+                ExportSchema::Explicit(schema) => {
+                    save_dynamic_iter_to_writer(writer, schema, rows, options)
+                }
+                ExportSchema::Inferred => save_inferred_iter_to_writer(writer, rows, options),
+            }
         },
         |stage| {
             let phase = match stage {
@@ -227,6 +267,76 @@ fn run_worker(
             check_cancelled(cancellation, operation_cancellation)
         },
     )
+}
+
+fn save_inferred_iter_to_writer<I>(
+    writer: &mut std::fs::File,
+    mut rows: I,
+    options: &WriteOptions,
+) -> Result<usize>
+where
+    I: Iterator<Item = Result<DynamicRow>>,
+{
+    let Some(first) = rows.next().transpose()? else {
+        if options.print_header() {
+            return Err(Error::missing_schema());
+        }
+        return save_dynamic_iter_to_writer(writer, &[], std::iter::empty(), options);
+    };
+    let schema = first.keys().cloned().collect::<Vec<_>>();
+    if schema.is_empty() {
+        return Err(Error::missing_schema());
+    }
+    let rows = std::iter::once(Ok(first)).chain(rows).enumerate().map(|(index, row)| {
+        let row = row?;
+        if row.len() != schema.len() || schema.iter().any(|field| !row.contains_key(field)) {
+            return Err(Error::invalid_write_options(format!(
+                "serialized row {} fields do not match the inferred schema",
+                index + 1
+            )));
+        }
+        Ok(row)
+    });
+    save_dynamic_iter_to_writer(writer, &schema, rows, options)
+}
+
+fn serialized_row_to_dynamic<T>(row: &T) -> Result<DynamicRow>
+where
+    T: Serialize,
+{
+    let value = serde_json::to_value(row).map_err(|error| {
+        Error::invalid_write_options(format!("cannot serialize XLSX row: {error}"))
+    })?;
+    let fields = value.as_object().ok_or_else(|| {
+        Error::invalid_write_options("typed writing requires rows serialized as structs or maps")
+    })?;
+    fields.iter().map(|(name, value)| Ok((name.clone(), serialized_cell(name, value)?))).collect()
+}
+
+fn serialized_cell(field: &str, value: &serde_json::Value) -> Result<CellValue> {
+    match value {
+        serde_json::Value::Null => Ok(CellValue::Empty),
+        serde_json::Value::Bool(value) => Ok(CellValue::Bool(*value)),
+        serde_json::Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                Ok(CellValue::Int(value))
+            } else if let Some(value) = value.as_u64() {
+                Ok(i64::try_from(value).map_or(CellValue::Float(value as f64), CellValue::Int))
+            } else {
+                value.as_f64().map(CellValue::Float).ok_or_else(|| {
+                    Error::invalid_write_options(format!(
+                        "serialized field '{field}' is not a finite number"
+                    ))
+                })
+            }
+        }
+        serde_json::Value::String(value) => Ok(CellValue::String(value.clone())),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            Err(Error::invalid_write_options(format!(
+                "serialized field '{field}' must be a scalar value"
+            )))
+        }
+    }
 }
 
 fn check_cancelled(

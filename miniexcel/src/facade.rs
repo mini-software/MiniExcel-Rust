@@ -633,6 +633,54 @@ impl MiniExcel {
         .await
     }
 
+    /// Creates an XLSX workbook from a runtime-neutral async stream of Serde rows.
+    ///
+    /// The schema is inferred from the first row after destination preflight. Empty streams require
+    /// `print_header(false)` because Serde does not expose type fields without a value.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn save_as_serialized_async<T, S>(
+        path: impl AsRef<Path>,
+        rows: S,
+        options: &WriteOptions,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+        S: futures_core::Stream<Item = Result<T>>,
+    {
+        Self::save_as_serialized_async_with_cancellation(
+            path,
+            rows,
+            options,
+            crate::CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Creates an XLSX workbook from async Serde rows with cooperative cancellation.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn save_as_serialized_async_with_cancellation<T, S>(
+        path: impl AsRef<Path>,
+        rows: S,
+        options: &WriteOptions,
+        cancellation: crate::CancellationToken,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+        S: futures_core::Stream<Item = Result<T>>,
+    {
+        if cancellation.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+        validate_single_sheet_options(options)?;
+        crate::insert::async_export::save_serialized_async(
+            path.as_ref().to_owned(),
+            rows,
+            options.clone(),
+            cancellation,
+        )
+        .await
+    }
+
     /// Creates a new XLSX workbook containing multiple dynamic worksheets.
     ///
     /// Returns data-row counts in the same order as the supplied worksheets.

@@ -8,7 +8,7 @@ This report compares observable public capabilities in the local checkouts below
 
 | Project | Revision |
 | --- | --- |
-| MiniExcel-Rust | working tree based on `14ad5ec` (`0.3.0`) |
+| MiniExcel-Rust | working tree based on `436f1bf` (`0.3.0`) |
 | MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 The comparison uses the .NET public APIs, their controlling implementations, and focused tests under the sibling `../MiniExcel` checkout. Rust status is based on the public `MiniExcel` facade, options, integration tests, and [compatibility boundary](compatibility.md).
@@ -31,8 +31,8 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Named tables | Implemented | Dynamic/typed path queries, byte queries, and borrowed-reader visitors use table metadata headers and bounds with case-insensitive table-name matching. |
 | DataReader and DataTable | Different by design | Rust exposes iterators and borrowed visitors instead of .NET tabular interfaces. A Rust-native Arrow/record-batch adapter is deferred until a concrete integration requires it and does not block parity completion. |
 | Caller-owned streams | Partial | Borrowed synchronous dynamic/typed/structured visitors, metadata reads, dynamic/schema/typed/multi-sheet writers, and separate reader-to-writer Insert are implemented with leave-open semantics. Borrowed lazy iterators, borrowed async streams, and template streams remain unsupported. |
-| Async and cancellation | Partial | Optional runtime-neutral dynamic/Serde path queries, explicit-schema path export, basic template path output, and explicit-schema Insert support cooperative cancellation and atomic publication where applicable. Advanced template streams, inferred/typed async write sources, borrowed async I/O, and progress callbacks remain unsupported. ZIP and filesystem work remains blocking on dedicated workers. |
-| General save inputs | Partial | Export from general objects/enumerables, dictionaries, `DataTable`, `IDataReader`, and async enumerables, with progress. Rust accepts dynamic or same-type Serde slices and reports per-sheet row counts. |
+| Async and cancellation | Partial | Optional runtime-neutral dynamic/Serde path queries, explicit-schema dynamic and inferred-schema Serde path export, basic template path output, and explicit-schema Insert support cooperative cancellation and atomic publication where applicable. Advanced template streams, borrowed async I/O, and progress callbacks remain unsupported. ZIP and filesystem work remains blocking on dedicated workers. |
+| General save inputs | Partial | Export from general objects/enumerables, dictionaries, `DataTable`, `IDataReader`, and async enumerables, with progress. Rust accepts dynamic or same-type Serde slices, bounded dynamic/Serde async streams, and reports per-sheet row counts. |
 | Multi-sheet export | Partial | Rust creates ordered visible, hidden, and very-hidden worksheets, but does not yet accept heterogeneous Serde row types in one call. |
 | Existing-workbook operations | Implemented | Rust atomically appends, strictly replaces, renames, changes visibility, reorders, and performs .NET-style source-workbook copy-and-add while preserving unrelated package parts and worksheet identity. Rename preserves formula text; visibility rejects hiding the final visible sheet; reorder remaps active/view/local-name indices; copy-and-add preserves the source and atomically publishes a separate destination. |
 | Templates | Partial | Rust fills path/byte templates with scalars, arrays, conditional blocks, validated multirow groups, and `$=` formulas; path output also has a cancellable async wrapper. Streams, nested/logical conditions, grouped/conditional formulas, parametrized sheets, formula-reference translation, and formula calculation remain unsupported. Stale calcChain metadata is removed and full recalculation requested. |
@@ -52,7 +52,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | --- | --- | --- |
 | Public read/write boundary | `miniexcel/src/facade.rs`, `miniexcel/src/options.rs` | `src/MiniExcel.OpenXml/Api/OpenXmlImporter.cs`, `OpenXmlExporter.cs` |
 | Async query | `MiniExcel::query_async*` and `query_as_async*`; Rust focused parity/cancellation/error/cleanup tests | `OpenXmlImporter.QueryAsync`; `MiniExcelOpenXmlImporterAsyncTests` |
-| Async export | `MiniExcel::save_as_with_schema_async*`; Rust focused rollback/cancellation/cleanup tests | `OpenXmlExporter.ExportAsync`; async-enumerable exporter tests |
+| Async export | `MiniExcel::save_as_with_schema_async*` and `save_as_serialized_async*`; Rust explicit/inferred schema, rollback/cancellation/cleanup tests | `OpenXmlExporter.ExportAsync`; `SaveAsByAsyncEnumerable` and empty async-enumerable tests |
 | Async template | `MiniExcel::save_as_template_async*`; Rust focused rollback/cancellation/cleanup tests | `OpenXmlTemplater.SaveAsByTemplateAsync`; scoped basic/cancellation tests |
 | Template conditions | Enumerable-cell `@if`/`@elseif`/`@else` blocks; Rust sync/async branch/error/style tests | `TestIEnumerableConditional` |
 | Template groups | `@group`/`@header`/`@endgroup` multirow blocks; Rust sync/async order/error/style tests | `GroupTemplateTest`; `TestIEnumerableGrouped` |
@@ -71,7 +71,7 @@ The .NET APIs marked with `Async` also have generated synchronous counterparts t
 
 ## Suggested Implementation Order
 
-1. **Broader async export/stream APIs**: extend runtime-neutral cancellation to typed/inferred producers and borrowed streams without presenting blocking ZIP work as async I/O.
+1. **Borrowed async streams and progress**: add caller-owned async reader/writer integration and progress only where ownership, cancellation, and blocking-I/O semantics remain explicit.
 2. **Advanced templates and collection mapping**: add formula/merge-aware groups, richer conditional expressions, parametrized sheets, and deterministic collection layouts through separate compatibility milestones.
 3. **Selected-sheet cloning**: not part of .NET `CopyAndAddSheet`; add only for a concrete Rust use case with a relationship-closure cloning contract.
 

@@ -137,11 +137,23 @@ let count = MiniExcel::save_as_with_schema_async_with_cancellation(
 ).await?;
 ```
 
-The schema is required so empty streams and one-pass producers remain deterministic. Rows cross a
-bounded channel and are disk-spooled before the blocking constant-memory writer runs. Producer
-errors, cancellation, dropped futures, validation failures, and destination races leave an existing
-target byte-identical or a missing target absent. `with_overwrite_file(true)` enables atomic
-replacement. The returned count excludes the header.
+Serde streams can instead infer their schema from the first row:
+
+```rust
+let count = MiniExcel::save_as_serialized_async(
+    "book.xlsx",
+    rows,
+    &WriteOptions::new().with_sheet_name("Async"),
+).await?;
+```
+
+Dynamic streams require an explicit schema so empty streams remain deterministic. Serde streams
+infer final field names and order after destination preflight; an empty Serde stream requires
+`with_print_header(false)`. `save_as_serialized_async_with_cancellation()` adds explicit
+cancellation. Rows cross a bounded channel and are disk-spooled before the blocking
+constant-memory writer runs. Producer errors, cancellation, dropped futures, validation failures,
+and destination races leave an existing target byte-identical or a missing target absent.
+`with_overwrite_file(true)` enables atomic replacement. The returned count excludes the header.
 
 ## Borrowed Readers And Writers
 

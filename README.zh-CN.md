@@ -135,10 +135,23 @@ let count = MiniExcel::save_as_with_schema_async_with_cancellation(
 ).await?;
 ```
 
-显式 schema 使空 stream 与 one-pass producer 的行为保持确定。Row 通过 bounded channel，
-并在 blocking constant-memory writer 运行前落盘 spool。Producer error、cancellation、
-drop future、validation failure 与 destination race 都会使已有 target 字节不变，或使缺失
-target 继续不存在。`with_overwrite_file(true)` 启用原子 replacement。返回 count 不含 header。
+Serde stream 可改为从第一行推断 schema：
+
+```rust
+let count = MiniExcel::save_as_serialized_async(
+    "book.xlsx",
+    rows,
+    &WriteOptions::new().with_sheet_name("Async"),
+).await?;
+```
+
+Dynamic stream 需要显式 schema，以保持空 stream 的确定性。Serde stream 会在 destination
+preflight 后从第一行推断最终 field name 与顺序；空 Serde stream 需要
+`with_print_header(false)`。`save_as_serialized_async_with_cancellation()` 提供显式
+cancellation。Row 通过 bounded channel，并在 blocking constant-memory writer 运行前落盘
+spool。Producer error、cancellation、drop future、validation failure 与 destination race
+都会使已有 target 字节不变，或使缺失 target 继续不存在。`with_overwrite_file(true)` 启用
+原子 replacement。返回 count 不含 header。
 
 ## 借用 Reader 与 Writer
 

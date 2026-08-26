@@ -274,14 +274,19 @@ where
         output_row = 1;
     }
 
-    let formats = CellFormats::new(options);
+    let formats = schema
+        .iter()
+        .map(|header| {
+            CellFormats::new(options, options.column_formats().get(header).map(String::as_str))
+        })
+        .collect::<Vec<_>>();
     let mut widths = AutoWidthCollector::new(schema, options)?;
     for row in rows {
         let row = row?;
         let row = row.borrow();
         for (column, header) in schema.iter().enumerate() {
             let value = row.get(header).unwrap_or(&CellValue::Empty);
-            write_cell(&mut worksheet, output_row, column as u16, value, &formats)?;
+            write_cell(&mut worksheet, output_row, column as u16, value, &formats[column])?;
             widths.observe(column, value_width(value));
         }
         output_row += 1;
@@ -461,14 +466,26 @@ fn excel_time_serial(value: chrono::NaiveTime) -> f64 {
 }
 
 impl CellFormats {
-    fn new(options: &WriteOptions) -> Self {
+    fn new(options: &WriteOptions, column_format: Option<&str>) -> Self {
         Self {
             blank: Format::new().set_num_format("@"),
-            ordinary: body_format(options, options.wrap_cell_contents(), None),
-            date: body_format(options, false, Some(options.date_format())),
-            time: body_format(options, false, Some(options.time_format())),
-            datetime: body_format(options, false, Some(options.datetime_format())),
-            duration: body_format(options, false, Some(options.duration_format())),
+            ordinary: body_format(
+                options,
+                options.wrap_cell_contents() && column_format.is_none(),
+                column_format,
+            ),
+            date: body_format(options, false, column_format.or(Some(options.date_format()))),
+            time: body_format(options, false, column_format.or(Some(options.time_format()))),
+            datetime: body_format(
+                options,
+                false,
+                column_format.or(Some(options.datetime_format())),
+            ),
+            duration: body_format(
+                options,
+                false,
+                column_format.or(Some(options.duration_format())),
+            ),
         }
     }
 }

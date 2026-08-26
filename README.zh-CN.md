@@ -26,9 +26,9 @@ MiniExcel 最低支持 Rust 1.85.0。
 pwsh ./scripts/compare-dotnet-v1-rust.ps1 -DotNetRepository D:\git\MiniExcel
 ```
 
-脚本会从本地 .NET 仓库解析并归档 `v1.x-maintenance`，不会切换其当前 checkout。测试使用同一份 100,000 行、10 列 XLSX 工作簿，比较 .NET v1 `MiniExcel.Query(..., useHeaderRow: false)` 与 Rust `MiniExcel::query`。Release 构建预热后，每个进程完整查询三遍，共执行五轮，并逐轮交替运行顺序。脚本会校验读取行数一致，报告耗时中位数、吞吐量和采样峰值工作集。计时包含进程启动及 .NET JIT，不包含 Save 性能。
+脚本会从本地 .NET 仓库解析并归档 `v1.x-maintenance`，不会切换其当前 checkout。测试使用同一份 100,000 行、10 列 XLSX 工作簿，比较 .NET v1 `MiniExcel.Query(..., useHeaderRow: false)` 与 Rust `MiniExcel::query`。测试分别报告首次冷态调用与进程内预热后的稳态结果，使用五个新进程并交替运行顺序，同时校验行数和单元格数一致。Query 计时不包含进程启动，峰值工作集覆盖完整进程；测试不包含 Save 性能。
 
-机器可读报告写入 `target/benchmarks/dotnet-v1-vs-rust.json`。可通过 `-Passes`、`-Iterations`、`-Workbook`、`-DotNetRevision` 或 `-OutputJson` 调整测试。结果受运行环境影响，只应比较同一台机器产生的数据。
+机器可读报告写入 `target/benchmarks/dotnet-v1-vs-rust.json`。可通过 `-Scenario`、`-Passes`、`-WarmupPasses`、`-Iterations`、`-Workbook`、`-DotNetRevision` 或 `-OutputJson` 调整测试。结果受运行环境影响，只应比较同一台机器产生的数据。
 
 参见[压力测试方法与已记录结果](docs/dotnet-v1-query-benchmark.zh-CN.md)。
 

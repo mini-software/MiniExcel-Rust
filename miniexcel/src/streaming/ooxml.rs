@@ -84,7 +84,13 @@ where
     let context = prepare_workbook(&mut archive, options, preserve_structure, allow_disk_cache)?;
     let sheet_name = context.sheet_name.clone();
     let cancelled = AtomicBool::new(false);
-    let scan = scan_worksheet(&mut archive, &context.sheet_path, &cancelled)?;
+    let scan = prepare_query_scan(
+        &mut archive,
+        &context.sheet_path,
+        options,
+        preserve_structure,
+        &cancelled,
+    )?;
     let mut visitor_error = None;
     stream_worksheet(&mut archive, context, scan, options, &cancelled, &mut |row| match visitor(
         &sheet_name,
@@ -492,7 +498,13 @@ fn worker_main<R>(
     if ready_sender.send(Ok(context.sheet_name.clone())).is_err() {
         return;
     }
-    let scan = match scan_worksheet(&mut archive, &context.sheet_path, &cancelled) {
+    let scan = match prepare_query_scan(
+        &mut archive,
+        &context.sheet_path,
+        &options,
+        preserve_structure,
+        &cancelled,
+    ) {
         Ok(scan) => scan,
         Err(error) => {
             let _ = row_sender.send(Err(error));
@@ -1263,6 +1275,27 @@ where
     }
 }
 
+fn prepare_query_scan<R>(
+    archive: &mut ZipArchive<R>,
+    sheet_path: &str,
+    options: &ReadOptions,
+    preserve_structure: bool,
+    cancelled: &AtomicBool,
+) -> Result<WorksheetScan>
+where
+    R: Read + Seek,
+{
+    if !options.fill_merged_cells() || preserve_structure {
+        if options.end_cell().is_some() {
+            return Ok(WorksheetScan::default());
+        }
+        if let Ok(Some(extent)) = read_declared_worksheet_extent(archive, sheet_path) {
+            return Ok(WorksheetScan { extent, merged_cells: Vec::new() });
+        }
+    }
+    scan_worksheet(archive, sheet_path, cancelled)
+}
+
 fn scan_worksheet<R>(
     archive: &mut ZipArchive<R>,
     sheet_path: &str,
@@ -1938,7 +1971,15 @@ fn stream_error(context: impl std::fmt::Display, error: impl std::fmt::Display) 
 
 #[cfg(test)]
 mod tests {
-    use super::{CellFormat, classify_custom_format, parse_column};
+    use std::io::{Cursor, Write};
+
+    use zip::write::SimpleFileOptions;
+    use zip::{ZipArchive, ZipWriter};
+
+    use super::{
+        CellFormat, classify_custom_format, parse_column, prepare_query_scan, scan_worksheet,
+    };
+    use crate::ReadOptions;
 
     #[test]
     fn classifies_custom_excel_number_formats() {
@@ -1955,5 +1996,34 @@ mod tests {
         assert_eq!(parse_column("XFD1048576"), Some(16_383));
         assert_eq!(parse_column("XFE1"), None);
         assert_eq!(parse_column("ZZZZ1"), None);
+    }
+
+    #[test]
+    fn query_scan_uses_declared_extent_without_scanning_the_worksheet() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer.start_file("sheet.xml", SimpleFileOptions::default()).unwrap();
+        writer
+            .write_all(
+                br#"<worksheet><dimension ref="A1:J100000"/><sheetData/><broken attribute=""#,
+            )
+            .unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+
+        assert!(scan_worksheet(&mut archive, "sheet.xml", &cancelled).is_err());
+        let scan = prepare_query_scan(
+            &mut archive,
+            "sheet.xml",
+            &ReadOptions::default(),
+            false,
+            &cancelled,
+        )
+        .unwrap();
+
+        assert_eq!(scan.extent.start_row, Some(0));
+        assert_eq!(scan.extent.start_column, Some(0));
+        assert_eq!(scan.extent.end_row, Some(99_999));
+        assert_eq!(scan.extent.end_column, Some(9));
     }
 }

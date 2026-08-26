@@ -26,9 +26,9 @@ Keep `MiniExcel-Rust` and the [.NET MiniExcel repository](https://github.com/min
 pwsh ./scripts/compare-dotnet-v1-rust.ps1 -DotNetRepository D:\git\MiniExcel
 ```
 
-The script resolves and archives `v1.x-maintenance` from the local .NET repository without changing its checkout. It compares .NET v1 `MiniExcel.Query(..., useHeaderRow: false)` with Rust `MiniExcel::query` against the same 100,000-row, 10-column XLSX workbook. Release builds are warmed up, then run in alternating order for five independent iterations with three full query passes per process. The harness verifies matching row counts and reports median elapsed time, throughput, and sampled peak working set. Process startup and .NET JIT time are included; save performance is not.
+The script resolves and archives `v1.x-maintenance` from the local .NET repository without changing its checkout. It compares .NET v1 `MiniExcel.Query(..., useHeaderRow: false)` with Rust `MiniExcel::query` against the same 100,000-row, 10-column XLSX workbook. It reports separate cold first-call and warmed steady-state results, runs five fresh processes in alternating order, and verifies matching row and cell counts. Query timing excludes process launch; peak working set covers the complete process. Save performance is not included.
 
-The machine-readable report is written to `target/benchmarks/dotnet-v1-vs-rust.json`. Use `-Passes`, `-Iterations`, `-Workbook`, `-DotNetRevision`, or `-OutputJson` to change the workload. Results vary by environment, so compare only values produced on the same machine.
+The machine-readable report is written to `target/benchmarks/dotnet-v1-vs-rust.json`. Use `-Scenario`, `-Passes`, `-WarmupPasses`, `-Iterations`, `-Workbook`, `-DotNetRevision`, or `-OutputJson` to change the workload. Results vary by environment, so compare only values produced on the same machine.
 
 See [the benchmark methodology and recorded result](docs/dotnet-v1-query-benchmark.md).
 

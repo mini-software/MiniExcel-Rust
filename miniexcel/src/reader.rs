@@ -109,3 +109,10 @@ pub(crate) fn to_cell_value(value: &Data) -> CellValue {
         Data::Error(error) => CellValue::Error(error.to_string()),
     }
 }
+
+pub(crate) fn into_cell_value(value: Data) -> CellValue {
+    match value {
+        Data::String(value) => CellValue::String(value),
+        value => to_cell_value(&value),
+    }
+}

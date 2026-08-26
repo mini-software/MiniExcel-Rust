@@ -4,8 +4,12 @@ param(
     [string]$Workbook,
     [ValidateRange(1, 100)]
     [int]$Passes = 3,
+    [ValidateRange(0, 100)]
+    [int]$WarmupPasses = 1,
     [ValidateRange(1, 100)]
     [int]$Iterations = 5,
+    [ValidateSet("Cold", "Steady", "Both")]
+    [string]$Scenario = "Both",
     [string]$OutputJson,
     [switch]$SkipBuild
 )
@@ -85,6 +89,7 @@ foreach ($runner in @($dotnetRunner, $rustRunner)) {
 function Invoke-MeasuredProcess {
     param(
         [string]$Runtime,
+        [string]$Scenario,
         [string]$Executable,
         [string[]]$Arguments,
         [int]$Iteration
@@ -114,16 +119,24 @@ function Invoke-MeasuredProcess {
         throw "$Runtime runner failed with exit code $($process.ExitCode): $standardError"
     }
 
-    $rowCount = 0L
-    if (-not [long]::TryParse($standardOutput, [ref]$rowCount)) {
-        throw "$Runtime runner returned an invalid row count: $standardOutput"
+    try {
+        $runnerResult = $standardOutput | ConvertFrom-Json
+    } catch {
+        throw "$Runtime runner returned invalid JSON: $standardOutput"
+    }
+    if ($null -eq $runnerResult.Rows -or $null -eq $runnerResult.Cells -or
+        $null -eq $runnerResult.QueryElapsedMs) {
+        throw "$Runtime runner result is missing required measurements: $standardOutput"
     }
 
     [pscustomobject]@{
         Runtime = $Runtime
+        Scenario = $Scenario
         Iteration = $Iteration
-        Rows = $rowCount
-        ElapsedMs = [Math]::Round($stopwatch.Elapsed.TotalMilliseconds, 2)
+        Rows = [long]$runnerResult.Rows
+        Cells = [long]$runnerResult.Cells
+        QueryElapsedMs = [Math]::Round([double]$runnerResult.QueryElapsedMs, 2)
+        ProcessElapsedMs = [Math]::Round($stopwatch.Elapsed.TotalMilliseconds, 2)
         PeakWorkingSetMB = [Math]::Round($peakWorkingSet / 1MB, 2)
     }
 }
@@ -143,59 +156,139 @@ $runners = @(
     @{
         Runtime = ".NET v1"
         Executable = "dotnet"
-        Arguments = @($dotnetRunner, $Workbook, $Passes.ToString())
+        BaseArguments = @($dotnetRunner, $Workbook)
     },
     @{
         Runtime = "Rust"
         Executable = $rustRunner
-        Arguments = @($Workbook, $Passes.ToString())
+        BaseArguments = @($Workbook)
     }
 )
 
 foreach ($runner in $runners) {
-    $null = Invoke-MeasuredProcess @runner -Iteration 0
+    $arguments = @($runner.BaseArguments) + @("1", "0")
+    $null = Invoke-MeasuredProcess -Runtime $runner.Runtime -Scenario "Preflight" `
+        -Executable $runner.Executable -Arguments $arguments -Iteration 0
+}
+
+$scenarios = @()
+if ($Scenario -in @("Cold", "Both")) {
+    $scenarios += [pscustomobject]@{
+        Name = "Cold"
+        MeasuredPasses = 1
+        WarmupPasses = 0
+    }
+}
+if ($Scenario -in @("Steady", "Both")) {
+    $scenarios += [pscustomobject]@{
+        Name = "Steady"
+        MeasuredPasses = $Passes
+        WarmupPasses = $WarmupPasses
+    }
 }
 
 $results = @()
-foreach ($iteration in 1..$Iterations) {
-    $orderedRunners = if ($iteration % 2 -eq 1) { $runners } else { @($runners[1], $runners[0]) }
-    foreach ($runner in $orderedRunners) {
-        $results += Invoke-MeasuredProcess @runner -Iteration $iteration
+for ($scenarioIndex = 0; $scenarioIndex -lt $scenarios.Count; $scenarioIndex++) {
+    $benchmarkScenario = $scenarios[$scenarioIndex]
+    foreach ($iteration in 1..$Iterations) {
+        $dotnetFirst = ($iteration + $scenarioIndex) % 2 -eq 1
+        $orderedRunners = if ($dotnetFirst) { $runners } else { @($runners[1], $runners[0]) }
+        foreach ($runner in $orderedRunners) {
+            $arguments = @($runner.BaseArguments) + @(
+                $benchmarkScenario.MeasuredPasses.ToString(),
+                $benchmarkScenario.WarmupPasses.ToString()
+            )
+            $results += Invoke-MeasuredProcess -Runtime $runner.Runtime `
+                -Scenario $benchmarkScenario.Name -Executable $runner.Executable `
+                -Arguments $arguments -Iteration $iteration
+        }
     }
 }
 
-$expectedRows = $results[0].Rows
-if (@($results | Where-Object Rows -ne $expectedRows).Count -ne 0) {
-    throw "The runners returned different row counts."
-}
-
-$summary = @($results | Group-Object Runtime | ForEach-Object {
-    $medianElapsedMs = Get-Median ([double[]]$_.Group.ElapsedMs)
-    $medianPeakWorkingSetMB = Get-Median ([double[]]$_.Group.PeakWorkingSetMB)
-    [pscustomobject]@{
-        Runtime = $_.Name
-        MedianElapsedMs = [Math]::Round($medianElapsedMs, 2)
-        RowsPerSecond = [Math]::Round($expectedRows / ($medianElapsedMs / 1000), 0)
-        MedianPeakWorkingSetMB = [Math]::Round($medianPeakWorkingSetMB, 2)
-        MaximumPeakWorkingSetMB = [Math]::Round(($_.Group.PeakWorkingSetMB | Measure-Object -Maximum).Maximum, 2)
+foreach ($benchmarkScenario in $scenarios) {
+    $scenarioResults = @($results | Where-Object Scenario -eq $benchmarkScenario.Name)
+    $expectedRows = $scenarioResults[0].Rows
+    $expectedCells = $scenarioResults[0].Cells
+    if (@($scenarioResults | Where-Object { $_.Rows -ne $expectedRows }).Count -ne 0) {
+        throw "The runners returned different row counts for $($benchmarkScenario.Name)."
     }
-})
-
-$dotnetSummary = $summary | Where-Object Runtime -eq ".NET v1"
-$rustSummary = $summary | Where-Object Runtime -eq "Rust"
-$comparison = [pscustomobject]@{
-    RustSpeedup = [Math]::Round($dotnetSummary.MedianElapsedMs / $rustSummary.MedianElapsedMs, 2)
-    RustPeakMemoryRatio = if ($dotnetSummary.MedianPeakWorkingSetMB -gt 0) {
-        [Math]::Round($rustSummary.MedianPeakWorkingSetMB / $dotnetSummary.MedianPeakWorkingSetMB, 2)
-    } else {
-        $null
+    if (@($scenarioResults | Where-Object { $_.Cells -ne $expectedCells }).Count -ne 0) {
+        throw "The runners returned different cell counts for $($benchmarkScenario.Name)."
     }
 }
 
-$results | Sort-Object Iteration, Runtime | Format-Table -AutoSize
-"Summary"
-$summary | Format-Table -AutoSize
-"Rust speed: $($comparison.RustSpeedup)x .NET v1; Rust peak memory: $($comparison.RustPeakMemoryRatio)x .NET v1"
+$summary = @(
+    foreach ($benchmarkScenario in $scenarios) {
+        foreach ($runtime in @(".NET v1", "Rust")) {
+            $group = @($results | Where-Object {
+                $_.Scenario -eq $benchmarkScenario.Name -and $_.Runtime -eq $runtime
+            })
+            $medianQueryElapsedMs = Get-Median ([double[]]$group.QueryElapsedMs)
+            $medianProcessElapsedMs = Get-Median ([double[]]$group.ProcessElapsedMs)
+            $medianPeakWorkingSetMB = Get-Median ([double[]]$group.PeakWorkingSetMB)
+            [pscustomobject]@{
+                Scenario = $benchmarkScenario.Name
+                Runtime = $runtime
+                MeasuredPasses = $benchmarkScenario.MeasuredPasses
+                WarmupPasses = $benchmarkScenario.WarmupPasses
+                Rows = $group[0].Rows
+                Cells = $group[0].Cells
+                MedianQueryElapsedMs = [Math]::Round($medianQueryElapsedMs, 2)
+                RowsPerSecond = [Math]::Round($group[0].Rows / ($medianQueryElapsedMs / 1000), 0)
+                MedianProcessElapsedMs = [Math]::Round($medianProcessElapsedMs, 2)
+                MedianPeakWorkingSetMB = [Math]::Round($medianPeakWorkingSetMB, 2)
+                MaximumPeakWorkingSetMB = [Math]::Round(($group.PeakWorkingSetMB | Measure-Object -Maximum).Maximum, 2)
+            }
+        }
+    }
+)
+
+$comparison = @(
+    foreach ($benchmarkScenario in $scenarios) {
+        $dotnetSummary = $summary | Where-Object {
+            $_.Scenario -eq $benchmarkScenario.Name -and $_.Runtime -eq ".NET v1"
+        }
+        $rustSummary = $summary | Where-Object {
+            $_.Scenario -eq $benchmarkScenario.Name -and $_.Runtime -eq "Rust"
+        }
+        [pscustomobject]@{
+            Scenario = $benchmarkScenario.Name
+            RustQueryThroughputRatio = [Math]::Round(
+                $dotnetSummary.MedianQueryElapsedMs / $rustSummary.MedianQueryElapsedMs,
+                2
+            )
+            RustPeakMemoryRatio = if ($dotnetSummary.MedianPeakWorkingSetMB -gt 0) {
+                [Math]::Round(
+                    $rustSummary.MedianPeakWorkingSetMB / $dotnetSummary.MedianPeakWorkingSetMB,
+                    2
+                )
+            } else {
+                $null
+            }
+        }
+    }
+)
+
+foreach ($benchmarkScenario in $scenarios) {
+    "Scenario: $($benchmarkScenario.Name)"
+    $results | Where-Object Scenario -eq $benchmarkScenario.Name |
+        Sort-Object Iteration, Runtime |
+        Select-Object Runtime, Iteration, Rows, Cells,
+            @{ Name = "QueryMs"; Expression = { $_.QueryElapsedMs } },
+            @{ Name = "ProcessMs"; Expression = { $_.ProcessElapsedMs } },
+            @{ Name = "PeakMB"; Expression = { $_.PeakWorkingSetMB } } |
+        Format-Table -AutoSize
+    "Summary: $($benchmarkScenario.Name)"
+    $summary | Where-Object Scenario -eq $benchmarkScenario.Name |
+        Select-Object Runtime,
+            @{ Name = "MedianQueryMs"; Expression = { $_.MedianQueryElapsedMs } },
+            @{ Name = "RowsPerSec"; Expression = { $_.RowsPerSecond } },
+            @{ Name = "MedianPeakMB"; Expression = { $_.MedianPeakWorkingSetMB } },
+            @{ Name = "MaxPeakMB"; Expression = { $_.MaximumPeakWorkingSetMB } } |
+        Format-Table -AutoSize
+    $scenarioComparison = $comparison | Where-Object Scenario -eq $benchmarkScenario.Name
+    "Rust query throughput: $($scenarioComparison.RustQueryThroughputRatio)x .NET v1; Rust peak memory: $($scenarioComparison.RustPeakMemoryRatio)x .NET v1"
+}
 
 if ([string]::IsNullOrWhiteSpace($OutputJson)) {
     $OutputJson = Join-Path $benchmarkRoot "dotnet-v1-vs-rust.json"
@@ -210,14 +303,16 @@ $report = [ordered]@{
     Workbook = $Workbook
     WorkbookBytes = (Get-Item $Workbook).Length
     WorkbookSha256 = (Get-FileHash $Workbook -Algorithm SHA256).Hash
-    Passes = $Passes
     Iterations = $Iterations
-    RowsPerIteration = $expectedRows
+    RequestedScenario = $Scenario
+    Scenarios = $scenarios
     DotNetVersion = (& dotnet --version).Trim()
     DotNetMiniExcelVersion = $dotnetVersion
     DotNetRevision = $dotnetCommit
     RustVersion = (& rustc +1.85.0 --version).Trim()
     RustRevision = (& git -C $repositoryRoot rev-parse HEAD).Trim()
+    TimingScope = "Runner-internal query loop; process startup excluded; JIT included only without warm-up"
+    MemoryScope = "Peak process working set sampled approximately every 10 ms, including warm-up"
     Results = $results
     Summary = $summary
     Comparison = $comparison

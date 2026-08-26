@@ -14,7 +14,9 @@ use std::sync::Arc;
 use calamine::{Data, RangeDeserializerBuilder};
 use serde::de::DeserializeOwned;
 
-use crate::reader::{column_names, header_names, row_to_range, to_cell_value, trim_header_row};
+use crate::reader::{
+    column_names, header_names, into_cell_value, row_to_range, to_cell_value, trim_header_row,
+};
 use crate::{DynamicRow, Error, ReadOptions, Result, StructuredCell, StructuredRow};
 
 use self::ooxml::{StreamingRawRows, StreamingTableRawRows};
@@ -556,11 +558,13 @@ pub(crate) fn sheet_dimensions_from_bytes(bytes: &[u8]) -> Result<Vec<crate::Exc
 fn to_dynamic_row(headers: &mut Headers, selected_row: crate::reader::SelectedRow) -> DynamicRow {
     let headers = headers.for_width(selected_row.values.len());
     let mut row = DynamicRow::with_capacity(headers.len());
-    for (column, header) in headers.iter().enumerate() {
+    let mut values = selected_row.values.into_iter();
+    for header in headers {
+        let value = values.next();
         let Some(header) = header else {
             continue;
         };
-        let value = selected_row.values.get(column).map_or(crate::CellValue::Empty, to_cell_value);
+        let value = value.map_or(crate::CellValue::Empty, into_cell_value);
         row.insert(header.clone(), value);
     }
     row

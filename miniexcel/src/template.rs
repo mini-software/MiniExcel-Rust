@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::OpenOptions;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
@@ -10,6 +11,14 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use crate::{Error, Result, TemplateOptions};
+
+const CONTENT_TYPES_PATH: &str = "[Content_Types].xml";
+const WORKBOOK_PATH: &str = "xl/workbook.xml";
+const WORKBOOK_RELS_PATH: &str = "xl/_rels/workbook.xml.rels";
+const CALC_CHAIN_CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml";
+type CalculationMetadata = (BTreeMap<String, Vec<u8>>, BTreeSet<String>);
+type GroupDescriptor<'a> = (String, &'a [Value], Option<usize>);
 
 pub(crate) fn fill_path<T>(
     output_path: impl AsRef<Path>,
@@ -93,6 +102,7 @@ where
     let mut archive = ZipArchive::new(Cursor::new(template))
         .map_err(|error| Error::template(format!("cannot open template workbook: {error}")))?;
     let shared_strings = read_shared_strings(&mut archive)?;
+    let (control_replacements, removed_entries) = calculation_metadata(&mut archive)?;
     let output = Cursor::new(Vec::new());
     let mut writer = ZipWriter::new(output);
 
@@ -102,7 +112,16 @@ where
             .by_index(index)
             .map_err(|error| Error::template(format!("cannot read template entry: {error}")))?;
         let name = entry.name().to_owned();
-        if is_worksheet(&name) {
+        if removed_entries.contains(&name) {
+            continue;
+        }
+        if let Some(replacement) = control_replacements.get(&name) {
+            let options = entry.options();
+            writer.start_file(name, options).map_err(|error| {
+                Error::template(format!("cannot replace output entry: {error}"))
+            })?;
+            writer.write_all(replacement)?;
+        } else if is_worksheet(&name) {
             let compression = entry.compression();
             let modified = entry.last_modified();
             let permissions = entry.unix_mode();
@@ -138,6 +157,254 @@ where
         .finish()
         .map(Cursor::into_inner)
         .map_err(|error| Error::template(format!("cannot finish template workbook: {error}")))
+}
+
+fn calculation_metadata<R>(archive: &mut ZipArchive<R>) -> Result<CalculationMetadata>
+where
+    R: Read + std::io::Seek,
+{
+    let workbook = read_archive_part(archive, WORKBOOK_PATH)?;
+    let relationships = read_archive_part(archive, WORKBOOK_RELS_PATH)?;
+    let content_types = read_archive_part(archive, CONTENT_TYPES_PATH)?;
+    let (relationships, mut removed_entries) = remove_calc_chain_relationships(&relationships)?;
+    let content_types = remove_calc_chain_content_types(&content_types, &mut removed_entries)?;
+    let workbook = force_full_calculation(&workbook)?;
+    Ok((
+        BTreeMap::from([
+            (WORKBOOK_PATH.to_owned(), workbook),
+            (WORKBOOK_RELS_PATH.to_owned(), relationships),
+            (CONTENT_TYPES_PATH.to_owned(), content_types),
+        ]),
+        removed_entries,
+    ))
+}
+
+fn read_archive_part<R>(archive: &mut ZipArchive<R>, path: &str) -> Result<Vec<u8>>
+where
+    R: Read + std::io::Seek,
+{
+    let mut entry = archive.by_name(path).map_err(|error| {
+        Error::template(format!("template package part '{path}' is missing: {error}"))
+    })?;
+    let mut bytes = Vec::with_capacity(entry.size() as usize);
+    entry.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn remove_calc_chain_relationships(xml: &[u8]) -> Result<(Vec<u8>, BTreeSet<String>)> {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(Vec::with_capacity(xml.len()));
+    let mut removed = BTreeSet::new();
+    let mut skip_depth = 0_usize;
+    loop {
+        let event = reader.read_event().map_err(|error| {
+            Error::template(format!("invalid workbook relationships XML: {error}"))
+        })?;
+        if skip_depth > 0 {
+            match event {
+                Event::Start(_) => skip_depth += 1,
+                Event::End(_) => skip_depth -= 1,
+                Event::Eof => {
+                    return Err(Error::template("calcChain relationship ended at end of XML"));
+                }
+                _ => {}
+            }
+            continue;
+        }
+        match event {
+            Event::Start(start) if is_calc_chain_relationship(&start) => {
+                if let Some(target) = attribute(&start, b"Target") {
+                    removed.insert(normalize_workbook_target(&target)?);
+                }
+                skip_depth = 1;
+            }
+            Event::Empty(empty) if is_calc_chain_relationship(&empty) => {
+                if let Some(target) = attribute(&empty, b"Target") {
+                    removed.insert(normalize_workbook_target(&target)?);
+                }
+            }
+            Event::Eof => break,
+            event => writer.write_event(event).map_err(|error| {
+                Error::template(format!("cannot write workbook relationships XML: {error}"))
+            })?,
+        }
+    }
+    Ok((writer.into_inner(), removed))
+}
+
+fn is_calc_chain_relationship(element: &BytesStart<'_>) -> bool {
+    attribute(element, b"Type").is_some_and(|value| value.rsplit('/').next() == Some("calcChain"))
+}
+
+fn normalize_workbook_target(target: &str) -> Result<String> {
+    let path = if target.starts_with('/') {
+        target.trim_start_matches('/').to_owned()
+    } else {
+        format!("xl/{target}")
+    };
+    let mut output = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                if output.pop().is_none() {
+                    return Err(Error::template("calcChain relationship escapes the package"));
+                }
+            }
+            segment => output.push(segment),
+        }
+    }
+    Ok(output.join("/"))
+}
+
+fn remove_calc_chain_content_types(
+    xml: &[u8],
+    removed_entries: &mut BTreeSet<String>,
+) -> Result<Vec<u8>> {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(Vec::with_capacity(xml.len()));
+    let mut skip_depth = 0_usize;
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|error| Error::template(format!("invalid content types XML: {error}")))?;
+        if skip_depth > 0 {
+            match event {
+                Event::Start(_) => skip_depth += 1,
+                Event::End(_) => skip_depth -= 1,
+                Event::Eof => {
+                    return Err(Error::template("calcChain content type ended at end of XML"));
+                }
+                _ => {}
+            }
+            continue;
+        }
+        match event {
+            Event::Start(start) if remove_calc_chain_override(&start, removed_entries) => {
+                skip_depth = 1;
+            }
+            Event::Empty(empty) if remove_calc_chain_override(&empty, removed_entries) => {}
+            Event::Eof => break,
+            event => writer.write_event(event).map_err(|error| {
+                Error::template(format!("cannot write content types XML: {error}"))
+            })?,
+        }
+    }
+    Ok(writer.into_inner())
+}
+
+fn remove_calc_chain_override(
+    element: &BytesStart<'_>,
+    removed_entries: &mut BTreeSet<String>,
+) -> bool {
+    if local_name(element.name().as_ref()) != b"Override" {
+        return false;
+    }
+    let part_name =
+        attribute(element, b"PartName").map(|value| value.trim_start_matches('/').to_owned());
+    let is_calc_chain = attribute(element, b"ContentType").as_deref()
+        == Some(CALC_CHAIN_CONTENT_TYPE)
+        || part_name.as_ref().is_some_and(|name| removed_entries.contains(name));
+    if is_calc_chain {
+        if let Some(part_name) = part_name {
+            removed_entries.insert(part_name);
+        }
+    }
+    is_calc_chain
+}
+
+fn force_full_calculation(xml: &[u8]) -> Result<Vec<u8>> {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(Vec::with_capacity(xml.len() + 64));
+    let mut depth = 0_usize;
+    let mut calc_pr_seen = false;
+    let mut workbook_name = "workbook".to_owned();
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|error| Error::template(format!("invalid workbook XML: {error}")))?;
+        if !calc_pr_seen && calc_pr_insertion_point(&event, depth) {
+            let prefix = workbook_name.rsplit_once(':').map_or("", |(prefix, _)| prefix);
+            let name =
+                if prefix.is_empty() { "calcPr".to_owned() } else { format!("{prefix}:calcPr") };
+            let mut calc_pr = BytesStart::new(name);
+            calc_pr.push_attribute(("fullCalcOnLoad", "1"));
+            calc_pr.push_attribute(("forceFullCalc", "1"));
+            writer
+                .write_event(Event::Empty(calc_pr))
+                .map_err(|error| Error::template(format!("cannot write workbook XML: {error}")))?;
+            calc_pr_seen = true;
+        }
+        match event {
+            Event::Start(start) => {
+                if depth == 0 && local_name(start.name().as_ref()) == b"workbook" {
+                    workbook_name = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                }
+                if depth == 1 && local_name(start.name().as_ref()) == b"calcPr" {
+                    writer.write_event(Event::Start(force_calc_attributes(&start))).map_err(
+                        |error| Error::template(format!("cannot write workbook XML: {error}")),
+                    )?;
+                    calc_pr_seen = true;
+                } else {
+                    writer.write_event(Event::Start(start)).map_err(|error| {
+                        Error::template(format!("cannot write workbook XML: {error}"))
+                    })?;
+                }
+                depth += 1;
+            }
+            Event::Empty(empty) if depth == 1 && local_name(empty.name().as_ref()) == b"calcPr" => {
+                writer.write_event(Event::Empty(force_calc_attributes(&empty))).map_err(
+                    |error| Error::template(format!("cannot write workbook XML: {error}")),
+                )?;
+                calc_pr_seen = true;
+            }
+            Event::End(end) => {
+                depth = depth.saturating_sub(1);
+                writer.write_event(Event::End(end)).map_err(|error| {
+                    Error::template(format!("cannot write workbook XML: {error}"))
+                })?;
+            }
+            Event::Eof => break,
+            event => writer
+                .write_event(event)
+                .map_err(|error| Error::template(format!("cannot write workbook XML: {error}")))?,
+        }
+    }
+    Ok(writer.into_inner())
+}
+
+fn force_calc_attributes(element: &BytesStart<'_>) -> BytesStart<'static> {
+    let full = replace_attributes(element, &[(b"fullCalcOnLoad", Some("1"))]);
+    replace_attributes(&full, &[(b"forceFullCalc", Some("1"))])
+}
+
+fn calc_pr_insertion_point(event: &Event<'_>, depth: usize) -> bool {
+    if depth != 1 {
+        return false;
+    }
+    match event {
+        Event::Start(start) | Event::Empty(start) => matches!(
+            local_name(start.name().as_ref()),
+            b"oleSize"
+                | b"customWorkbookViews"
+                | b"pivotCaches"
+                | b"smartTagPr"
+                | b"smartTagTypes"
+                | b"webPublishing"
+                | b"fileRecoveryPr"
+                | b"webPublishObjects"
+                | b"extLst"
+        ),
+        Event::End(end) => local_name(end.name().as_ref()) == b"workbook",
+        _ => false,
+    }
+}
+
+fn local_name(name: &[u8]) -> &[u8] {
+    name.rsplit(|byte| *byte == b':').next().unwrap_or(name)
 }
 
 fn is_worksheet(name: &str) -> bool {
@@ -254,6 +521,7 @@ fn render_worksheet(
     let mut shift = 0_isize;
     let mut previous_source_row = 0_usize;
     let mut max_output_row = 1_usize;
+    let mut last_enumerable_range = None;
     let mut row_index = 0_usize;
     while row_index < rows.len() {
         check()?;
@@ -273,7 +541,7 @@ fn render_worksheet(
                 let output_start = shifted_row(source_row, shift)?;
                 let mut emitted = 0_usize;
                 let mut previous_header = None::<String>;
-                for (item_index, item) in values.iter().enumerate() {
+                for item in values {
                     for (block_index, block_row) in block.iter().enumerate() {
                         if Some(block_index) == header_row {
                             let key = group_header_key(
@@ -282,7 +550,6 @@ fn render_worksheet(
                                 data,
                                 &root,
                                 item,
-                                item_index,
                                 ignore_missing,
                             )?;
                             if previous_header.as_deref() == Some(&key) {
@@ -300,9 +567,9 @@ fn render_worksheet(
                             data,
                             Some(&root),
                             Some(item),
-                            item_index,
                             ignore_missing,
                             Some(block_index) == header_row,
+                            None,
                         )?);
                         emitted += 1;
                         max_output_row = max_output_row.max(target_row);
@@ -330,6 +597,10 @@ fn render_worksheet(
             Some(_) => vec![None],
             None => vec![None],
         };
+        let enumerable_range = expansion
+            .as_ref()
+            .map(|_| (output_row, output_row.saturating_add(items.len().saturating_sub(1))));
+        let render_range = enumerable_range.or(last_enumerable_range);
         for (item_index, item) in items.iter().enumerate() {
             let target_row = output_row.saturating_add(item_index);
             rendered_rows.push(render_row(
@@ -339,15 +610,18 @@ fn render_worksheet(
                 data,
                 expansion.as_ref().map(|(root, _)| root.as_str()),
                 *item,
-                item_index,
                 ignore_missing,
                 false,
+                render_range,
             )?);
             max_output_row = max_output_row.max(target_row);
         }
         shift = shift
             .checked_add(items.len().saturating_sub(1) as isize)
             .ok_or_else(|| Error::template("template row shift overflow"))?;
+        if let Some(enumerable_range) = enumerable_range {
+            last_enumerable_range = Some(enumerable_range);
+        }
         row_index += 1;
     }
 
@@ -411,7 +685,7 @@ fn group_descriptor<'a>(
     rows: &[Vec<Event<'static>>],
     shared_strings: &[String],
     data: &'a Value,
-) -> Result<(String, &'a Vec<Value>, Option<usize>)> {
+) -> Result<GroupDescriptor<'a>> {
     let mut root = None::<String>;
     let mut header_row = None;
     for (row_index, row) in rows.iter().enumerate() {
@@ -465,7 +739,6 @@ fn group_header_key(
     data: &Value,
     collection_root: &str,
     item: &Value,
-    item_index: usize,
     ignore_missing: bool,
 ) -> Result<String> {
     let mut key = String::new();
@@ -476,8 +749,9 @@ fn group_header_key(
                 data,
                 Some(collection_root),
                 Some(item),
-                item_index,
                 ignore_missing,
+                0,
+                None,
             )?;
             key.push_str(&rendered_value_text(&rendered));
         }
@@ -489,7 +763,9 @@ fn rendered_value_text(value: &RenderedValue) -> String {
     match value {
         RenderedValue::Empty => String::new(),
         RenderedValue::Bool(value) => value.to_string(),
-        RenderedValue::Number(value) | RenderedValue::String(value) => value.clone(),
+        RenderedValue::Number(value)
+        | RenderedValue::String(value)
+        | RenderedValue::Formula(value) => value.clone(),
     }
 }
 
@@ -543,9 +819,9 @@ fn render_row(
     data: &Value,
     collection_root: Option<&str>,
     item: Option<&Value>,
-    item_index: usize,
     ignore_missing: bool,
     group_header: bool,
+    enumerable_range: Option<(usize, usize)>,
 ) -> Result<Vec<Event<'static>>> {
     let mut output = Vec::new();
     let mut index = 0;
@@ -561,8 +837,12 @@ fn render_row(
                 let column =
                     address.chars().take_while(char::is_ascii_alphabetic).collect::<String>();
                 let address = format!("{column}{target_row}");
-                if let Some(mut text) = cell_text(&row[index..=end], shared_strings)?
-                    .filter(|text| text.contains("{{") || is_conditional_template(text))
+                if let Some(mut text) =
+                    cell_text(&row[index..=end], shared_strings)?.filter(|text| {
+                        text.contains("{{")
+                            || is_conditional_template(text)
+                            || text.starts_with("$=")
+                    })
                 {
                     if group_header {
                         text = text.strip_prefix("@header").unwrap_or(&text).to_owned();
@@ -572,8 +852,9 @@ fn render_row(
                         data,
                         collection_root,
                         item,
-                        item_index,
                         ignore_missing,
+                        target_row,
+                        enumerable_range,
                     )?;
                     output.extend(render_cell(start, &address, rendered));
                 } else {
@@ -653,6 +934,7 @@ enum RenderedValue {
     Bool(bool),
     Number(String),
     String(String),
+    Formula(String),
 }
 
 fn render_text(
@@ -660,15 +942,42 @@ fn render_text(
     data: &Value,
     collection_root: Option<&str>,
     item: Option<&Value>,
-    item_index: usize,
     ignore_missing: bool,
+    target_row: usize,
+    enumerable_range: Option<(usize, usize)>,
 ) -> Result<RenderedValue> {
+    let formula_template = template.strip_prefix("$=");
     let conditional = select_conditional_branch(template, item)?;
     let template = conditional.as_deref().unwrap_or(template);
+    if let Some(formula) = formula_template {
+        if formula.is_empty() {
+            return Err(Error::template("formula template cannot be empty"));
+        }
+        let rendered = render_template_text(
+            formula,
+            data,
+            collection_root,
+            item,
+            ignore_missing,
+            target_row,
+            enumerable_range,
+        )?;
+        if rendered.is_empty() {
+            return Err(Error::template("formula template cannot be empty"));
+        }
+        return Ok(RenderedValue::Formula(rendered));
+    }
     let tokens = placeholder_tokens(template);
     if tokens.len() == 1 && template.trim() == format!("{{{{{}}}}}", tokens[0]) {
-        let value =
-            resolve_value(&tokens[0], data, collection_root, item, item_index, ignore_missing)?;
+        let value = resolve_value(
+            &tokens[0],
+            data,
+            collection_root,
+            item,
+            ignore_missing,
+            target_row,
+            enumerable_range,
+        )?;
         return Ok(match value {
             Value::Null => RenderedValue::Empty,
             Value::Bool(value) => RenderedValue::Bool(value),
@@ -677,12 +986,43 @@ fn render_text(
         });
     }
 
+    let rendered = render_template_text(
+        template,
+        data,
+        collection_root,
+        item,
+        ignore_missing,
+        target_row,
+        enumerable_range,
+    )?;
+    Ok(RenderedValue::String(safe_string(&rendered)))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_template_text(
+    template: &str,
+    data: &Value,
+    collection_root: Option<&str>,
+    item: Option<&Value>,
+    ignore_missing: bool,
+    target_row: usize,
+    enumerable_range: Option<(usize, usize)>,
+) -> Result<String> {
     let mut rendered = template.to_owned();
+    let tokens = placeholder_tokens(template);
     for token in tokens {
-        let value = resolve_value(&token, data, collection_root, item, item_index, ignore_missing)?;
+        let value = resolve_value(
+            &token,
+            data,
+            collection_root,
+            item,
+            ignore_missing,
+            target_row,
+            enumerable_range,
+        )?;
         rendered = rendered.replace(&format!("{{{{{token}}}}}"), &value_to_string(&value));
     }
-    Ok(RenderedValue::String(safe_string(&rendered)))
+    Ok(rendered)
 }
 
 fn select_conditional_branch(template: &str, item: Option<&Value>) -> Result<Option<String>> {
@@ -817,11 +1157,22 @@ fn resolve_value(
     data: &Value,
     collection_root: Option<&str>,
     item: Option<&Value>,
-    item_index: usize,
     ignore_missing: bool,
+    target_row: usize,
+    enumerable_range: Option<(usize, usize)>,
 ) -> Result<Value> {
     if token == "$rowindex" {
-        return Ok(Value::from(item_index + 1));
+        return Ok(Value::from(target_row));
+    }
+    if token == "$enumrowstart" {
+        return enumerable_range
+            .map(|(start, _)| Value::from(start))
+            .ok_or_else(|| Error::template("$enumrowstart requires a preceding enumerable row"));
+    }
+    if token == "$enumrowend" {
+        return enumerable_range
+            .map(|(_, end)| Value::from(end))
+            .ok_or_else(|| Error::template("$enumrowend requires a preceding enumerable row"));
     }
     let path = token.split('.').collect::<Vec<_>>();
     let resolved = if collection_root == path.first().copied() {
@@ -869,7 +1220,7 @@ fn render_cell(
     let cell_type = match value {
         RenderedValue::Bool(_) => Some("b"),
         RenderedValue::String(_) => Some("inlineStr"),
-        RenderedValue::Empty | RenderedValue::Number(_) => None,
+        RenderedValue::Empty | RenderedValue::Number(_) | RenderedValue::Formula(_) => None,
     };
     let cell = replace_cell_attributes(original, address, cell_type);
     let mut events = vec![Event::Start(cell)];
@@ -885,6 +1236,11 @@ fn render_cell(
             events.push(Event::Text(BytesText::new(&value).into_owned()));
             events.push(Event::End(BytesEnd::new("t").into_owned()));
             events.push(Event::End(BytesEnd::new("is").into_owned()));
+        }
+        RenderedValue::Formula(value) => {
+            events.push(Event::Start(BytesStart::new("f").into_owned()));
+            events.push(Event::Text(BytesText::new(&value).into_owned()));
+            events.push(Event::End(BytesEnd::new("f").into_owned()));
         }
     }
     events.push(Event::End(BytesEnd::new("c").into_owned()));

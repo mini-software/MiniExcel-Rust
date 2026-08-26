@@ -613,6 +613,20 @@ header key. Group bodies may use the conditional blocks above and retain row/cel
 rejects empty arrays, nested/unmatched groups, multiple array roots, formulas, and merged cells in
 grouped worksheets instead of emitting ambiguous or invalid references.
 
+A text cell beginning at character zero with `$=` becomes an OOXML formula cell:
+
+```text
+$=B{{$rowindex}}*2
+$=SUM(B{{$enumrowstart}}:B{{$enumrowend}})
+```
+
+`$rowindex` is the final one-based worksheet row. `$enumrowstart` and `$enumrowend` refer to the
+most recently expanded enumerable row and fail when no range is available. Formula cells retain
+their style, contain no cached value, and are not evaluated by MiniExcel. Template output removes
+stale calcChain metadata and requests full recalculation on the next spreadsheet application open.
+Formula references are not translated or validated. Formula branches inside conditionals and
+formulas inside grouped blocks remain unsupported; data values beginning `$=` remain escaped text.
+
 With the optional `async` feature, `save_as_template_async()` and
 `save_as_template_async_with_cancellation()` run blocking template ZIP/XML work on a worker thread
 and atomically publish the validated path output. Pre-cancellation, rendering errors, dropped
@@ -620,7 +634,7 @@ futures, and cancellation before commit preserve an existing destination byte-fo
 missing destination absent. This does not make ZIP/filesystem operations asynchronous and retains
 the current in-memory template rendering model.
 
-Version 1 does not implement parametrized sheet cloning, `$=` formula templates, or formula recalculation.
+Version 1 does not implement parametrized sheet cloning or formula calculation.
 
 ## Important Semantics
 

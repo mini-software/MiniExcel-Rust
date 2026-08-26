@@ -104,6 +104,46 @@ fn async_template_renders_grouped_enumerables() {
 }
 
 #[test]
+fn async_template_renders_formula_cells_and_ranges() {
+    let directory = tempfile::tempdir().unwrap();
+    let template = directory.path().join("formula-template.xlsx");
+    let output = directory.path().join("formula-output.xlsx");
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write_string(1, 0, "{{items.qty}}").unwrap();
+    sheet.write_string(1, 1, "$=A{{$rowindex}}*2").unwrap();
+    sheet.write_string(3, 2, "$=SUM(A{{$enumrowstart}}:A{{$enumrowend}})").unwrap();
+    workbook.save(&template).unwrap();
+
+    block_on(MiniExcel::save_as_template_async(
+        &output,
+        &template,
+        &json!({ "items": [{ "qty": 2 }, { "qty": 3 }] }),
+        &TemplateOptions::new(),
+    ))
+    .unwrap();
+
+    let mut reader = std::fs::File::open(&output).unwrap();
+    let mut formulas = std::collections::BTreeMap::new();
+    MiniExcel::visit_structured_rows_from_reader(
+        &mut reader,
+        &miniexcel::ReadOptions::new(),
+        |row| {
+            for cell in row.cells() {
+                if let Some(formula) = cell.formula() {
+                    formulas.insert(cell.address(), formula.to_owned());
+                }
+            }
+            Ok(true)
+        },
+    )
+    .unwrap();
+    assert_eq!(formulas["B2"], "A2*2");
+    assert_eq!(formulas["B3"], "A3*2");
+    assert_eq!(formulas["C5"], "SUM(A2:A3)");
+}
+
+#[test]
 fn pre_cancel_and_failures_preserve_destination() {
     let directory = tempfile::tempdir().unwrap();
     let missing_template = directory.path().join("missing.xlsx");

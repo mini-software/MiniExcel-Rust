@@ -601,13 +601,27 @@ row。Group body 可使用上述 conditional block，并保留 row/cell style。
 nested/unmatched group、多 array root、formula 和 grouped worksheet 中的 merged cell，避免
 生成含歧义或无效 reference 的 workbook。
 
+以 `$=` 作为首字符的 text cell 会变成 OOXML formula cell：
+
+```text
+$=B{{$rowindex}}*2
+$=SUM(B{{$enumrowstart}}:B{{$enumrowend}})
+```
+
+`$rowindex` 是最终 worksheet 的 1-based row；`$enumrowstart` 与 `$enumrowend` 指向最近一次
+展开 enumerable row 的范围，没有可用范围时会失败。Formula cell 保留 style、不包含 cached
+value，MiniExcel 不会计算公式。Template output 会删除 stale calcChain metadata，并要求
+spreadsheet application 下次打开时 full recalculation。Formula reference 不会 translation 或
+validation。Conditional branch 内 formula 与 grouped block 内 formula 仍不支持；data value
+以 `$=` 开头时仍按 escaped text 处理。
+
 启用可选 `async` feature 后，`save_as_template_async()` 与
 `save_as_template_async_with_cancellation()` 会在 worker thread 执行 blocking template
 ZIP/XML 工作，并原子发布通过验证的 path output。Pre-cancellation、render error、drop future
 以及 commit 前 cancellation 会保留已有 destination 的原始字节，或让缺失 destination 继续
 不存在。该 API 不会把 ZIP/filesystem 操作变成 async，并保留当前模板内存渲染模型。
 
-版本 1 尚不支持参数化 sheet 克隆、`$=` 公式模板或公式重算。
+版本 1 尚不支持参数化 sheet 克隆或公式计算。
 
 ## 重要语义
 

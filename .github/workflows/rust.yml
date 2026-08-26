@@ -351,7 +351,7 @@ jobs:
         run: >-
           dotnet test dotnet-source/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.csproj
           --framework net10.0
-          --filter "FullyQualifiedName~MiniExcelTemplateAsyncTests.TemplateAsyncBasicTest|FullyQualifiedName~MiniExcelTemplateAsyncTests.SaveAsByTemplateAsync_TakeCancel_Throws_TaskCanceledException|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestIEnumerableConditional|FullyQualifiedName~MiniExcelTemplateTests.GroupTemplateTest|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestIEnumerableGrouped"
+          --filter "FullyQualifiedName~MiniExcelTemplateAsyncTests.TemplateAsyncBasicTest|FullyQualifiedName~MiniExcelTemplateAsyncTests.SaveAsByTemplateAsync_TakeCancel_Throws_TaskCanceledException|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestIEnumerableConditional|FullyQualifiedName~MiniExcelTemplateTests.GroupTemplateTest|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestIEnumerableGrouped|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestIEnumerableWithFormulas|FullyQualifiedName~CalcChainTests|FullyQualifiedName~CalcChainAsyncTests"
           --verbosity minimal
 
   msrv:

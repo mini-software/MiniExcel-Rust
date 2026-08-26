@@ -1,6 +1,10 @@
+use std::io::{Cursor, Read, Write};
+
 use miniexcel::{CellValue, MiniExcel, ReadOptions, TemplateOptions};
 use rust_xlsxwriter::{Format, Workbook};
 use serde_json::json;
+use zip::ZipArchive;
+use zip::write::ZipWriter;
 
 #[test]
 fn fills_scalars_and_expands_list_rows_across_worksheets() {
@@ -335,4 +339,134 @@ fn rejects_invalid_or_unsupported_group_blocks() {
     )
     .unwrap_err();
     assert!(error.to_string().contains("merged"), "{error}");
+}
+
+#[test]
+fn renders_formula_templates_with_final_row_ranges_and_recalculation_metadata() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write_formula(0, 5, "=1+1").unwrap();
+    sheet.write_string(2, 0, "{{items.name}}").unwrap();
+    sheet.write_string(2, 1, "{{items.qty}}").unwrap();
+    sheet.write_string_with_format(2, 2, "$=B{{$rowindex}}*2", &Format::new().set_bold()).unwrap();
+    sheet.write_string(4, 0, "Total").unwrap();
+    sheet.write_string(4, 3, "$=SUM(B{{$enumrowstart}}:B{{$enumrowend}})").unwrap();
+    let template = add_calc_chain(workbook.save_to_buffer().unwrap());
+
+    let output = MiniExcel::save_as_template_bytes(
+        &template,
+        &json!({
+            "items": [
+                { "name": "A", "qty": 2 },
+                { "name": "B", "qty": 3 }
+            ]
+        }),
+        &TemplateOptions::new(),
+    )
+    .unwrap();
+
+    let mut reader = Cursor::new(&output);
+    let mut cells = std::collections::BTreeMap::new();
+    MiniExcel::visit_structured_rows_from_reader(&mut reader, &ReadOptions::new(), |row| {
+        for cell in row.cells() {
+            cells.insert(cell.address(), cell.clone());
+        }
+        Ok(true)
+    })
+    .unwrap();
+    assert_eq!(cells["C3"].formula(), Some("B3*2"));
+    assert_eq!(cells["C4"].formula(), Some("B4*2"));
+    assert_eq!(cells["D6"].formula(), Some("SUM(B3:B4)"));
+    assert_eq!(cells["F1"].formula(), Some("1+1"));
+    assert!(cells["C3"].value().is_empty());
+    assert_ne!(cells["C3"].style_id(), 0);
+    assert_eq!(cells["C3"].style_id(), cells["C4"].style_id());
+
+    let entries = package_entries(&output);
+    assert!(!entries.contains_key("xl/calcChain.xml"));
+    let relationships = std::str::from_utf8(&entries["xl/_rels/workbook.xml.rels"]).unwrap();
+    assert!(!relationships.contains("calcChain"));
+    let content_types = std::str::from_utf8(&entries["[Content_Types].xml"]).unwrap();
+    assert!(!content_types.contains("calcChain"));
+    let workbook = std::str::from_utf8(&entries["xl/workbook.xml"]).unwrap();
+    assert!(workbook.contains("fullCalcOnLoad=\"1\""));
+    assert!(workbook.contains("forceFullCalc=\"1\""));
+}
+
+#[test]
+fn formula_templates_reject_invalid_ranges_and_do_not_promote_data_strings() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write_string(0, 0, "{{formula_like}}").unwrap();
+    sheet.write_string(0, 1, " =$=1+1").unwrap();
+    let template = workbook.save_to_buffer().unwrap();
+    let output = MiniExcel::save_as_template_bytes(
+        &template,
+        &json!({ "formula_like": "$=1+1" }),
+        &TemplateOptions::new(),
+    )
+    .unwrap();
+    let rows = MiniExcel::query_bytes(&output, &ReadOptions::new()).unwrap();
+    assert_eq!(rows[0]["A"], CellValue::String("'$=1+1".to_owned()));
+    assert_eq!(rows[0]["B"], CellValue::String(" =$=1+1".to_owned()));
+
+    for formula in ["$=", "$=SUM(B{{$enumrowstart}}:B{{$enumrowend}})"] {
+        let mut workbook = Workbook::new();
+        workbook.add_worksheet().write_string(0, 0, formula).unwrap();
+        let template = workbook.save_to_buffer().unwrap();
+        let error =
+            MiniExcel::save_as_template_bytes(&template, &json!({}), &TemplateOptions::new())
+                .unwrap_err();
+        assert!(error.to_string().contains("formula") || error.to_string().contains("enumrow"));
+    }
+}
+
+fn add_calc_chain(source: Vec<u8>) -> Vec<u8> {
+    let mut archive = ZipArchive::new(Cursor::new(source)).unwrap();
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let options = entry.options();
+        let mut payload = Vec::new();
+        entry.read_to_end(&mut payload).unwrap();
+        if name == "xl/_rels/workbook.xml.rels" {
+            let xml = String::from_utf8(payload).unwrap().replace(
+                "</Relationships>",
+                "<Relationship Id=\"rIdCalc\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain\" Target=\"calcChain.xml\"/></Relationships>",
+            );
+            payload = xml.into_bytes();
+        } else if name == "[Content_Types].xml" {
+            let xml = String::from_utf8(payload).unwrap().replace(
+                "</Types>",
+                "<Override PartName=\"/xl/calcChain.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml\"/></Types>",
+            );
+            payload = xml.into_bytes();
+        }
+        writer.start_file(name, options).unwrap();
+        writer.write_all(&payload).unwrap();
+    }
+    writer
+        .start_file(
+            "xl/calcChain.xml",
+            zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated),
+        )
+        .unwrap();
+    writer
+        .write_all(br#"<calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><c r="F1" i="1"/></calcChain>"#)
+        .unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+fn package_entries(bytes: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut entries = std::collections::BTreeMap::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let mut payload = Vec::new();
+        entry.read_to_end(&mut payload).unwrap();
+        entries.insert(entry.name().to_owned(), payload);
+    }
+    entries
 }

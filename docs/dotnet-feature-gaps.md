@@ -8,7 +8,7 @@ This report compares observable public capabilities in the local checkouts below
 
 | Project | Revision |
 | --- | --- |
-| MiniExcel-Rust | working tree based on `6c74aa3` (`0.3.0`) |
+| MiniExcel-Rust | working tree based on `f3c9847` (`0.3.0`) |
 | MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 The comparison uses the .NET public APIs, their controlling implementations, and focused tests under the sibling `../MiniExcel` checkout. Rust status is based on the public `MiniExcel` facade, options, integration tests, and [compatibility boundary](compatibility.md).
@@ -35,7 +35,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | General save inputs | Partial | Export from general objects/enumerables, dictionaries, `DataTable`, `IDataReader`, and async enumerables, with progress. Rust accepts dynamic or same-type Serde slices and reports per-sheet row counts. |
 | Multi-sheet export | Partial | Rust creates ordered visible, hidden, and very-hidden worksheets, but does not yet accept heterogeneous Serde row types in one call. |
 | Existing-workbook operations | Implemented | Rust atomically appends, strictly replaces, renames, changes visibility, reorders, and performs .NET-style source-workbook copy-and-add while preserving unrelated package parts and worksheet identity. Rename preserves formula text; visibility rejects hiding the final visible sheet; reorder remaps active/view/local-name indices; copy-and-add preserves the source and atomically publishes a separate destination. |
-| Templates | Partial | Rust fills path/byte templates with scalars, arrays, conditional blocks, and validated multirow groups with adjacent header suppression; path output also has a cancellable async wrapper. Streams, nested/logical conditions, grouped formulas/merges, parametrized sheets, `$=` formulas, formula-reference updates, and calculation-chain handling remain unsupported. |
+| Templates | Partial | Rust fills path/byte templates with scalars, arrays, conditional blocks, validated multirow groups, and `$=` formulas; path output also has a cancellable async wrapper. Streams, nested/logical conditions, grouped/conditional formulas, parametrized sheets, formula-reference translation, and formula calculation remain unsupported. Stale calcChain metadata is removed and full recalculation requested. |
 | Pictures and merge processing | Missing | Add anchored pictures and merge adjacent identical cells through the templater surface. Structured reads do not provide authoring parity. |
 | CSV | Implemented | Dynamic/Serde path, byte, and borrowed query/save APIs; column discovery; inferred/explicit-schema append; delimiter/newline/encoding/BOM/null/quoting configuration; and `query-csv` CLI. DataReader/DataTable are replaced by Rust iterators. Async/progress APIs and a one-call CSV/XLSX converter are not exposed. |
 | Comments and notes | Implemented | Path/bytes/borrowed APIs return threaded roots, replies, unresolved person IDs, people/provider/user IDs, resolution state, typed timestamps, and legacy notes. |
@@ -56,6 +56,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Async template | `MiniExcel::save_as_template_async*`; Rust focused rollback/cancellation/cleanup tests | `OpenXmlTemplater.SaveAsByTemplateAsync`; scoped basic/cancellation tests |
 | Template conditions | Enumerable-cell `@if`/`@elseif`/`@else` blocks; Rust sync/async branch/error/style tests | `TestIEnumerableConditional` |
 | Template groups | `@group`/`@header`/`@endgroup` multirow blocks; Rust sync/async order/error/style tests | `GroupTemplateTest`; `TestIEnumerableGrouped` |
+| Formula templates | `$=` cells with final-row/range tokens; Rust XML/style/calcChain tests | `TestIEnumerableWithFormulas`; `CalcChainTests`; async counterparts |
 | Tables | `MiniExcel::query_table*`; Rust focused tests use the exact `TestQueryTable.xlsx` fixture (SHA-256 `04F719BF9F9E99D9B437A8FB32F8111FD92580A1D29ACAD10B6ED128C0564501`) | `OpenXmlImporter.QueryTableAsync`; `tests/MiniExcel.OpenXml.Tests/Tables/` |
 | Comments | `MiniExcel::get_comments*`; Rust focused tests use `TestCommentsAndNotes.xlsx` (SHA-256 `3A855CE896ED62DC27C91797432DD89EE081F07CD03AB05BF1B0CD745543A3FC`) | `OpenXmlImporter.RetrieveCommentsAsync`; `tests/MiniExcel.OpenXml.Tests/Comments/` |
 | DataReader/DataTable | Rust iterators and borrowed visitors are the native abstraction; no literal .NET tabular adapter is planned | `OpenXmlImporter.GetDataReader`, `GetAsyncDataReader`, `QueryAsDataTableAsync`; `tests/MiniExcel.OpenXml.Tests/DataReader/` |

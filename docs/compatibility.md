@@ -183,6 +183,7 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | Basic `SaveAsTemplate` scalar/list fill | Implemented and roundtrip-tested | Not yet |
 | Enumerable-cell conditional template blocks | Implemented for string/number/bool comparisons | Rust sync/async tests; scoped .NET conditional test |
 | Enumerable grouped template blocks | Implemented for JSON arrays with adjacent header suppression | Rust sync/async tests; scoped .NET sync/async group tests |
+| `$=` formula templates | Implemented for ordinary and single-row enumerable expansion | Rust formula/address/calcChain tests; scoped .NET formula/calcChain tests |
 | Byte-array query/write for WASM | Implemented | Rust/browser tests |
 | Versioned grouped analytics | Rust research extension | No |
 | Addressed JSONL/Markdown/manifest RAG export | Rust research extension | No |
@@ -204,4 +205,4 @@ This matrix is the coverage claim: Rust does not yet provide complete API parity
 
 ## Deferred Work
 
-SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, old Excel formats, nested/logical template conditions, grouped formulas/merges, formula templates and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, formula authoring, general styling, async template streams, inferred/typed async export sources, async borrowed readers/writers, and borrowed XLSX lazy readers require separate design and acceptance milestones. CSV DataReader/DataTable adapters are intentionally replaced by Rust iterators, and a one-call CSV/XLSX converter is not exposed; callers compose query and save APIs. See the [Insert migration guide](insert-v1-migration.md) for supported workflows and deliberate differences.
+SQL text parsing, `HAVING`, `ORDER BY`, joins, windows, pivots, disk-spill aggregation, vector indexing, model calls, old Excel formats, nested/logical template conditions, grouped/conditional formulas and sheet cloning, image authoring, merged-cell APIs, formula calculation/dependency expansion, general formula authoring, general styling, async template streams, inferred/typed async export sources, async borrowed readers/writers, and borrowed XLSX lazy readers require separate design and acceptance milestones. CSV DataReader/DataTable adapters are intentionally replaced by Rust iterators, and a one-call CSV/XLSX converter is not exposed; callers compose query and save APIs. See the [Insert migration guide](insert-v1-migration.md) for supported workflows and deliberate differences.

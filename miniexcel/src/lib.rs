@@ -12,6 +12,7 @@ mod error;
 mod facade;
 #[cfg(not(target_arch = "wasm32"))]
 mod insert;
+mod mapping;
 mod options;
 mod rag;
 mod reader;
@@ -34,6 +35,7 @@ pub use comments::{
 };
 pub use error::{Error, Result};
 pub use facade::MiniExcel;
+pub use mapping::CellMap;
 #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
 pub type AsyncQuery<T> =
     std::pin::Pin<Box<dyn futures_core::Stream<Item = Result<T>> + Send + 'static>>;

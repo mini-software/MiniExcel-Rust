@@ -334,6 +334,29 @@ let rows = MiniExcel::query_as::<Release>("book.xlsx")?
 
 Serde `rename`, `alias`, `default`, `skip`, and `Option` semantics are supported. MiniExcel-specific column-index attributes are not supported.
 
+### Exact Cell Mapping
+
+Use `CellMap` when one object is stored in fixed, non-tabular worksheet cells:
+
+```rust
+use miniexcel::{CellMap, MiniExcel};
+
+let mapping = CellMap::new()
+    .with_sheet_name("Profile")
+    .with_cell("name", "B3".parse()?)
+    .with_cell("age", "F2".parse()?)
+    .with_cell("joined", "D9".parse()?);
+
+let profile: Profile = MiniExcel::read_mapped_as("book.xlsx", &mapping)?;
+```
+
+Field names are Serde input names and bindings retain insertion order. Path, byte, and borrowed
+reader APIs share the same behavior. Duplicate fields/cells and empty maps fail before workbook
+I/O. Missing cells deserialize as empty values, so `Option` and Serde defaults work naturally.
+Formula cells expose their cached value to the mapped object; use structured reads when formula or
+number-format provenance is required. This Rust-native API replaces the useful exact-cell subset of
+.NET FluentMapping without reflection or class-map registries.
+
 ## Dynamic Writing
 
 ```rust

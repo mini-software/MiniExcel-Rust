@@ -51,6 +51,17 @@ enum ErrorKind {
     #[error("invalid comments for worksheet '{sheet}': {reason}")]
     InvalidComments { sheet: String, reason: String },
 
+    #[error("invalid cell mapping: {0}")]
+    InvalidCellMap(String),
+
+    #[error("failed to deserialize mapped cells from worksheet '{sheet}' ({mapping}): {source}")]
+    MappedDeserialize {
+        sheet: String,
+        mapping: String,
+        #[source]
+        source: calamine::DeError,
+    },
+
     #[error("the workbook does not contain any worksheets")]
     NoWorksheets,
 
@@ -176,6 +187,18 @@ impl Error {
 
     pub(crate) fn invalid_comments(sheet: impl Into<String>, reason: impl Into<String>) -> Self {
         ErrorKind::InvalidComments { sheet: sheet.into(), reason: reason.into() }.into()
+    }
+
+    pub(crate) fn invalid_cell_map(message: impl Into<String>) -> Self {
+        ErrorKind::InvalidCellMap(message.into()).into()
+    }
+
+    pub(crate) fn mapped_deserialize(
+        sheet: impl Into<String>,
+        mapping: impl Into<String>,
+        source: calamine::DeError,
+    ) -> Self {
+        ErrorKind::MappedDeserialize { sheet: sheet.into(), mapping: mapping.into(), source }.into()
     }
 
     pub(crate) fn no_worksheets() -> Self {

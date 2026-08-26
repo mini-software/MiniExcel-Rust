@@ -4,6 +4,7 @@ mod comments;
 mod ooxml;
 mod shared_strings;
 
+use std::collections::HashMap;
 use std::io::{Read, Seek};
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
@@ -262,6 +263,40 @@ where
             visitor(to_structured_row(sheet_name, selected_row))
         },
     )
+}
+
+pub(crate) fn read_mapped_values_from_reader<R>(
+    reader: &mut R,
+    options: &ReadOptions,
+    positions: &[(usize, usize)],
+) -> Result<(String, Vec<Data>)>
+where
+    R: Read + Seek,
+{
+    let mut by_row = HashMap::<usize, Vec<(usize, usize)>>::new();
+    for (index, (row, column)) in positions.iter().copied().enumerate() {
+        by_row.entry(row).or_default().push((column, index));
+    }
+    let mut values = vec![Data::Empty; positions.len()];
+    let sheet_name = ooxml::visit_raw_rows_from_reader(
+        reader,
+        options,
+        false,
+        !cfg!(target_arch = "wasm32"),
+        |_, selected_row| {
+            if let Some(columns) = by_row.get(&selected_row.excel_row) {
+                for (column, index) in columns {
+                    if let Some(offset) = column.checked_sub(selected_row.start_column) {
+                        if let Some(value) = selected_row.values.get(offset) {
+                            values[*index] = value.clone();
+                        }
+                    }
+                }
+            }
+            Ok(true)
+        },
+    )?;
+    Ok((sheet_name, values))
 }
 
 pub(crate) fn visit_dynamic_rows<F>(

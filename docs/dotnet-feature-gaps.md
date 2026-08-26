@@ -8,7 +8,7 @@ This report compares observable public capabilities in the local checkouts below
 
 | Project | Revision |
 | --- | --- |
-| MiniExcel-Rust | working tree based on `f3c9847` (`0.3.0`) |
+| MiniExcel-Rust | working tree based on `14ad5ec` (`0.3.0`) |
 | MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 The comparison uses the .NET public APIs, their controlling implementations, and focused tests under the sibling `../MiniExcel` checkout. Rust status is based on the public `MiniExcel` facade, options, integration tests, and [compatibility boundary](compatibility.md).
@@ -39,7 +39,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Pictures and merge processing | Missing | Add anchored pictures and merge adjacent identical cells through the templater surface. Structured reads do not provide authoring parity. |
 | CSV | Implemented | Dynamic/Serde path, byte, and borrowed query/save APIs; column discovery; inferred/explicit-schema append; delimiter/newline/encoding/BOM/null/quoting configuration; and `query-csv` CLI. DataReader/DataTable are replaced by Rust iterators. Async/progress APIs and a one-call CSV/XLSX converter are not exposed. |
 | Comments and notes | Implemented | Path/bytes/borrowed APIs return threaded roots, replies, unresolved person IDs, people/provider/user IDs, resolution state, typed timestamps, and legacy notes. |
-| Fluent mapping | Missing | Address-based object mapping, formula/format mappings, collection start cells and spacing, nested collections, and mapped import/export/template APIs. |
+| Fluent mapping | Partial | Rust-native `CellMap` supports ordered exact-cell Serde reads from paths, bytes, and borrowed readers. Collection start cells/spacing, nested collections, and mapped export/template APIs remain unsupported. Formula/format provenance remains available through structured reads rather than mapping metadata. |
 | Attribute-based mapping | Partial | Column index/name attributes, localized headers, formula metadata, custom dynamic formatters, field mapping, and dynamic column ordering/filtering remain. Serde covers rename, alias, defaults, skips, options, and custom serializers; `WriteOptions` covers width/hidden layout by final header name. |
 | Read configuration | Partial | Culture-aware conversion, buffer/fast modes, and some null/empty-string behavior. Merged-cell filling and shared-string disk caching are implemented. |
 | Write configuration and style | Partial | OOXML tables, shared versus inline strings, and broader cell styling remain. Rust exposes default/minimal cell style modes, header output/style, AutoFilter, right-to-left views, frozen rows/columns, bounded AutoWidth, body wrapping/alignment, and number formats. |
@@ -63,7 +63,7 @@ Rust already implements dynamic and Serde-typed XLSX path queries, inclusive A1 
 | Multi-sheet and workbook edits | Writer creates multiple sheets; existing workbooks support append, strict replacement, every independent `AlterSheet` metadata operation, and source-to-destination `CopyAndAddSheet` with atomic package preservation | `OpenXmlExporter.InsertSheetAsync`, `CopyAndAddSheetAsync`, `AlterSheetAsync`; exporter, `MultipleSheets/`, and `AlterSheets/` tests |
 | Templates/pictures/merges | Basic template fill implemented; advanced directives and authoring remain deferred | `src/MiniExcel.OpenXml/Api/OpenXmlTemplater.cs`; `tests/MiniExcel.OpenXml.Tests/Templates/` |
 | CSV/conversion | `MiniExcel::query_csv*`, `save_csv*`, and `append_csv*`; Rust tests use exact `TestHeader.csv` (`6C2FC27FCA2876F1ECCA17061B8EE23E133ECDB726F8E0B84167E58D86234432`) and GB2312 (`BA8A2505AB271D5575C58CC1FCBE5A5002CEB9E2F43CB95412246E25A50E8B5A`) fixtures | `src/MiniExcel.Csv/Api/`; `src/MiniExcel/MiniExcelConverter.cs`; `tests/MiniExcel.Csv.Tests/` |
-| Mapping | Serde mapping only | `src/MiniExcel.Core/Attributes/MiniExcelColumnAttribute.cs`; `src/MiniExcel.OpenXml.FluentMapping/`; mapping tests |
+| Mapping | Serde row mapping plus explicit `CellMap` exact-cell object reads | `src/MiniExcel.Core/Attributes/MiniExcelColumnAttribute.cs`; `src/MiniExcel.OpenXml.FluentMapping/`; scoped basic/complex-address tests |
 | Comments | `MiniExcel::get_comments*`; Rust focused tests use `TestCommentsAndNotes.xlsx` (SHA-256 `3A855CE896ED62DC27C91797432DD89EE081F07CD03AB05BF1B0CD745543A3FC`) | `OpenXmlImporter.RetrieveCommentsAsync`; `src/MiniExcel.OpenXml/Models/Comments.cs`; comment tests |
 | Configuration/style | Narrow `ReadOptions` and `WriteOptions` | `MiniExcelBaseConfiguration`, `OpenXmlConfiguration`, `OpenXmlStyleOptions`; exporter tests |
 
@@ -72,7 +72,7 @@ The .NET APIs marked with `Async` also have generated synchronous counterparts t
 ## Suggested Implementation Order
 
 1. **Broader async export/stream APIs**: extend runtime-neutral cancellation to typed/inferred producers and borrowed streams without presenting blocking ZIP work as async I/O.
-2. **Advanced templates and Fluent Mapping**: add formula/merge-aware groups, richer conditional expressions, parametrized sheets, and mapping through separate compatibility milestones.
+2. **Advanced templates and collection mapping**: add formula/merge-aware groups, richer conditional expressions, parametrized sheets, and deterministic collection layouts through separate compatibility milestones.
 3. **Selected-sheet cloning**: not part of .NET `CopyAndAddSheet`; add only for a concrete Rust use case with a relationship-closure cloning contract.
 
 DataReader/DataTable are .NET ecosystem abstractions and are intentionally not literal Rust parity requirements. A Rust-native record-batch or tabular adapter is appropriate only when a concrete integration requires it.

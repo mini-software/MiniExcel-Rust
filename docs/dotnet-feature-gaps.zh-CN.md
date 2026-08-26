@@ -8,7 +8,7 @@
 
 | 项目 | 版本基线 |
 | --- | --- |
-| MiniExcel-Rust | 基于 `f3c9847` 的工作区（`0.3.0`） |
+| MiniExcel-Rust | 基于 `14ad5ec` 的工作区（`0.3.0`） |
 | MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 比对依据包括同级目录 `../MiniExcel` 中的 .NET 公开 API、控制实现和聚焦测试，以及 Rust 的公开 `MiniExcel` 门面、选项、集成测试和[兼容性边界](compatibility.zh-CN.md)。
@@ -39,7 +39,7 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 | 图片与合并处理 | 未实现 | 添加锚定图片，以及通过模板 API 合并相邻相同单元格。结构化读取不等于具备写入能力。 |
 | CSV | 已实现 | 动态/Serde path、byte、borrowed query/save API；column discovery；推断/显式 schema append；delimiter/newline/encoding/BOM/null/quoting 配置，以及 `query-csv` CLI。DataReader/DataTable 由 Rust iterator 替代；未暴露 async/progress API 和一步式 CSV/XLSX converter。 |
 | 批注与注释 | 已实现 | Path/bytes/borrowed API 返回 threaded root、reply、未解析 person ID、person/provider/user ID、resolved state、typed timestamp 与 legacy note。 |
-| Fluent Mapping | 未实现 | 基于地址的对象映射、公式/格式映射、集合起始单元格与间距、嵌套集合，以及映射式导入/导出/模板 API。 |
+| Fluent Mapping | 部分实现 | Rust-native `CellMap` 支持从 path、byte 和 borrowed reader 执行有序 exact-cell Serde 读取。Collection start cell/spacing、nested collection 与 mapped export/template API 仍不支持。Formula/format provenance 继续通过 structured read 提供，而不是 mapping metadata。 |
 | 特性式字段映射 | 部分实现 | 仍缺列索引/名称特性、本地化表头、公式元数据、自定义动态格式器、字段映射，以及动态列排序/过滤。Serde 可覆盖重命名、别名、默认值、跳过、可选值和自定义序列化；`WriteOptions` 可按最终 header name 配置 width/hidden layout。 |
 | 读取配置 | 部分实现 | 区域文化感知转换、缓冲/快速模式，以及部分 null/空字符串行为。合并单元格填充和 shared-string 磁盘 cache 已实现。 |
 | 写入配置与样式 | 部分实现 | 仍缺 OOXML table、共享字符串与内联字符串选择，以及更广泛的单元格样式。Rust 已暴露默认/最小 cell style 模式、header output/style、AutoFilter、从右到左 view、冻结行列、有界 AutoWidth、body 换行/对齐和数字格式。 |
@@ -63,7 +63,7 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 | 多工作表与工作簿修改 | Writer 可创建多个工作表；现有 workbook 支持 append、严格 replacement、全部独立 `AlterSheet` metadata 操作，以及 source-to-destination `CopyAndAddSheet`，并提供原子 package preservation | `OpenXmlExporter.InsertSheetAsync`、`CopyAndAddSheetAsync`、`AlterSheetAsync`；exporter、`MultipleSheets/` 与 `AlterSheets/` 测试 |
 | 模板/图片/合并 | 已实现基础模板填充；高级指令与 authoring 仍延期 | `src/MiniExcel.OpenXml/Api/OpenXmlTemplater.cs`；`tests/MiniExcel.OpenXml.Tests/Templates/` |
 | CSV/转换 | `MiniExcel::query_csv*`、`save_csv*` 与 `append_csv*`；Rust 测试使用完全相同的 `TestHeader.csv`（`6C2FC27FCA2876F1ECCA17061B8EE23E133ECDB726F8E0B84167E58D86234432`）和 GB2312（`BA8A2505AB271D5575C58CC1FCBE5A5002CEB9E2F43CB95412246E25A50E8B5A`）fixture | `src/MiniExcel.Csv/Api/`；`src/MiniExcel/MiniExcelConverter.cs`；`tests/MiniExcel.Csv.Tests/` |
-| 映射 | 仅 Serde 映射 | `src/MiniExcel.Core/Attributes/MiniExcelColumnAttribute.cs`；`src/MiniExcel.OpenXml.FluentMapping/`；映射测试 |
+| 映射 | Serde row mapping 加显式 `CellMap` exact-cell object read | `src/MiniExcel.Core/Attributes/MiniExcelColumnAttribute.cs`；`src/MiniExcel.OpenXml.FluentMapping/`；scoped basic/complex-address 测试 |
 | 批注 | `MiniExcel::get_comments*`；Rust focused test 使用 `TestCommentsAndNotes.xlsx`（SHA-256 `3A855CE896ED62DC27C91797432DD89EE081F07CD03AB05BF1B0CD745543A3FC`） | `OpenXmlImporter.RetrieveCommentsAsync`；`src/MiniExcel.OpenXml/Models/Comments.cs`；comment test |
 | 配置/样式 | 较窄的 `ReadOptions` 与 `WriteOptions` | `MiniExcelBaseConfiguration`、`OpenXmlConfiguration`、`OpenXmlStyleOptions`；导出测试 |
 
@@ -72,7 +72,7 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 ## 建议实现顺序
 
 1. **更广泛 async export/stream API**：把 runtime-neutral cancellation 扩展到类型化/推断 producer 和 borrowed stream，不把 blocking ZIP 工作描述成 async I/O。
-2. **高级模板与 Fluent Mapping**：通过独立兼容里程碑增加 formula/merge-aware group、更丰富 conditional expression、参数化 sheet 和 mapping。
+2. **高级模板与 collection mapping**：通过独立兼容里程碑增加 formula/merge-aware group、更丰富 conditional expression、参数化 sheet 和确定性 collection layout。
 3. **选定 worksheet cloning**：不属于 .NET `CopyAndAddSheet`；仅在有具体 Rust 使用场景时，通过 relationship closure cloning contract 增加。
 
 DataReader/DataTable 属于 .NET 生态抽象，明确不作为逐字 Rust parity 要求。只有出现具体集成需求时，才应设计 Rust-native record-batch 或 table adapter。

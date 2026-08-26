@@ -1629,6 +1629,10 @@ fn emit_missing_rows<F>(
 where
     F: FnMut(SelectedRow) -> bool,
 {
+    if options.ignore_empty_rows() && merge_fill.is_none() {
+        *next_output_row = (*next_output_row).max(target_row);
+        return true;
+    }
     while *next_output_row < target_row {
         let row = RowState { excel_row: *next_output_row, cells: Vec::new(), next_column: 0 };
         if !emit_row(row, next_output_row, end_column, options, merge_fill, emit) {

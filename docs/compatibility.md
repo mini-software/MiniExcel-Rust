@@ -44,6 +44,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | `GetSheetDimensions` | `MiniExcel::get_sheet_dimensions()` | Returns used ranges in workbook order with 1-based indices |
 | `GetColumns` | `MiniExcel::get_columns()` | Returns selected dynamic keys or an empty vector |
 | `QueryTable` | `query_table()` / `query_table_as()` / byte and borrowed-reader variants | Case-insensitive table-name lookup, metadata headers, and inclusive table bounds |
+| Exact-cell object mapping | `CellMap` / `read_mapped_as*()` | Ordered Serde field-to-A1 bindings; path, bytes, and borrowed readers |
 | Retrieve comments and notes | `get_comments()` / bytes / borrowed-reader variants | Thread roots, replies, people, resolution/timestamps, and legacy notes |
 | `startCell` | `ReadOptions::with_start_cell()` | A1 start coordinate |
 | `IgnoreEmptyRows` | `ReadOptions::with_ignore_empty_rows()` | Defaults to `false` for MiniExcel compatibility |
@@ -172,6 +173,7 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | .NET surface | Rust status | Shared contract |
 | --- | --- | --- |
 | Dynamic and typed XLSX query | Implemented | Yes |
+| Exact-cell Serde object mapping | Implemented | Rust path/bytes/borrowed parity tests; scoped .NET FluentMapping baseline |
 | `QueryRange` with A1 coordinates | Implemented | Yes |
 | `GetSheetNames` and `GetColumns` | Implemented | Yes |
 | `GetSheetInformations` ID/index/name/type/visibility/active | Implemented | Rust tests against .NET fixtures |

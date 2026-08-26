@@ -44,6 +44,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | `GetSheetDimensions` | `MiniExcel::get_sheet_dimensions()` | 按 workbook 顺序返回使用范围，index 从 1 开始 |
 | `GetColumns` | `MiniExcel::get_columns()` | 返回选中的动态 key，或空 vector |
 | `QueryTable` | `query_table()` / `query_table_as()` / byte 和 borrowed-reader variants | 大小写不敏感 table-name lookup、metadata header 与包含端点的 table bounds |
+| Exact-cell object mapping | `CellMap` / `read_mapped_as*()` | 有序 Serde field-to-A1 binding；path、byte 与 borrowed reader |
 | 读取 comments 与 notes | `get_comments()` / bytes / borrowed-reader variants | Thread root、reply、person、resolved/timestamp 与 legacy note |
 | `startCell` | `ReadOptions::with_start_cell()` | A1 起始坐标 |
 | `IgnoreEmptyRows` | `ReadOptions::with_ignore_empty_rows()` | 为兼容 MiniExcel，默认值为 `false` |
@@ -172,6 +173,7 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | .NET 接口 | Rust 状态 | 共享契约 |
 | --- | --- | --- |
 | 动态和类型化 XLSX query | 已实现 | 是 |
+| Exact-cell Serde object mapping | 已实现 | Rust path/byte/borrowed parity 测试；scoped .NET FluentMapping 基准 |
 | 使用 A1 坐标的 `QueryRange` | 已实现 | 是 |
 | `GetSheetNames` 和 `GetColumns` | 已实现 | 是 |
 | `GetSheetInformations` ID/index/name/type/visibility/active | 已实现 | Rust 使用 .NET fixture 测试 |

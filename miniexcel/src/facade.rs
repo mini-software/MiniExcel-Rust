@@ -497,6 +497,31 @@ impl MiniExcel {
         Ok(Box::new(StreamingTypedRows::open(path, options)?))
     }
 
+    /// Reads one Serde value from explicitly mapped worksheet cells.
+    pub fn read_mapped_as<T>(path: impl AsRef<Path>, mapping: &crate::CellMap) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        crate::mapping::read_path(path, mapping)
+    }
+
+    /// Reads one Serde value from explicitly mapped cells in an in-memory workbook.
+    pub fn read_mapped_as_bytes<T>(bytes: &[u8], mapping: &crate::CellMap) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        crate::mapping::read_bytes(bytes, mapping)
+    }
+
+    /// Reads one Serde value from explicitly mapped cells while leaving the reader open.
+    pub fn read_mapped_as_from_reader<T, R>(reader: &mut R, mapping: &crate::CellMap) -> Result<T>
+    where
+        T: DeserializeOwned,
+        R: Read + Seek,
+    {
+        crate::mapping::read_from_reader(reader, mapping)
+    }
+
     /// Streams and deserializes rows asynchronously using the default read options.
     #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
     pub fn query_as_async<T>(path: impl AsRef<Path>) -> Result<crate::AsyncQuery<T>>

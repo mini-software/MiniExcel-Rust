@@ -329,6 +329,29 @@ let rows = MiniExcel::query_as::<Release>("book.xlsx")?
 
 支持 Serde 的 `rename`、`alias`、`default`、`skip` 和 `Option` 语义。暂不支持 MiniExcel 专用的列索引 Attribute。
 
+### 精确 Cell Mapping
+
+当一个对象存储在固定、非表格化 worksheet cell 中时，可使用 `CellMap`：
+
+```rust
+use miniexcel::{CellMap, MiniExcel};
+
+let mapping = CellMap::new()
+    .with_sheet_name("Profile")
+    .with_cell("name", "B3".parse()?)
+    .with_cell("age", "F2".parse()?)
+    .with_cell("joined", "D9".parse()?);
+
+let profile: Profile = MiniExcel::read_mapped_as("book.xlsx", &mapping)?;
+```
+
+Field name 是 Serde input name，binding 保持插入顺序。Path、byte 和 borrowed reader API
+行为一致。Duplicate field/cell 与空 map 会在 workbook I/O 前失败。缺失 cell 按 empty value
+反序列化，因此可自然使用 `Option` 与 Serde default。Formula cell 会把 cached value 提供给
+mapped object；需要 formula 或 number-format provenance 时应使用 structured read。该
+Rust-native API 覆盖 .NET FluentMapping 中有实际价值的 exact-cell 子集，不引入 reflection
+或 class-map registry。
+
 ## 动态写入
 
 ```rust

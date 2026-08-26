@@ -1604,6 +1604,27 @@ impl MiniExcel {
     {
         crate::template::fill_bytes(template_bytes, value, options)
     }
+
+    /// Merges tagged same-value cells in an in-memory XLSX workbook.
+    ///
+    /// `@merge` and `@endmerge` delimit candidate rows in one column. `@mergelimit` applies the
+    /// .NET-compatible grouping boundary. Marker rows are removed from the generated workbook.
+    pub fn merge_same_cells_bytes(workbook: &[u8]) -> Result<Vec<u8>> {
+        crate::merge::merge_same_cells_bytes(workbook)
+    }
+
+    /// Merges tagged same-value cells from a source workbook into a separate destination path.
+    ///
+    /// The source is preserved and the destination is published atomically. Source and destination
+    /// must differ; an existing destination requires explicit overwrite opt-in.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn merge_same_cells(
+        source: impl AsRef<Path>,
+        destination: impl AsRef<Path>,
+        options: &crate::MergeSameCellsOptions,
+    ) -> Result<()> {
+        crate::merge::merge_same_cells_path(source.as_ref(), destination.as_ref(), options)
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

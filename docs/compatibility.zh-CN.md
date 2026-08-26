@@ -58,6 +58,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | Async path query | `query_async*()` / `query_as_async*()` | 可选 `async` feature；bounded 动态/Serde stream、协作式 cancellation、blocking XLSX worker |
 | Async dynamic/Serde export | `save_as_with_schema_async*()` / `save_as_serialized_async*()` | 可选 `async` feature；显式或首行推断 schema、bounded producer、原子 destination、协作式 cancellation、data-cell progress |
 | Async 基础 template path output | `save_as_template_async*()` | 可选 `async` feature；scalar/list renderer、原子 destination、协作式 cancellation |
+| `MergeSameCells` | `merge_same_cells()` / `merge_same_cells_bytes()` | `@merge`/`@endmerge` region、可选 `@mergelimit`、全部 worksheet、原子 source-to-destination path output |
 | 每表 visibility | `WriteOptions::with_sheet_visibility()` | visible、hidden、very hidden；第一个 visible sheet 为 active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | 默认 `false`；已有路径需要显式允许覆盖 |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | 默认冻结一行、零列 |
@@ -201,7 +202,8 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | 原子 worksheet reorder | 已支持现有 `.xlsx` path | Rust positional-reference/rollback 测试；固定 .NET `AlterSheet` 基准 |
 | 旧式 `.xls`、`.xlsb` 与 `.ods` 格式 | 延后 | 否 |
 | 原子 workbook copy-and-add | 已支持 dynamic/schema/Serde path API | Rust source/destination rollback 测试；固定 .NET `CopyAndAddSheet` 基准 |
-| 高级 template、picture 与 merge | 延后 | 否 |
+| Marker-driven `MergeSameCells` | 已实现 | 精确 Rust/.NET fixture 与 scoped sync/async .NET baseline |
+| 高级 template 与 picture | 延后 | 否 |
 
 此矩阵就是覆盖声明：Rust 目前尚未提供与当前 .NET package 完整的 API 等价性。
 

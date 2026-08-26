@@ -657,6 +657,26 @@ spreadsheet application 下次打开时 full recalculation。Formula reference �
 validation。Conditional branch 内 formula 与 grouped block 内 formula 仍不支持；data value
 以 `$=` 开头时仍按 escaped text 处理。
 
+### 合并相同单元格
+
+可通过独立后处理，在 worksheet 的标记区域内合并相同值 cell：
+
+```rust
+use miniexcel::{MergeSameCellsOptions, MiniExcel};
+
+MiniExcel::merge_same_cells(
+    "filled.xlsx",
+    "merged.xlsx",
+    &MergeSameCellsOptions::new(),
+)?;
+```
+
+精确的 `@merge` cell 在所在列开始一个区域，下一个精确的 `@endmerge` cell 结束该区域。
+Marker row 会被删除，并按 .NET 兼容规则生成相同值的纵向 merge range。`@mergelimit`
+marker 可提供限制 range 的分组列。所有 worksheet 都会处理；既有 merge 与无关 package part
+会保留。Path API 保留 source，并原子发布独立 destination，默认拒绝覆盖。内存 workbook
+可使用 `merge_same_cells_bytes()`。
+
 启用可选 `async` feature 后，`save_as_template_async()` 与
 `save_as_template_async_with_cancellation()` 会在 worker thread 执行 blocking template
 ZIP/XML 工作，并原子发布通过验证的 path output。Pre-cancellation、render error、drop future
@@ -679,6 +699,6 @@ ZIP/XML 工作，并原子发布通过验证的 path output。Pre-cancellation�
 
 ## 暂不支持
 
-目前不支持 `.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片写入、合并单元格操作、公式写入、通用样式系统，以及克隆任意选定 worksheet。
+目前不支持 `.xls`、`.xlsb`、`.ods`、高级模板指令、宏、图片写入、marker-driven `MergeSameCells` 以外的通用合并单元格写入、公式写入、通用样式系统，以及克隆任意选定 worksheet。
 
 当前支持范围请查看[兼容性矩阵](docs/compatibility.zh-CN.md)；有意保留的差异见 [MiniExcel v1 Insert 迁移说明](docs/insert-v1-migration.zh-CN.md)。

@@ -8,7 +8,7 @@
 
 | 项目 | 版本基线 |
 | --- | --- |
-| MiniExcel-Rust | 基于 `64e1001` 的工作区（`0.3.0`） |
+| MiniExcel-Rust | 基于 `e52c1b3` 的工作区（`0.3.0`） |
 | MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 比对依据包括同级目录 `../MiniExcel` 中的 .NET 公开 API、控制实现和聚焦测试，以及 Rust 的公开 `MiniExcel` 门面、选项、集成测试和[兼容性边界](compatibility.zh-CN.md)。
@@ -30,13 +30,13 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 | --- | --- | --- |
 | 命名表格 | 已实现 | 动态/类型化 path query、byte query 与 borrowed-reader visitor 使用 table metadata header 和 bounds，并按 table name 大小写不敏感匹配。 |
 | DataReader 与 DataTable | 设计不同 | Rust 使用 iterator 与 borrowed visitor，不复制 .NET tabular interface。只有具体集成需要时才考虑 Rust-native Arrow/record-batch adapter；此项不阻塞 parity 完成。 |
-| 调用方提供的流 | 部分实现 | 已实现借用的同步动态/类型化/structured visitor、metadata 读取、动态/schema/类型化/多表 writer，以及独立 reader-to-writer Insert，并保持 leave-open。借用 lazy iterator、borrowed async stream 和 template stream 仍不支持。 |
-| 异步与取消 | 部分实现 | 可选、runtime-neutral 的动态/Serde path query、显式 schema dynamic 与推断 schema Serde path export、基础 template path output 与显式 schema Insert 已支持协作式 cancellation，并在适用位置提供原子发布。Async XLSX export 已支持 data-cell progress。高级 template stream 与 borrowed async I/O 仍不支持；ZIP 和 filesystem 工作仍在专用 blocking worker 上执行。 |
+| 调用方提供的流 | 部分实现 | 已实现借用的同步动态/类型化/structured visitor、metadata 读取、动态/schema/类型化/多表 writer，以及独立 reader-to-writer Insert，并保持 leave-open。对 blocking `Read + Seek`/`Write` 的 borrowed lazy/async wrapper 明确不实现；template stream 仍不支持。 |
+| 异步与取消 | 部分实现 | 可选、runtime-neutral 的动态/Serde path query、显式 schema dynamic 与推断 schema Serde path export、基础 template path output 与显式 schema Insert 已支持协作式 cancellation，并在适用位置提供原子发布。Async XLSX export 已支持 data-cell progress。高级 template stream 仍不支持；ZIP 和 filesystem 工作仍在专用 blocking worker 上执行。 |
 | 通用保存输入 | 部分实现 | 从普通对象/可枚举对象、字典、`DataTable`、`IDataReader` 和异步枚举导出，并报告进度。Rust 接受动态行或同类型 Serde 切片、带 cell progress 的 bounded dynamic/Serde async stream，并返回每张工作表的行数。 |
 | 多工作表导出 | 部分实现 | Rust 可按输入顺序创建 visible、hidden 和 very-hidden 工作表，但尚不能在一次调用中接受异构 Serde 行类型。 |
 | 修改现有工作簿 | 已实现 | Rust 可原子 append、严格 replace、rename、修改 visibility、reorder，并执行 .NET 风格的 source-workbook copy-and-add，同时保留无关 package part 与 worksheet identity。Rename 保留 formula 文本；visibility 拒绝隐藏最后一张 visible sheet；reorder remap active/view/local-name index；copy-and-add 保留 source 并原子发布独立 destination。 |
-| 模板 | 部分实现 | Rust 可使用 scalar、array、conditional block、validated multirow group 与 `$=` formula 填充 path/byte template；path output 也提供 cancellable async wrapper。Stream、nested/logical condition、grouped/conditional formula、参数化 sheet、formula-reference translation 与公式计算仍不支持。Stale calcChain metadata 会被删除并要求 full recalculation。 |
-| 图片与合并处理 | 未实现 | 添加锚定图片，以及通过模板 API 合并相邻相同单元格。结构化读取不等于具备写入能力。 |
+| 模板 | 部分实现 | Rust 可使用 scalar、array、conditional block、validated multirow group 与 `$=` formula 填充 path/byte template；path output 也提供 cancellable async wrapper，独立 post-processor 已实现 marker-driven same-cell merge。Stream、nested/logical condition、grouped/conditional formula、参数化 sheet、formula-reference translation 与公式计算仍不支持。Stale calcChain metadata 会被删除并要求 full recalculation。 |
+| 图片与合并处理 | 部分实现 | Marker-driven 相同值纵向 merge 已支持 `@merge`、`@endmerge` 与 `@mergelimit`，处理所有 worksheet，并提供原子 path 和 byte API。锚定图片写入仍不支持。 |
 | CSV | 已实现 | 动态/Serde path、byte、borrowed query/save API；column discovery；推断/显式 schema append；delimiter/newline/encoding/BOM/null/quoting 配置，以及 `query-csv` CLI。DataReader/DataTable 由 Rust iterator 替代；未暴露 async/progress API 和一步式 CSV/XLSX converter。 |
 | 批注与注释 | 已实现 | Path/bytes/borrowed API 返回 threaded root、reply、未解析 person ID、person/provider/user ID、resolved state、typed timestamp 与 legacy note。 |
 | Fluent Mapping | 部分实现 | Rust-native `CellMap` 支持从 path、byte 和 borrowed reader 执行有序 exact-cell Serde 读取。Collection start cell/spacing、nested collection 与 mapped export/template API 仍不支持。Formula/format provenance 继续通过 structured read 提供，而不是 mapping metadata。 |
@@ -61,7 +61,7 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 | Comments | `MiniExcel::get_comments*`；Rust focused test 使用 `TestCommentsAndNotes.xlsx`（SHA-256 `3A855CE896ED62DC27C91797432DD89EE081F07CD03AB05BF1B0CD745543A3FC`） | `OpenXmlImporter.RetrieveCommentsAsync`；`tests/MiniExcel.OpenXml.Tests/Comments/` |
 | DataReader/DataTable | Rust iterator 与 borrowed visitor 是原生抽象；不计划逐字复制 .NET tabular adapter | `OpenXmlImporter.GetDataReader`、`GetAsyncDataReader`、`QueryAsDataTableAsync`；`tests/MiniExcel.OpenXml.Tests/DataReader/` |
 | 多工作表与工作簿修改 | Writer 可创建多个工作表；现有 workbook 支持 append、严格 replacement、全部独立 `AlterSheet` metadata 操作，以及 source-to-destination `CopyAndAddSheet`，并提供原子 package preservation | `OpenXmlExporter.InsertSheetAsync`、`CopyAndAddSheetAsync`、`AlterSheetAsync`；exporter、`MultipleSheets/` 与 `AlterSheets/` 测试 |
-| 模板/图片/合并 | 已实现基础模板填充；高级指令与 authoring 仍延期 | `src/MiniExcel.OpenXml/Api/OpenXmlTemplater.cs`；`tests/MiniExcel.OpenXml.Tests/Templates/` |
+| 模板/图片/合并 | 已实现基础/conditional/group/formula template 与 `MiniExcel::merge_same_cells*`；精确 merge fixture `B4E3054E9349A719003A59AB7402C50107A53E28387E586DAC0060EAF1F9EB18` 和 `C84DB87A7709133EF23CC9D7092C542CFC5DFB78B84F7227215AD979A5AF3503` | `src/MiniExcel.OpenXml/Api/OpenXmlTemplater.cs`；`TestMergeSameCellsWithTag*` 与 `TestMergeSameCellsWithLimitTag*` |
 | CSV/转换 | `MiniExcel::query_csv*`、`save_csv*` 与 `append_csv*`；Rust 测试使用完全相同的 `TestHeader.csv`（`6C2FC27FCA2876F1ECCA17061B8EE23E133ECDB726F8E0B84167E58D86234432`）和 GB2312（`BA8A2505AB271D5575C58CC1FCBE5A5002CEB9E2F43CB95412246E25A50E8B5A`）fixture | `src/MiniExcel.Csv/Api/`；`src/MiniExcel/MiniExcelConverter.cs`；`tests/MiniExcel.Csv.Tests/` |
 | 映射 | Serde row mapping 加显式 `CellMap` exact-cell object read | `src/MiniExcel.Core/Attributes/MiniExcelColumnAttribute.cs`；`src/MiniExcel.OpenXml.FluentMapping/`；scoped basic/complex-address 测试 |
 | 批注 | `MiniExcel::get_comments*`；Rust focused test 使用 `TestCommentsAndNotes.xlsx`（SHA-256 `3A855CE896ED62DC27C91797432DD89EE081F07CD03AB05BF1B0CD745543A3FC`） | `OpenXmlImporter.RetrieveCommentsAsync`；`src/MiniExcel.OpenXml/Models/Comments.cs`；comment test |
@@ -71,8 +71,8 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 
 ## 建议实现顺序
 
-1. **Borrowed async stream**：仅在 ownership、cancellation 与 blocking-I/O 语义清晰时增加 caller-owned async reader/writer integration。
-2. **高级模板与 collection mapping**：通过独立兼容里程碑增加 formula/merge-aware group、更丰富 conditional expression、参数化 sheet 和确定性 collection layout。
+1. **高级模板与 collection mapping**：通过独立兼容里程碑增加 formula-aware group、更丰富 conditional expression、参数化 sheet 和确定性 collection layout。
+2. **图片写入**：仅在 relationship、drawing、尺寸与 package preservation contract 明确时增加锚定 PNG/JPEG image。
 3. **选定 worksheet cloning**：不属于 .NET `CopyAndAddSheet`；仅在有具体 Rust 使用场景时，通过 relationship closure cloning contract 增加。
 
 DataReader/DataTable 属于 .NET 生态抽象，明确不作为逐字 Rust parity 要求。只有出现具体集成需求时，才应设计 Rust-native record-batch 或 table adapter。
@@ -83,6 +83,7 @@ DataReader/DataTable 属于 .NET 生态抽象，明确不作为逐字 Rust parit
 - .NET 数字参数形式的 `QueryRange` 不单列，因为 Rust 的 A1 `CellReference` 边界可表达相同选择。
 - 内部实现类和 .NET 专属依赖注入机制不计入，除非它们产生公开可观察行为。
 - CSV DataReader/DataTable 和专用 CSV/XLSX converter 不计入，因为 Rust iterator 与组合 query/save 调用已提供原生替代。
+- 对 blocking `Read + Seek` 与 `Write` 的 borrowed async wrapper 不计为缺口；owned worker stream 与同步 borrowed visitor 已准确暴露执行模型。
 - 任意选定 worksheet cloning 不计入，因为 .NET `CopyAndAddSheet` 是复制完整 source workbook 后从 row data 生成 sheet；Rust 已实现该可观察操作。
 - 旧式二进制 Excel 格式不计入，因为本次比对未发现当前 .NET V2 有可构成兼容要求的公开 provider。
 

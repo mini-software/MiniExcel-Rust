@@ -13,6 +13,7 @@ mod facade;
 #[cfg(not(target_arch = "wasm32"))]
 mod insert;
 mod mapping;
+mod merge;
 mod options;
 mod rag;
 mod reader;
@@ -41,9 +42,9 @@ pub type AsyncQuery<T> =
     std::pin::Pin<Box<dyn futures_core::Stream<Item = Result<T>> + Send + 'static>>;
 pub use options::{
     CsvConfiguration, CsvEncoding, CsvNewline, CsvReadOptions, CsvWriteOptions,
-    ExistingSheetPolicy, HeaderMode, HeaderStyle, HorizontalAlignment, InsertOptions, ReadOptions,
-    RgbColor, TableStyle, TargetRelationshipPolicy, TemplateOptions, VerticalAlignment,
-    WriteOptions,
+    ExistingSheetPolicy, HeaderMode, HeaderStyle, HorizontalAlignment, InsertOptions,
+    MergeSameCellsOptions, ReadOptions, RgbColor, TableStyle, TargetRelationshipPolicy,
+    TemplateOptions, VerticalAlignment, WriteOptions,
 };
 pub use rag::{
     FormulaCalculationStatus, RagCell, RagChunk, RagExport, RagExportOptions, RagManifest, RagRow,

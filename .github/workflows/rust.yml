@@ -354,6 +354,37 @@ jobs:
           --filter "FullyQualifiedName~MiniExcelTemplateAsyncTests.TemplateAsyncBasicTest|FullyQualifiedName~MiniExcelTemplateAsyncTests.SaveAsByTemplateAsync_TakeCancel_Throws_TaskCanceledException|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestIEnumerableConditional|FullyQualifiedName~MiniExcelTemplateTests.GroupTemplateTest|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestIEnumerableGrouped|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestIEnumerableWithFormulas|FullyQualifiedName~CalcChainTests|FullyQualifiedName~CalcChainAsyncTests"
           --verbosity minimal
 
+  merge-same-cells-parity:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout MiniExcel .NET
+        uses: actions/checkout@v4
+        with:
+          repository: mini-software/MiniExcel
+          ref: b9a76d7af62142e0e38545b6905b01a06e8d160e
+          path: dotnet-source
+      - name: Install Rust 1.85.0
+        uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: merge-same-cells-parity-${{ matrix.os }}
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Run Rust merge-same-cells tests
+        run: cargo +1.85.0 test -p miniexcel --test merge_same_cells --locked
+      - name: Run scoped MiniExcel .NET merge tests
+        run: >-
+          dotnet test dotnet-source/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.csproj
+          --framework net10.0
+          --filter "FullyQualifiedName~MiniExcelTemplateTests.TestMergeSameCellsWithTag|FullyQualifiedName~MiniExcelTemplateTests.TestMergeSameCellsWithLimitTag|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestMergeSameCellsWithTagAsync|FullyQualifiedName~MiniExcelTemplateAsyncTests.TestMergeSameCellsWithLimitTagAsync"
+          --verbosity minimal
+
   cell-mapping-parity:
     strategy:
       matrix:

@@ -77,24 +77,25 @@ fn path_identity(path: &Path) -> Result<String> {
 fn acquire_path_pair(
     source: &Path,
     destination: &Path,
+    operation: &str,
 ) -> Result<(PathMutationGuard, PathMutationGuard)> {
     let source_identity = path_identity(source)?;
     let destination_identity = path_identity(destination)?;
     if source_identity == destination_identity
         || (destination.exists() && same_file::is_same_file(source, destination)?)
     {
-        return Err(Error::invalid_write_options(
-            "copy-and-add source and destination must differ",
-        ));
+        return Err(Error::invalid_write_options(format!(
+            "{operation} source and destination must differ"
+        )));
     }
     if source_identity < destination_identity {
         Ok((
-            PathMutationGuard::acquire(source, "copy-and-add")?,
-            PathMutationGuard::acquire(destination, "copy-and-add")?,
+            PathMutationGuard::acquire(source, operation)?,
+            PathMutationGuard::acquire(destination, operation)?,
         ))
     } else {
-        let destination_guard = PathMutationGuard::acquire(destination, "copy-and-add")?;
-        let source_guard = PathMutationGuard::acquire(source, "copy-and-add")?;
+        let destination_guard = PathMutationGuard::acquire(destination, operation)?;
+        let source_guard = PathMutationGuard::acquire(source, operation)?;
         Ok((source_guard, destination_guard))
     }
 }
@@ -322,7 +323,8 @@ where
     H: FnMut(AtomicCommitStage) -> Result<()>,
 {
     checkpoint(AtomicCommitStage::Preflight)?;
-    let (_source_guard, _destination_guard) = acquire_path_pair(source_path, destination_path)?;
+    let (_source_guard, _destination_guard) =
+        acquire_path_pair(source_path, destination_path, "copy-and-add")?;
     if destination_path.exists() && same_file::is_same_file(source_path, destination_path)? {
         return Err(Error::invalid_write_options(
             "copy-and-add source and destination must differ",
@@ -424,6 +426,67 @@ where
         }
     }
     Ok(row_count)
+}
+
+pub(crate) fn transform_to_path<F>(
+    source_path: &Path,
+    destination_path: &Path,
+    overwrite_destination: bool,
+    operation: &str,
+    transform: F,
+) -> Result<()>
+where
+    F: FnOnce(&mut File, &mut File) -> Result<()>,
+{
+    let (_source_guard, _destination_guard) =
+        acquire_path_pair(source_path, destination_path, operation)?;
+    let source_fingerprint = SourceFingerprint::read(source_path)?;
+    let destination_fingerprint =
+        destination_path.exists().then(|| SourceFingerprint::read(destination_path)).transpose()?;
+    if destination_fingerprint.is_some() && !overwrite_destination {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("destination '{}' already exists", destination_path.display()),
+        )
+        .into());
+    }
+    let source_metadata = fs::metadata(source_path)?;
+    let mut source = File::open(source_path)?;
+    let parent = sibling_directory(destination_path);
+    let mut temporary =
+        tempfile::Builder::new().prefix(".miniexcel-").suffix(".xlsx.tmp").tempfile_in(parent)?;
+    transform(&mut source, temporary.as_file_mut())?;
+    temporary.as_file_mut().flush()?;
+    temporary.as_file().sync_all()?;
+    validate_complete_package(temporary.reopen()?)?;
+
+    if SourceFingerprint::read(source_path)? != source_fingerprint {
+        return Err(Error::atomic_commit(format!(
+            "source workbook '{}' changed during {operation}",
+            source_path.display()
+        )));
+    }
+    match destination_fingerprint {
+        Some(fingerprint) => {
+            if SourceFingerprint::read(destination_path)? != fingerprint {
+                return Err(Error::atomic_commit(format!(
+                    "destination workbook '{}' changed during {operation}",
+                    destination_path.display()
+                )));
+            }
+            let permissions = fs::metadata(destination_path)?.permissions();
+            replace_temporary(temporary, destination_path, permissions)
+        }
+        None => {
+            if destination_path.exists() {
+                return Err(Error::atomic_commit(format!(
+                    "destination workbook '{}' was created during {operation}",
+                    destination_path.display()
+                )));
+            }
+            persist_new_temporary(temporary, destination_path, source_metadata.permissions())
+        }
+    }
 }
 
 pub(crate) fn rename_sheet_to_path(

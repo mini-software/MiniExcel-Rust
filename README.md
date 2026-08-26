@@ -669,6 +669,27 @@ stale calcChain metadata and requests full recalculation on the next spreadsheet
 Formula references are not translated or validated. Formula branches inside conditionals and
 formulas inside grouped blocks remain unsupported; data values beginning `$=` remain escaped text.
 
+### Merge Same Cells
+
+Use a separate post-processing pass to merge same-value cells in marked worksheet regions:
+
+```rust
+use miniexcel::{MergeSameCellsOptions, MiniExcel};
+
+MiniExcel::merge_same_cells(
+    "filled.xlsx",
+    "merged.xlsx",
+    &MergeSameCellsOptions::new(),
+)?;
+```
+
+An exact `@merge` cell starts a region in its column and the next exact `@endmerge` cell ends it.
+The marker rows are removed, and .NET-compatible same-value ranges are emitted as vertical merges.
+An `@mergelimit` marker supplies a grouping column that limits ranges. All worksheets are processed;
+existing merges and unrelated package parts are preserved. Path output preserves the source and
+atomically publishes a separate destination, refusing overwrite by default. Use
+`merge_same_cells_bytes()` for in-memory workbooks.
+
 With the optional `async` feature, `save_as_template_async()` and
 `save_as_template_async_with_cancellation()` run blocking template ZIP/XML work on a worker thread
 and atomically publish the validated path output. Pre-cancellation, rendering errors, dropped
@@ -692,6 +713,6 @@ Version 1 does not implement parametrized sheet cloning or formula calculation.
 
 ## Not Supported
 
-`.xls`, `.xlsb`, `.ods`, advanced template directives, macros, image authoring, merged-cell operations, formula authoring, a general style system, and arbitrary selected-worksheet cloning are not currently supported.
+`.xls`, `.xlsb`, `.ods`, advanced template directives, macros, image authoring, general merged-cell authoring outside marker-driven `MergeSameCells`, formula authoring, a general style system, and arbitrary selected-worksheet cloning are not currently supported.
 
 See the [compatibility matrix](docs/compatibility.md) for the current support scope and the [MiniExcel v1 Insert migration guide](docs/insert-v1-migration.md) for deliberate differences.

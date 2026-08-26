@@ -58,6 +58,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | Async path query | `query_async*()` / `query_as_async*()` | Optional `async` feature; bounded dynamic/Serde streams, cooperative cancellation, blocking XLSX workers |
 | Async dynamic/Serde export | `save_as_with_schema_async*()` / `save_as_serialized_async*()` | Optional `async` feature; explicit or first-row-inferred schema, bounded producer, atomic destination, cooperative cancellation, data-cell progress |
 | Async basic template path output | `save_as_template_async*()` | Optional `async` feature; scalar/list renderer, atomic destination, cooperative cancellation |
+| `MergeSameCells` | `merge_same_cells()` / `merge_same_cells_bytes()` | `@merge`/`@endmerge` regions, optional `@mergelimit`, all worksheets, atomic source-to-destination path output |
 | Per-sheet visibility | `WriteOptions::with_sheet_visibility()` | Visible, hidden, and very hidden; first visible sheet is active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | Defaults to `false`; existing paths require explicit opt-in |
 | `FreezeRowCount` / `FreezeColumnCount` | `WriteOptions::with_freeze_row_count()` / `with_freeze_column_count()` | Defaults to one frozen row and zero frozen columns |
@@ -201,7 +202,8 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | Atomic worksheet reorder | Implemented for existing `.xlsx` paths | Rust positional-reference/rollback tests; pinned .NET `AlterSheet` baseline |
 | Legacy `.xls`, `.xlsb`, and `.ods` formats | Deferred | No |
 | Atomic workbook copy-and-add | Implemented for dynamic/schema/Serde path APIs | Rust source/destination rollback tests; pinned .NET `CopyAndAddSheet` baseline |
-| Advanced templates, pictures, and merges | Deferred | No |
+| Marker-driven `MergeSameCells` | Implemented | Exact Rust/.NET fixtures and scoped sync/async .NET baselines |
+| Advanced templates and pictures | Deferred | No |
 
 This matrix is the coverage claim: Rust does not yet provide complete API parity with the current .NET packages.
 

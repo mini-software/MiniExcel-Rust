@@ -1009,3 +1009,33 @@ impl Default for TemplateOptions {
         Self::new()
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MergeSameCellsOptions {
+    overwrite_file: bool,
+}
+
+impl MergeSameCellsOptions {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { overwrite_file: false }
+    }
+
+    #[must_use]
+    pub const fn with_overwrite_file(mut self, overwrite_file: bool) -> Self {
+        self.overwrite_file = overwrite_file;
+        self
+    }
+
+    #[must_use]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) const fn overwrite_file(&self) -> bool {
+        self.overwrite_file
+    }
+}
+
+impl Default for MergeSameCellsOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}

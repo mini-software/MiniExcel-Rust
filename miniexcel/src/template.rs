@@ -17,7 +17,7 @@ const WORKBOOK_PATH: &str = "xl/workbook.xml";
 const WORKBOOK_RELS_PATH: &str = "xl/_rels/workbook.xml.rels";
 const CALC_CHAIN_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml";
-type CalculationMetadata = (BTreeMap<String, Vec<u8>>, BTreeSet<String>);
+pub(crate) type CalculationMetadata = (BTreeMap<String, Vec<u8>>, BTreeSet<String>);
 type GroupDescriptor<'a> = (String, &'a [Value], Option<usize>);
 
 pub(crate) fn fill_path<T>(
@@ -159,7 +159,7 @@ where
         .map_err(|error| Error::template(format!("cannot finish template workbook: {error}")))
 }
 
-fn calculation_metadata<R>(archive: &mut ZipArchive<R>) -> Result<CalculationMetadata>
+pub(crate) fn calculation_metadata<R>(archive: &mut ZipArchive<R>) -> Result<CalculationMetadata>
 where
     R: Read + std::io::Seek,
 {
@@ -407,11 +407,11 @@ fn local_name(name: &[u8]) -> &[u8] {
     name.rsplit(|byte| *byte == b':').next().unwrap_or(name)
 }
 
-fn is_worksheet(name: &str) -> bool {
+pub(crate) fn is_worksheet(name: &str) -> bool {
     name.starts_with("xl/worksheets/") && name.ends_with(".xml")
 }
 
-fn read_shared_strings<R>(archive: &mut ZipArchive<R>) -> Result<Vec<String>>
+pub(crate) fn read_shared_strings<R>(archive: &mut ZipArchive<R>) -> Result<Vec<String>>
 where
     R: Read + std::io::Seek,
 {

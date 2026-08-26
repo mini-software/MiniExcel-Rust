@@ -6,10 +6,11 @@ use futures_util::{FutureExt, StreamExt, pin_mut, select_biased};
 use serde::Serialize;
 
 use super::atomic::{AtomicCommitStage, export_to_path_with_hook};
-use super::donor::save_dynamic_iter_to_writer;
+use super::donor::{save_dynamic_iter_to_writer, save_dynamic_iter_to_writer_with_progress};
 use crate::{CancellationToken, CellValue, DynamicRow, Error, Result, WriteOptions};
 
 const ROW_CHANNEL_CAPACITY: usize = 16;
+type ProgressCallback = Arc<dyn Fn(usize) + Send + Sync>;
 
 enum RowMessage {
     Row(Result<DynamicRow>),
@@ -63,6 +64,30 @@ where
         options,
         cancellation,
         Arc::new(|_| {}),
+        Arc::new(|_| {}),
+    )
+    .await
+}
+
+pub(crate) async fn save_with_schema_async_with_progress<S>(
+    path: PathBuf,
+    schema: Vec<String>,
+    rows: S,
+    options: WriteOptions,
+    cancellation: CancellationToken,
+    progress: ProgressCallback,
+) -> Result<usize>
+where
+    S: Stream<Item = Result<DynamicRow>>,
+{
+    save_async_with_hook(
+        path,
+        ExportSchema::Explicit(schema),
+        rows,
+        options,
+        cancellation,
+        Arc::new(|_| {}),
+        progress,
     )
     .await
 }
@@ -85,6 +110,31 @@ where
         options,
         cancellation,
         Arc::new(|_| {}),
+        Arc::new(|_| {}),
+    )
+    .await
+}
+
+pub(crate) async fn save_serialized_async_with_progress<T, S>(
+    path: PathBuf,
+    rows: S,
+    options: WriteOptions,
+    cancellation: CancellationToken,
+    progress: ProgressCallback,
+) -> Result<usize>
+where
+    T: Serialize,
+    S: Stream<Item = Result<T>>,
+{
+    let rows = rows.map(|row| row.and_then(|row| serialized_row_to_dynamic(&row)));
+    save_async_with_hook(
+        path,
+        ExportSchema::Inferred,
+        rows,
+        options,
+        cancellation,
+        Arc::new(|_| {}),
+        progress,
     )
     .await
 }
@@ -96,6 +146,7 @@ async fn save_async_with_hook<S>(
     options: WriteOptions,
     cancellation: CancellationToken,
     phase_hook: Arc<dyn Fn(AsyncExportStage) + Send + Sync>,
+    progress: ProgressCallback,
 ) -> Result<usize>
 where
     S: Stream<Item = Result<DynamicRow>>,
@@ -110,6 +161,7 @@ where
     let worker_cancellation = cancellation.clone();
     let worker_operation_cancellation = operation_cancellation.clone();
     let worker_hook = Arc::clone(&phase_hook);
+    let worker_progress = Arc::clone(&progress);
 
     std::thread::Builder::new().name("miniexcel-async-export".to_owned()).spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -122,6 +174,7 @@ where
                 &worker_operation_cancellation,
                 &status_sender,
                 &worker_hook,
+                &worker_progress,
             )
         }))
         .unwrap_or_else(|_| Err(Error::insert_package("async export worker panicked")));
@@ -205,6 +258,7 @@ fn run_worker(
     operation_cancellation: &CancellationToken,
     status_sender: &async_channel::Sender<WorkerStatus>,
     phase_hook: &Arc<dyn Fn(AsyncExportStage) + Send + Sync>,
+    progress: &ProgressCallback,
 ) -> Result<usize> {
     phase_hook(AsyncExportStage::BeforePreflight);
     check_cancelled(cancellation, operation_cancellation)?;
@@ -237,10 +291,16 @@ fn run_worker(
                 }
             });
             match schema {
-                ExportSchema::Explicit(schema) => {
-                    save_dynamic_iter_to_writer(writer, schema, rows, options)
+                ExportSchema::Explicit(schema) => save_dynamic_iter_to_writer_with_progress(
+                    writer,
+                    schema,
+                    rows,
+                    options,
+                    |cells| progress(cells),
+                ),
+                ExportSchema::Inferred => {
+                    save_inferred_iter_to_writer(writer, rows, options, progress)
                 }
-                ExportSchema::Inferred => save_inferred_iter_to_writer(writer, rows, options),
             }
         },
         |stage| {
@@ -273,6 +333,7 @@ fn save_inferred_iter_to_writer<I>(
     writer: &mut std::fs::File,
     mut rows: I,
     options: &WriteOptions,
+    progress: &ProgressCallback,
 ) -> Result<usize>
 where
     I: Iterator<Item = Result<DynamicRow>>,
@@ -297,7 +358,9 @@ where
         }
         Ok(row)
     });
-    save_dynamic_iter_to_writer(writer, &schema, rows, options)
+    save_dynamic_iter_to_writer_with_progress(writer, &schema, rows, options, |cells| {
+        progress(cells);
+    })
 }
 
 fn serialized_row_to_dynamic<T>(row: &T) -> Result<DynamicRow>

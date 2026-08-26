@@ -56,7 +56,7 @@ The latest `calamine 0.36` and `rust_xlsxwriter 0.97` require Rust 1.88. The MVP
 | `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` / borrowed reader-to-writer variants | Path APIs are atomic; separate borrowed streams require an empty sink and preserve package behavior without atomic commit |
 | Async Insert producer | `insert_with_schema_async*()` | Optional `async` feature; bounded producer channel with blocking XLSX work on a dedicated thread |
 | Async path query | `query_async*()` / `query_as_async*()` | Optional `async` feature; bounded dynamic/Serde streams, cooperative cancellation, blocking XLSX workers |
-| Async dynamic/Serde export | `save_as_with_schema_async*()` / `save_as_serialized_async*()` | Optional `async` feature; explicit or first-row-inferred schema, bounded producer, atomic destination, cooperative cancellation |
+| Async dynamic/Serde export | `save_as_with_schema_async*()` / `save_as_serialized_async*()` | Optional `async` feature; explicit or first-row-inferred schema, bounded producer, atomic destination, cooperative cancellation, data-cell progress |
 | Async basic template path output | `save_as_template_async*()` | Optional `async` feature; scalar/list renderer, atomic destination, cooperative cancellation |
 | Per-sheet visibility | `WriteOptions::with_sheet_visibility()` | Visible, hidden, and very hidden; first visible sheet is active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | Defaults to `false`; existing paths require explicit opt-in |
@@ -191,7 +191,7 @@ The contract covers only the current common surface: dynamic/typed path queries,
 | Addressed JSONL/Markdown/manifest RAG export | Rust research extension | No |
 | Async Insert producer | Implemented behind optional feature | Rust cancellation tests; not shared internals |
 | Async dynamic/typed path query | Implemented behind optional feature | Rust parity, cancellation, error, and cleanup tests |
-| Async dynamic/Serde path export | Implemented behind optional feature | Rust explicit/inferred schema, rollback, cancellation, and cleanup tests; pinned .NET async-enumerable baseline |
+| Async dynamic/Serde path export | Implemented behind optional feature | Rust explicit/inferred schema, rollback, cancellation, progress, and cleanup tests; pinned .NET async-enumerable/progress baseline |
 | Async basic template path output | Implemented behind optional feature | Rust success, rollback, cancellation, and cleanup tests; scoped pinned .NET async template baseline |
 | DataReader and broader stream ownership | Deferred | No |
 | Append worksheet to existing `.xlsx` workbook | Implemented and atomically committed | Rust tests; shared parity contract not yet extended |

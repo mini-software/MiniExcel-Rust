@@ -133,6 +133,8 @@ fn typed_async_export_rejects_schema_drift_and_honors_precancellation() {
     cancellation.cancel();
     let polls = Arc::new(AtomicUsize::new(0));
     let observed = Arc::clone(&polls);
+    let progress = Arc::new(AtomicUsize::new(0));
+    let observed_progress = Arc::clone(&progress);
     let rows = stream::poll_fn(move |_| {
         observed.fetch_add(1, Ordering::SeqCst);
         Poll::Ready(Some(Ok(TypedExportRow {
@@ -140,16 +142,111 @@ fn typed_async_export_rejects_schema_drift_and_honors_precancellation() {
             released: chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap(),
         })))
     });
-    let error = block_on(MiniExcel::save_as_serialized_async_with_cancellation(
+    let error = block_on(MiniExcel::save_as_serialized_async_with_cancellation_and_progress(
         &cancelled,
         rows,
         &WriteOptions::new(),
         cancellation,
+        move |cells| {
+            observed_progress.fetch_add(cells, Ordering::SeqCst);
+        },
     ))
     .unwrap_err();
     assert!(error.is_cancelled());
     assert_eq!(polls.load(Ordering::SeqCst), 0);
+    assert_eq!(progress.load(Ordering::SeqCst), 0);
     assert!(!cancelled.exists());
+}
+
+#[test]
+fn reports_written_data_cells_for_async_export() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("progress.xlsx");
+    let progress = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&progress);
+    let mut partial = DynamicRow::new();
+    partial.insert("Name".to_owned(), CellValue::String("Second".to_owned()));
+
+    let count = block_on(MiniExcel::save_as_with_schema_async_with_progress(
+        &path,
+        &schema(),
+        stream::iter([Ok(row("First", 1)), Ok(partial)]),
+        &WriteOptions::new(),
+        move |cells| {
+            observed.fetch_add(cells, Ordering::SeqCst);
+        },
+    ))
+    .unwrap();
+
+    assert_eq!(count, 2);
+    assert_eq!(progress.load(Ordering::SeqCst), 4);
+}
+
+#[test]
+fn reports_serde_cells_and_suppresses_progress_before_writing() {
+    let directory = tempfile::tempdir().unwrap();
+    let typed = directory.path().join("typed-progress.xlsx");
+    let progress = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&progress);
+    let rows = [
+        TypedExportRow {
+            name: "MiniExcel".to_owned(),
+            released: chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap(),
+        },
+        TypedExportRow {
+            name: "Rust".to_owned(),
+            released: chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap(),
+        },
+    ];
+    let count = block_on(MiniExcel::save_as_serialized_async_with_progress(
+        &typed,
+        stream::iter(rows.map(Ok)),
+        &WriteOptions::new(),
+        move |cells| {
+            observed.fetch_add(cells, Ordering::SeqCst);
+        },
+    ))
+    .unwrap();
+    assert_eq!(count, 2);
+    assert_eq!(progress.load(Ordering::SeqCst), 4);
+
+    let existing = directory.path().join("existing.xlsx");
+    std::fs::write(&existing, b"existing").unwrap();
+    let progress = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&progress);
+    let error = block_on(MiniExcel::save_as_with_schema_async_with_progress(
+        &existing,
+        &schema(),
+        stream::iter([Ok(row("Never", 1))]),
+        &WriteOptions::new(),
+        move |cells| {
+            observed.fetch_add(cells, Ordering::SeqCst);
+        },
+    ))
+    .unwrap_err();
+    assert!(error.to_string().contains("already exists"));
+    assert_eq!(progress.load(Ordering::SeqCst), 0);
+
+    let producer_error = match MiniExcel::query(directory.path().join("missing.xlsx")) {
+        Ok(_) => panic!("missing workbook should fail"),
+        Err(error) => error,
+    };
+    let progress = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&progress);
+    let error = block_on(MiniExcel::save_as_with_schema_async_with_cancellation_and_progress(
+        &existing,
+        &schema(),
+        stream::iter([Ok(row("First", 1)), Err(producer_error)]),
+        &WriteOptions::new().with_overwrite_file(true),
+        CancellationToken::new(),
+        move |cells| {
+            observed.fetch_add(cells, Ordering::SeqCst);
+        },
+    ))
+    .unwrap_err();
+    assert!(!error.is_cancelled());
+    assert_eq!(progress.load(Ordering::SeqCst), 0);
+    assert_eq!(std::fs::read(existing).unwrap(), b"existing");
 }
 
 #[test]

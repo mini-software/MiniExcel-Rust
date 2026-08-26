@@ -153,6 +153,12 @@ spool。Producer error、cancellation、drop future、validation failure 与 des
 都会使已有 target 字节不变，或使缺失 target 继续不存在。`with_overwrite_file(true)` 启用
 原子 replacement。返回 count 不含 header。
 
+`save_as_with_schema_async_with_progress()` 与 `save_as_serialized_async_with_progress()` 接受
+thread-safe callback。每个 data cell 成功写入临时 workbook 后，blocking worker 会用增量 `1`
+调用 callback；header cell 不计入。`*_with_cancellation_and_progress()` variant 可同时使用
+cancellation 与 progress。Progress 只用于观察，不保证最终 commit：后续 cancellation、
+validation error 或 destination race 仍可回滚 workbook，已发出的报告不会撤销。
+
 ## 借用 Reader 与 Writer
 
 对调用方持有的 `Read + Seek` source，可使用 visitor API 流式处理，不会物化全部 row 或转移所有权：

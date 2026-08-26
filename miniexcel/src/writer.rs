@@ -62,6 +62,7 @@ impl XlsxWriter {
             schema,
             rows.iter().map(Ok::<_, Error>),
             options,
+            |_| {},
         )?;
         self.push_worksheet(worksheet, options);
         Ok(())
@@ -79,6 +80,23 @@ impl XlsxWriter {
         I: IntoIterator<Item = Result<R>>,
         R: Borrow<DynamicRow>,
     {
+        self.add_rows_iter_with_schema_and_progress(schema, rows, row_count, options, |_| {})
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn add_rows_iter_with_schema_and_progress<I, R, P>(
+        &mut self,
+        schema: &[String],
+        rows: I,
+        row_count: usize,
+        options: &WriteOptions,
+        progress: P,
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = Result<R>>,
+        R: Borrow<DynamicRow>,
+        P: FnMut(usize),
+    {
         validate_sheet_name(options.sheet_name(), &self.sheet_names)?;
         validate_schema(schema)?;
         validate_dimensions(row_count, schema.len(), options.print_header())?;
@@ -87,6 +105,7 @@ impl XlsxWriter {
             schema,
             rows,
             options,
+            progress,
         )?;
         self.push_worksheet(worksheet, options);
         Ok(())
@@ -255,15 +274,17 @@ fn new_constant_memory_worksheet(
     Ok(worksheet)
 }
 
-fn write_dynamic_rows<I, R>(
+fn write_dynamic_rows<I, R, P>(
     mut worksheet: Worksheet,
     schema: &[String],
     rows: I,
     options: &WriteOptions,
+    mut progress: P,
 ) -> Result<Worksheet>
 where
     I: IntoIterator<Item = Result<R>>,
     R: Borrow<DynamicRow>,
+    P: FnMut(usize),
 {
     let mut output_row = 0_u32;
     if options.print_header() {
@@ -287,6 +308,7 @@ where
         for (column, header) in schema.iter().enumerate() {
             let value = row.get(header).unwrap_or(&CellValue::Empty);
             write_cell(&mut worksheet, output_row, column as u16, value, &formats[column])?;
+            progress(1);
             widths.observe(column, value_width(value));
         }
         output_row += 1;

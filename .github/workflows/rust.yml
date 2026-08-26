@@ -318,7 +318,7 @@ jobs:
         run: >-
           dotnet test dotnet-source/tests/MiniExcel.OpenXml.Tests/MiniExcel.OpenXml.Tests.csproj
           --framework net10.0
-          --filter "FullyQualifiedName~MiniExcelOpenXmlExporterAsyncTests.SaveAsByAsyncEnumerable|FullyQualifiedName~MiniExcelOpenXmlExporterAsyncTests.SaveEmptyAsyncEnumerableTest"
+          --filter "FullyQualifiedName~MiniExcelOpenXmlExporterAsyncTests.SaveAsByAsyncEnumerable|FullyQualifiedName~MiniExcelOpenXmlExporterAsyncTests.SaveEmptyAsyncEnumerableTest|FullyQualifiedName~MiniExcelOpenXmlExporterAsyncTests.ExportDataTableWithProgressTest"
           --verbosity minimal
 
   async-template-parity:

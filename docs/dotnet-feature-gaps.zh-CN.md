@@ -8,7 +8,7 @@
 
 | 项目 | 版本基线 |
 | --- | --- |
-| MiniExcel-Rust | 基于 `436f1bf` 的工作区（`0.3.0`） |
+| MiniExcel-Rust | 基于 `64e1001` 的工作区（`0.3.0`） |
 | MiniExcel .NET | `b9a76d7af62142e0e38545b6905b01a06e8d160e` |
 
 比对依据包括同级目录 `../MiniExcel` 中的 .NET 公开 API、控制实现和聚焦测试，以及 Rust 的公开 `MiniExcel` 门面、选项、集成测试和[兼容性边界](compatibility.zh-CN.md)。
@@ -31,8 +31,8 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 | 命名表格 | 已实现 | 动态/类型化 path query、byte query 与 borrowed-reader visitor 使用 table metadata header 和 bounds，并按 table name 大小写不敏感匹配。 |
 | DataReader 与 DataTable | 设计不同 | Rust 使用 iterator 与 borrowed visitor，不复制 .NET tabular interface。只有具体集成需要时才考虑 Rust-native Arrow/record-batch adapter；此项不阻塞 parity 完成。 |
 | 调用方提供的流 | 部分实现 | 已实现借用的同步动态/类型化/structured visitor、metadata 读取、动态/schema/类型化/多表 writer，以及独立 reader-to-writer Insert，并保持 leave-open。借用 lazy iterator、borrowed async stream 和 template stream 仍不支持。 |
-| 异步与取消 | 部分实现 | 可选、runtime-neutral 的动态/Serde path query、显式 schema dynamic 与推断 schema Serde path export、基础 template path output 与显式 schema Insert 已支持协作式 cancellation，并在适用位置提供原子发布。高级 template stream、borrowed async I/O 与 progress callback 仍不支持；ZIP 和 filesystem 工作仍在专用 blocking worker 上执行。 |
-| 通用保存输入 | 部分实现 | 从普通对象/可枚举对象、字典、`DataTable`、`IDataReader` 和异步枚举导出，并报告进度。Rust 接受动态行或同类型 Serde 切片、bounded dynamic/Serde async stream，并返回每张工作表的行数。 |
+| 异步与取消 | 部分实现 | 可选、runtime-neutral 的动态/Serde path query、显式 schema dynamic 与推断 schema Serde path export、基础 template path output 与显式 schema Insert 已支持协作式 cancellation，并在适用位置提供原子发布。Async XLSX export 已支持 data-cell progress。高级 template stream 与 borrowed async I/O 仍不支持；ZIP 和 filesystem 工作仍在专用 blocking worker 上执行。 |
+| 通用保存输入 | 部分实现 | 从普通对象/可枚举对象、字典、`DataTable`、`IDataReader` 和异步枚举导出，并报告进度。Rust 接受动态行或同类型 Serde 切片、带 cell progress 的 bounded dynamic/Serde async stream，并返回每张工作表的行数。 |
 | 多工作表导出 | 部分实现 | Rust 可按输入顺序创建 visible、hidden 和 very-hidden 工作表，但尚不能在一次调用中接受异构 Serde 行类型。 |
 | 修改现有工作簿 | 已实现 | Rust 可原子 append、严格 replace、rename、修改 visibility、reorder，并执行 .NET 风格的 source-workbook copy-and-add，同时保留无关 package part 与 worksheet identity。Rename 保留 formula 文本；visibility 拒绝隐藏最后一张 visible sheet；reorder remap active/view/local-name index；copy-and-add 保留 source 并原子发布独立 destination。 |
 | 模板 | 部分实现 | Rust 可使用 scalar、array、conditional block、validated multirow group 与 `$=` formula 填充 path/byte template；path output 也提供 cancellable async wrapper。Stream、nested/logical condition、grouped/conditional formula、参数化 sheet、formula-reference translation 与公式计算仍不支持。Stale calcChain metadata 会被删除并要求 full recalculation。 |
@@ -52,7 +52,7 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 | --- | --- | --- |
 | 公开读写边界 | `miniexcel/src/facade.rs`、`miniexcel/src/options.rs` | `src/MiniExcel.OpenXml/Api/OpenXmlImporter.cs`、`OpenXmlExporter.cs` |
 | Async query | `MiniExcel::query_async*` 与 `query_as_async*`；Rust focused parity/cancellation/error/cleanup 测试 | `OpenXmlImporter.QueryAsync`；`MiniExcelOpenXmlImporterAsyncTests` |
-| Async export | `MiniExcel::save_as_with_schema_async*` 与 `save_as_serialized_async*`；Rust 显式/推断 schema、rollback/cancellation/cleanup 测试 | `OpenXmlExporter.ExportAsync`；`SaveAsByAsyncEnumerable` 与 empty async-enumerable 测试 |
+| Async export | `MiniExcel::save_as_with_schema_async*` 与 `save_as_serialized_async*`；Rust 显式/推断 schema、rollback/cancellation/progress/cleanup 测试 | `OpenXmlExporter.ExportAsync`；`SaveAsByAsyncEnumerable`、empty async-enumerable 与 `ExportDataTableWithProgressTest` 测试 |
 | Async template | `MiniExcel::save_as_template_async*`；Rust focused rollback/cancellation/cleanup 测试 | `OpenXmlTemplater.SaveAsByTemplateAsync`；scoped basic/cancellation 测试 |
 | Template condition | Enumerable-cell `@if`/`@elseif`/`@else` block；Rust sync/async branch/error/style 测试 | `TestIEnumerableConditional` |
 | Template group | `@group`/`@header`/`@endgroup` multirow block；Rust sync/async order/error/style 测试 | `GroupTemplateTest`；`TestIEnumerableGrouped` |
@@ -71,7 +71,7 @@ Rust 已支持动态及 Serde 强类型 XLSX 路径查询、闭区间 A1 范围�
 
 ## 建议实现顺序
 
-1. **Borrowed async stream 与 progress**：仅在 ownership、cancellation 与 blocking-I/O 语义清晰时增加 caller-owned async reader/writer integration 和 progress。
+1. **Borrowed async stream**：仅在 ownership、cancellation 与 blocking-I/O 语义清晰时增加 caller-owned async reader/writer integration。
 2. **高级模板与 collection mapping**：通过独立兼容里程碑增加 formula/merge-aware group、更丰富 conditional expression、参数化 sheet 和确定性 collection layout。
 3. **选定 worksheet cloning**：不属于 .NET `CopyAndAddSheet`；仅在有具体 Rust 使用场景时，通过 relationship closure cloning contract 增加。
 

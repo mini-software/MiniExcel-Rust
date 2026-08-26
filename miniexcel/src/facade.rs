@@ -1,6 +1,8 @@
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+#[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+use std::sync::Arc;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -633,6 +635,68 @@ impl MiniExcel {
         .await
     }
 
+    /// Creates an XLSX workbook and reports each successfully written data cell.
+    ///
+    /// The callback runs on the blocking worker thread with an increment of `1` after each data
+    /// cell is written to the temporary workbook. Header cells are excluded. Reports can precede a
+    /// later validation, cancellation, or commit failure and are not rolled back.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn save_as_with_schema_async_with_progress<S, P>(
+        path: impl AsRef<Path>,
+        schema: &[String],
+        rows: S,
+        options: &WriteOptions,
+        progress: P,
+    ) -> Result<usize>
+    where
+        S: futures_core::Stream<Item = Result<DynamicRow>>,
+        P: Fn(usize) + Send + Sync + 'static,
+    {
+        Self::save_as_with_schema_async_with_cancellation_and_progress(
+            path,
+            schema,
+            rows,
+            options,
+            crate::CancellationToken::new(),
+            progress,
+        )
+        .await
+    }
+
+    /// Creates an XLSX workbook with cooperative cancellation and cell progress reporting.
+    ///
+    /// Progress uses the same worker-thread, per-data-cell semantics as
+    /// [`Self::save_as_with_schema_async_with_progress`].
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn save_as_with_schema_async_with_cancellation_and_progress<S, P>(
+        path: impl AsRef<Path>,
+        schema: &[String],
+        rows: S,
+        options: &WriteOptions,
+        cancellation: crate::CancellationToken,
+        progress: P,
+    ) -> Result<usize>
+    where
+        S: futures_core::Stream<Item = Result<DynamicRow>>,
+        P: Fn(usize) + Send + Sync + 'static,
+    {
+        if cancellation.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+        validate_schema(schema)?;
+        validate_dimensions(0, schema.len(), options.print_header())?;
+        validate_single_sheet_options(options)?;
+        crate::insert::async_export::save_with_schema_async_with_progress(
+            path.as_ref().to_owned(),
+            schema.to_vec(),
+            rows,
+            options.clone(),
+            cancellation,
+            Arc::new(progress),
+        )
+        .await
+    }
+
     /// Creates an XLSX workbook from a runtime-neutral async stream of Serde rows.
     ///
     /// The schema is inferred from the first row after destination preflight. Empty streams require
@@ -677,6 +741,64 @@ impl MiniExcel {
             rows,
             options.clone(),
             cancellation,
+        )
+        .await
+    }
+
+    /// Creates an inferred-schema Serde workbook and reports each written data cell.
+    ///
+    /// The callback runs on the blocking worker thread with an increment of `1` after each data
+    /// cell is written to the temporary workbook. Header cells are excluded. Reports can precede a
+    /// later validation, cancellation, or commit failure and are not rolled back.
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn save_as_serialized_async_with_progress<T, S, P>(
+        path: impl AsRef<Path>,
+        rows: S,
+        options: &WriteOptions,
+        progress: P,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+        S: futures_core::Stream<Item = Result<T>>,
+        P: Fn(usize) + Send + Sync + 'static,
+    {
+        Self::save_as_serialized_async_with_cancellation_and_progress(
+            path,
+            rows,
+            options,
+            crate::CancellationToken::new(),
+            progress,
+        )
+        .await
+    }
+
+    /// Creates an inferred-schema Serde workbook with cancellation and cell progress reporting.
+    ///
+    /// Progress uses the same worker-thread, per-data-cell semantics as
+    /// [`Self::save_as_serialized_async_with_progress`].
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+    pub async fn save_as_serialized_async_with_cancellation_and_progress<T, S, P>(
+        path: impl AsRef<Path>,
+        rows: S,
+        options: &WriteOptions,
+        cancellation: crate::CancellationToken,
+        progress: P,
+    ) -> Result<usize>
+    where
+        T: Serialize,
+        S: futures_core::Stream<Item = Result<T>>,
+        P: Fn(usize) + Send + Sync + 'static,
+    {
+        if cancellation.is_cancelled() {
+            return Err(crate::Error::cancelled());
+        }
+        validate_single_sheet_options(options)?;
+        crate::insert::async_export::save_serialized_async_with_progress(
+            path.as_ref().to_owned(),
+            rows,
+            options.clone(),
+            cancellation,
+            Arc::new(progress),
         )
         .await
     }

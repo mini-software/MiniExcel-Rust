@@ -161,10 +161,26 @@ where
     I: IntoIterator<Item = Result<DynamicRow>>,
     W: Write + Send,
 {
+    save_dynamic_iter_to_writer_with_progress(writer, schema, rows, options, |_| {})
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn save_dynamic_iter_to_writer_with_progress<I, W, P>(
+    writer: &mut W,
+    schema: &[String],
+    rows: I,
+    options: &WriteOptions,
+    progress: P,
+) -> Result<usize>
+where
+    I: IntoIterator<Item = Result<DynamicRow>>,
+    W: Write + Send,
+    P: FnMut(usize),
+{
     let (spool, row_count) = spool_dynamic_rows(rows, None, schema.len(), options.print_header())?;
     let rows = spooled_rows(&spool)?;
     let mut workbook = XlsxWriter::new();
-    workbook.add_rows_iter_with_schema(schema, rows, row_count, options)?;
+    workbook.add_rows_iter_with_schema_and_progress(schema, rows, row_count, options, progress)?;
     workbook.save_to_writer(writer)?;
     Ok(row_count)
 }

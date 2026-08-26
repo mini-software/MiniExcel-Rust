@@ -56,7 +56,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` / borrowed reader-to-writer variants | Path API 为原子操作；独立 borrowed stream 要求空 sink，并在无原子 commit 的情况下保持相同 package 行为 |
 | Async Insert producer | `insert_with_schema_async*()` | 可选 `async` feature；bounded producer channel，XLSX 工作在专用 blocking thread |
 | Async path query | `query_async*()` / `query_as_async*()` | 可选 `async` feature；bounded 动态/Serde stream、协作式 cancellation、blocking XLSX worker |
-| Async dynamic/Serde export | `save_as_with_schema_async*()` / `save_as_serialized_async*()` | 可选 `async` feature；显式或首行推断 schema、bounded producer、原子 destination、协作式 cancellation |
+| Async dynamic/Serde export | `save_as_with_schema_async*()` / `save_as_serialized_async*()` | 可选 `async` feature；显式或首行推断 schema、bounded producer、原子 destination、协作式 cancellation、data-cell progress |
 | Async 基础 template path output | `save_as_template_async*()` | 可选 `async` feature；scalar/list renderer、原子 destination、协作式 cancellation |
 | 每表 visibility | `WriteOptions::with_sheet_visibility()` | visible、hidden、very hidden；第一个 visible sheet 为 active |
 | `overwriteFile` | `WriteOptions::with_overwrite_file()` | 默认 `false`；已有路径需要显式允许覆盖 |
@@ -191,7 +191,7 @@ Rust workflow 会在 Linux 和 Windows 上运行 Rust 契约。其 .NET parity j
 | 带地址 JSONL/Markdown/manifest RAG 导出 | Rust 研究扩展 | 否 |
 | Async Insert producer | 已通过可选 feature 实现 | Rust cancellation test；不共享内部行为 |
 | Async 动态/类型化 path query | 已通过可选 feature 实现 | Rust parity、cancellation、error 与 cleanup 测试 |
-| Async dynamic/Serde path export | 已通过可选 feature 实现 | Rust 显式/推断 schema、rollback、cancellation 与 cleanup 测试；固定 .NET async-enumerable 基准 |
+| Async dynamic/Serde path export | 已通过可选 feature 实现 | Rust 显式/推断 schema、rollback、cancellation、progress 与 cleanup 测试；固定 .NET async-enumerable/progress 基准 |
 | Async 基础 template path output | 已通过可选 feature 实现 | Rust success、rollback、cancellation 与 cleanup 测试；scoped 固定 .NET async template 基准 |
 | DataReader 与更广泛的 stream ownership | 延后 | 否 |
 | 向现有 `.xlsx` workbook 追加 worksheet | 已实现并原子提交 | Rust 测试；共享 parity contract 尚未扩展 |

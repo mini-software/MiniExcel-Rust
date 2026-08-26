@@ -155,6 +155,13 @@ constant-memory writer runs. Producer errors, cancellation, dropped futures, val
 and destination races leave an existing target byte-identical or a missing target absent.
 `with_overwrite_file(true)` enables atomic replacement. The returned count excludes the header.
 
+`save_as_with_schema_async_with_progress()` and `save_as_serialized_async_with_progress()` accept
+a thread-safe callback. It runs on the blocking worker with an increment of `1` after each data
+cell is written to the temporary workbook; header cells are excluded. The
+`*_with_cancellation_and_progress()` variants combine both controls. Progress is observational, not
+a commit guarantee: a later cancellation, validation error, or destination race can still roll back
+the workbook without retracting earlier reports.
+
 ## Borrowed Readers And Writers
 
 Use visitor APIs for caller-owned `Read + Seek` sources without materializing all rows or transferring ownership:

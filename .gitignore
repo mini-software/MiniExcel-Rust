@@ -1,4 +1,6 @@
 /target/
+/benchmarks/dotnet-v1-query/bin/
+/benchmarks/dotnet-v1-query/obj/
 /web-demo/dist/
 /web-demo/node_modules/
 /web-demo/playwright-report/

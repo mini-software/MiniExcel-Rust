@@ -20,13 +20,17 @@ MiniExcel requires Rust 1.85.0 or later.
 
 ## Rust and .NET Stress Test
 
-Keep `MiniExcel-Rust` and the [.NET MiniExcel repository](https://github.com/mini-software/MiniExcel) in sibling directories, then run the shared stress harness from the .NET repository:
+Keep `MiniExcel-Rust` and the [.NET MiniExcel repository](https://github.com/mini-software/MiniExcel) in sibling directories, then run the v1 comparison harness:
 
 ```powershell
-pwsh ./benchmarks/compare-rust-dotnet.ps1
+pwsh ./scripts/compare-dotnet-v1-rust.ps1 -DotNetRepository D:\git\MiniExcel
 ```
 
-This benchmark compares dynamic streaming Query performance: Rust uses `MiniExcel::query`, and .NET uses `OpenXmlImporter.Query`. Save performance is not included. Both implementations stream the same 100,000-row XLSX workbook. The harness verifies matching row counts and reports elapsed time and peak working set over repeated runs. Results vary by environment, so compare values produced on the same machine.
+The script resolves and archives `v1.x-maintenance` from the local .NET repository without changing its checkout. It compares .NET v1 `MiniExcel.Query(..., useHeaderRow: false)` with Rust `MiniExcel::query` against the same 100,000-row, 10-column XLSX workbook. Release builds are warmed up, then run in alternating order for five independent iterations with three full query passes per process. The harness verifies matching row counts and reports median elapsed time, throughput, and sampled peak working set. Process startup and .NET JIT time are included; save performance is not.
+
+The machine-readable report is written to `target/benchmarks/dotnet-v1-vs-rust.json`. Use `-Passes`, `-Iterations`, `-Workbook`, `-DotNetRevision`, or `-OutputJson` to change the workload. Results vary by environment, so compare only values produced on the same machine.
+
+See [the benchmark methodology and recorded result](docs/dotnet-v1-query-benchmark.md).
 
 ## Features
 

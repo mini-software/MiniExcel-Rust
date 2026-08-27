@@ -1,12 +1,12 @@
 # 儲存庫指南
 
-[English](AGENTS.md) | [简体中文](AGENTS.zh-CN.md) | [Français](AGENTS.fr.md) | [日本語](AGENTS.ja.md) | [Español](AGENTS.es.md)
+[English](../../AGENTS.md) | [简体中文](AGENTS.zh-CN.md) | [Français](AGENTS.fr.md) | [日本語](AGENTS.ja.md) | [Español](AGENTS.es.md)
 
 ## 使命與參考
 
 - 使用相鄰的 .NET 儲存庫 `../MiniExcel` 作為相容性參考，建構符合 Rust 慣例的 MiniExcel 行為實作。
 - 實作等同行為前，檢查對應的 .NET 公開 API、實作與聚焦測試。除非明確要求，否則不要修改該儲存庫。
-- 將 [docs/compatibility.md](docs/compatibility.md) 視為支援範圍記錄，將 `tests/data/contracts/xlsx-parity-v1.json` 視為共用行為合約。
+- 將 [compatibility.md](../compatibility.md) 視為支援範圍記錄，將 `tests/data/contracts/xlsx-parity-v1.json` 視為共用行為合約。
 
 ## 架構
 
@@ -20,7 +20,7 @@
 
 - 重用現有模式與相依套件，保持修改聚焦，並保留無關的工作樹變更。
 - 使用現有 fixture 新增聚焦迴歸測試。API 或支援邊界變更時更新相容性文件。
-- 根目錄 `AGENTS` 與本地化 `README` 固定維護六種語言：英文、`.zh-CN`、`.zh-TW`、`.fr`、`.ja`、`.es`。所有版本必須互相連結並同步更新；不得增加第七種語言。
+- 英文 `README.md` 與 `AGENTS.md` 保留在儲存庫根目錄，其餘五種本地化版本統一放在 `docs/i18n/`。固定維護六種語言：英文、`.zh-CN`、`.zh-TW`、`.fr`、`.ja`、`.es`。所有版本必須互相連結並同步更新；不得增加第七種語言。
 - 其他英文 Markdown 必須有完整 `.zh-CN.md` 版本；建立或大幅修改時，也應更新已有的 `.zh-TW.md`、`.fr.md`、`.ja.md` 與 `.es.md` 版本。
 
 ## Browser Lab

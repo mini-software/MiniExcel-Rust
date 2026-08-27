@@ -1,12 +1,12 @@
 # Directives du dépôt
 
-[English](AGENTS.md) | [简体中文](AGENTS.zh-CN.md) | [繁體中文](AGENTS.zh-TW.md) | [日本語](AGENTS.ja.md) | [Español](AGENTS.es.md)
+[English](../../AGENTS.md) | [简体中文](AGENTS.zh-CN.md) | [繁體中文](AGENTS.zh-TW.md) | [日本語](AGENTS.ja.md) | [Español](AGENTS.es.md)
 
 ## Mission Et Référence
 
 - Construire une implémentation Rust idiomatique de MiniExcel en utilisant le dépôt .NET voisin `../MiniExcel` comme référence de compatibilité.
 - Avant un travail de parité, examiner l'API publique .NET, son implémentation et les tests ciblés. Ne pas modifier ce dépôt sauf demande explicite.
-- Considérer [docs/compatibility.md](docs/compatibility.md) comme le registre de prise en charge et `tests/data/contracts/xlsx-parity-v1.json` comme le contrat de comportement partagé.
+- Considérer [compatibility.md](../compatibility.md) comme le registre de prise en charge et `tests/data/contracts/xlsx-parity-v1.json` comme le contrat de comportement partagé.
 
 ## Architecture
 
@@ -20,7 +20,7 @@
 
 - Réutiliser les modèles et dépendances existants, cibler les changements et préserver les modifications sans rapport dans l'arbre de travail.
 - Ajouter des tests de régression ciblés à partir des fixtures. Mettre à jour la compatibilité lorsque les API ou limites changent.
-- Maintenir `AGENTS` et le `README` localisé à la racine dans exactement six langues : anglais, `.zh-CN`, `.zh-TW`, `.fr`, `.ja` et `.es`. Relier et actualiser toutes les versions ensemble ; ne pas ajouter de septième langue.
+- Conserver les fichiers anglais `README.md` et `AGENTS.md` à la racine du dépôt. Placer leurs cinq variantes localisées dans `docs/i18n/`, pour exactement six langues : anglais, `.zh-CN`, `.zh-TW`, `.fr`, `.ja` et `.es`. Relier et actualiser toutes les versions ensemble ; ne pas ajouter de septième langue.
 - Tout autre Markdown anglais exige une version `.zh-CN.md` complète. Lors d'une création ou révision majeure, actualiser aussi les versions `.zh-TW.md`, `.fr.md`, `.ja.md` et `.es.md` existantes.
 
 ## Browser Lab

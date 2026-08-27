@@ -1,12 +1,12 @@
 # Directrices del repositorio
 
-[English](AGENTS.md) | [简体中文](AGENTS.zh-CN.md) | [繁體中文](AGENTS.zh-TW.md) | [Français](AGENTS.fr.md) | [日本語](AGENTS.ja.md)
+[English](../../AGENTS.md) | [简体中文](AGENTS.zh-CN.md) | [繁體中文](AGENTS.zh-TW.md) | [Français](AGENTS.fr.md) | [日本語](AGENTS.ja.md)
 
 ## Misión Y Referencia
 
 - Crear una implementación idiomática en Rust de MiniExcel usando el repositorio .NET adyacente `../MiniExcel` como referencia de compatibilidad.
 - Antes de implementar paridad, revisar la API pública .NET, su implementación y las pruebas específicas. No modificar ese repositorio salvo petición expresa.
-- Tratar [docs/compatibility.md](docs/compatibility.md) como registro de soporte y `tests/data/contracts/xlsx-parity-v1.json` como contrato de comportamiento compartido.
+- Tratar [compatibility.md](../compatibility.md) como registro de soporte y `tests/data/contracts/xlsx-parity-v1.json` como contrato de comportamiento compartido.
 
 ## Arquitectura
 
@@ -20,7 +20,7 @@
 
 - Reutilizar patrones y dependencias existentes, limitar los cambios y conservar modificaciones ajenas en el working tree.
 - Añadir pruebas de regresión específicas a partir de fixtures. Actualizar la compatibilidad cuando cambien API o límites de soporte.
-- Mantener `AGENTS` y el `README` localizado de la raíz en exactamente seis idiomas: inglés, `.zh-CN`, `.zh-TW`, `.fr`, `.ja` y `.es`. Enlazar y actualizar todas las versiones juntas; no añadir un séptimo idioma.
+- Mantener `README.md` y `AGENTS.md` en inglés en la raíz del repositorio. Guardar sus cinco variantes localizadas en `docs/i18n/`, para un total exacto de seis idiomas: inglés, `.zh-CN`, `.zh-TW`, `.fr`, `.ja` y `.es`. Enlazar y actualizar todas las versiones juntas; no añadir un séptimo idioma.
 - Cualquier otro Markdown inglés requiere una versión `.zh-CN.md` completa. Al crearlo o revisarlo sustancialmente, actualizar también las versiones `.zh-TW.md`, `.fr.md`, `.ja.md` y `.es.md` existentes.
 
 ## Browser Lab

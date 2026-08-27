@@ -426,7 +426,7 @@ over-poll 防护。默认与 wasm32 build 仍保持 runtime-neutral。
 
 依赖以上全部必需 task。
 
-- [x] 更新 `README.md` 与 `README.zh-CN.md`，增加 append/replace example 和 atomicity guarantee。
+- [x] 更新 `README.md` 与 `docs/i18n/README.zh-CN.md`，增加 append/replace example 和 atomicity guarantee。
 - [x] 更新双语 compatibility 文档，只移除实际完成的 Insert 缺口。
 - [x] 更新双语 feature-gap 报告，保留 overwrite/async 等剩余限制。
 - [x] Insert 行为保留在聚焦 Rust test 中，不扩展共享 query parity contract。

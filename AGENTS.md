@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-[简体中文](AGENTS.zh-CN.md) | [繁體中文](AGENTS.zh-TW.md) | [Français](AGENTS.fr.md) | [日本語](AGENTS.ja.md) | [Español](AGENTS.es.md)
+[简体中文](docs/i18n/AGENTS.zh-CN.md) | [繁體中文](docs/i18n/AGENTS.zh-TW.md) | [Français](docs/i18n/AGENTS.fr.md) | [日本語](docs/i18n/AGENTS.ja.md) | [Español](docs/i18n/AGENTS.es.md)
 
 ## Mission And Reference
 
@@ -20,7 +20,7 @@
 
 - Reuse existing patterns and dependencies; keep changes focused and preserve unrelated working-tree changes.
 - Add focused regression tests from existing fixtures. Update compatibility docs when APIs or support boundaries change.
-- Maintain root `AGENTS` and localized root `README` files in exactly six languages: English, `.zh-CN`, `.zh-TW`, `.fr`, `.ja`, and `.es`. Link all variants and update them together; do not add a seventh language.
+- Keep the English `README.md` and `AGENTS.md` at the repository root. Store their five localized variants under `docs/i18n/`, for exactly six languages total: English, `.zh-CN`, `.zh-TW`, `.fr`, `.ja`, and `.es`. Link all variants and update them together; do not add a seventh language.
 - Every other English Markdown document requires a complete `.zh-CN.md` version. On creation or substantial revision, also update available `.zh-TW.md`, `.fr.md`, `.ja.md`, and `.es.md` versions.
 
 ## Browser Lab

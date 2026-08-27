@@ -427,7 +427,7 @@ and producer-error over-poll protection. Default and wasm32 builds remain runtim
 
 Depends on all required tasks above.
 
-- [x] Update `README.md` and `README.zh-CN.md` with append/replace examples and atomicity guarantees.
+- [x] Update `README.md` and `docs/i18n/README.zh-CN.md` with append/replace examples and atomicity guarantees.
 - [x] Update both compatibility documents and remove only the Insert claims actually completed.
 - [x] Update both feature-gap reports with remaining overwrite/async limitations.
 - [x] Keep Insert behavior in focused Rust tests without expanding the shared query parity contract.

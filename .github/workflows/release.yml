@@ -1,0 +1,264 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.0"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vN.N.0 tag to publish or repair
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Install Rust 1.85.0
+        uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy, rustfmt
+      - name: Verify tag and package versions
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.0$') {
+            throw "Release tag '$env:RELEASE_TAG' must match vN.N.0."
+          }
+          $version = $env:RELEASE_TAG.Substring(1)
+          $metadata = cargo metadata --format-version 1 --no-deps --locked | ConvertFrom-Json
+          $workspacePackages = $metadata.packages | Where-Object {
+            $_.name -in @('miniexcel', 'miniexcel-cli', 'miniexcel-wasm')
+          }
+          $mismatches = $workspacePackages | Where-Object { $_.version -ne $version }
+          if ($workspacePackages.Count -ne 3 -or $mismatches.Count -ne 0) {
+            throw "Rust workspace package versions must all equal $version."
+          }
+          $webVersion = (Get-Content web-demo/package.json -Raw | ConvertFrom-Json).version
+          $webLockVersion = (Get-Content web-demo/package-lock.json -Raw | ConvertFrom-Json).version
+          if ($webVersion -ne $version -or $webLockVersion -ne $version) {
+            throw "Browser Lab package versions must all equal $version."
+          }
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Run tests
+        run: cargo test --workspace --all-targets --all-features --locked
+      - name: Build documentation
+        run: cargo doc --workspace --no-deps --all-features --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Verify crates.io package
+        run: cargo package --manifest-path miniexcel/Cargo.toml --locked
+
+  build-cli:
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Install Rust 1.85.0
+        uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-cli
+      - name: Build Windows x64 CLI
+        run: cargo build --release -p miniexcel-cli --locked
+      - name: Package Windows x64 CLI
+        shell: pwsh
+        run: |
+          $asset = "miniexcel-cli-$env:RELEASE_TAG-windows-x64.zip"
+          New-Item -ItemType Directory -Path target/release-cli | Out-Null
+          Copy-Item LICENSE, README.md, target/release/miniexcel.exe target/release-cli/
+          Compress-Archive -Path target/release-cli/* -DestinationPath "target/$asset"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-cli
+          path: target/miniexcel-cli-${{ env.RELEASE_TAG }}-windows-x64.zip
+          if-no-files-found: error
+
+  build-gui:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Install Rust 1.85.0
+        uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-gui
+      - name: Install wasm-bindgen CLI
+        run: cargo +stable install wasm-bindgen-cli --version 0.2.127 --locked
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web-demo/package-lock.json
+      - name: Install Browser Lab dependencies
+        working-directory: web-demo
+        run: npm ci
+      - name: Build Browser Lab
+        working-directory: web-demo
+        run: npm run build
+      - name: Install Playwright Chromium
+        working-directory: web-demo
+        run: npx playwright install --with-deps chromium
+      - name: Test Browser Lab
+        working-directory: web-demo
+        run: npm run test:e2e
+      - name: Package Browser Lab
+        run: |
+          asset="miniexcel-browser-lab-$RELEASE_TAG.zip"
+          cd web-demo/dist
+          zip -r "$GITHUB_WORKSPACE/target/$asset" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-gui
+          path: target/miniexcel-browser-lab-${{ env.RELEASE_TAG }}.zip
+          if-no-files-found: error
+
+  publish-crate:
+    needs: [build-cli, build-gui]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Install Rust 1.85.0
+        uses: dtolnay/rust-toolchain@1.85.0
+      - name: Check whether the crate version exists
+        id: crate
+        shell: bash
+        run: |
+          version="${RELEASE_TAG#v}"
+          status=$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" "https://crates.io/api/v1/crates/miniexcel/$version")
+          case "$status" in
+            200) echo "published=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "published=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unexpected crates.io HTTP status: $status" >&2; exit 1 ;;
+          esac
+      - name: Acquire crates.io publishing token
+        if: steps.crate.outputs.published != 'true'
+        id: crates-auth
+        uses: rust-lang/crates-io-auth-action@v1
+      - name: Publish miniexcel to crates.io
+        if: steps.crate.outputs.published != 'true'
+        run: cargo publish --manifest-path miniexcel/Cargo.toml --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+      - name: Confirm crates.io version
+        shell: bash
+        run: |
+          version="${RELEASE_TAG#v}"
+          for attempt in {1..20}; do
+            status=$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" "https://crates.io/api/v1/crates/miniexcel/$version")
+            case "$status" in
+              200) exit 0 ;;
+              404) ;;
+              *) echo "Unexpected crates.io HTTP status: $status" >&2; exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "miniexcel $version did not become available on crates.io" >&2
+          exit 1
+
+  github-release:
+    needs: publish-crate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: target/release-assets
+          merge-multiple: true
+      - name: Generate SHA-256 checksums
+        working-directory: target/release-assets
+        run: sha256sum miniexcel-*.zip > SHA256SUMS.txt
+      - name: Generate release notes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./scripts/new-release-notes.ps1 -Tag $env:RELEASE_TAG -Repository $env:GITHUB_REPOSITORY -OutputPath target/release-assets/RELEASE_NOTES.md
+      - name: Create or update GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $browser = "target/release-assets/miniexcel-browser-lab-$env:RELEASE_TAG.zip"
+          $cli = "target/release-assets/miniexcel-cli-$env:RELEASE_TAG-windows-x64.zip"
+          $checksums = 'target/release-assets/SHA256SUMS.txt'
+          $assets = @(
+            [pscustomobject]@{ Path = $browser; Name = Split-Path $browser -Leaf; Label = "MiniExcel Browser Lab $env:RELEASE_TAG" }
+            [pscustomobject]@{ Path = $cli; Name = Split-Path $cli -Leaf; Label = "MiniExcel CLI $env:RELEASE_TAG for Windows x64" }
+            [pscustomobject]@{ Path = $checksums; Name = Split-Path $checksums -Leaf; Label = 'SHA-256 checksums' }
+          )
+          $headers = @{
+            Accept = 'application/vnd.github+json'
+            Authorization = "Bearer $env:GH_TOKEN"
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $releaseUri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG"
+          $response = Invoke-WebRequest -Uri $releaseUri -Headers $headers -SkipHttpErrorCheck
+          if ($response.StatusCode -eq 200) {
+            $release = $response.Content | ConvertFrom-Json
+            foreach ($asset in $assets) {
+              $remoteAsset = $release.assets | Where-Object { $_.name -eq $asset.Name }
+              if ($null -eq $remoteAsset) {
+                & gh release upload $env:RELEASE_TAG "$($asset.Path)#$($asset.Label)" -R $env:GITHUB_REPOSITORY
+                if ($LASTEXITCODE -ne 0) {
+                  throw "GitHub release asset upload failed for $($asset.Name)."
+                }
+                continue
+              }
+              if (-not [string]::IsNullOrWhiteSpace($remoteAsset.digest)) {
+                $localDigest = "sha256:$((Get-FileHash $asset.Path -Algorithm SHA256).Hash.ToLowerInvariant())"
+                if ($remoteAsset.digest -ne $localDigest) {
+                  throw "Existing release asset $($asset.Name) has a different digest."
+                }
+              }
+            }
+          } elseif ($response.StatusCode -eq 404) {
+            $assetArguments = $assets | ForEach-Object { "$($_.Path)#$($_.Label)" }
+            & gh release create $env:RELEASE_TAG @assetArguments -R $env:GITHUB_REPOSITORY --verify-tag --title "MiniExcel Rust $env:RELEASE_TAG" --notes-file target/release-assets/RELEASE_NOTES.md --latest
+            if ($LASTEXITCODE -ne 0) {
+              throw 'GitHub release creation failed.'
+            }
+          } else {
+            throw "GitHub release lookup failed with HTTP status $($response.StatusCode)."
+          }

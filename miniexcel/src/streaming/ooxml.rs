@@ -26,6 +26,7 @@ use crate::{
 use super::shared_strings::SharedStrings;
 
 const ROW_BUFFER_SIZE: usize = 8;
+const MAX_PREALLOCATED_ROW_CELLS: usize = 256;
 
 pub(super) struct StreamingRawRows {
     receiver: Option<Receiver<Result<SelectedRow>>>,
@@ -1136,6 +1137,7 @@ struct CellState {
     column: usize,
     style: u32,
     kind: CellKind,
+    shared_string_index: Option<usize>,
     value: String,
     inline_text: String,
     formula: Option<String>,
@@ -1426,6 +1428,9 @@ where
     let mut in_sheet_data = false;
     let end_row = options.end_cell().map_or(scan.extent.end_row, |cell| Some(cell.row()));
     let end_column = options.end_cell().map_or(scan.extent.end_column, |cell| Some(cell.column()));
+    let row_cell_capacity = end_column
+        .and_then(|column| column.checked_sub(options.start_cell().column()))
+        .map_or(0, |width| width.saturating_add(1).min(MAX_PREALLOCATED_ROW_CELLS));
     let mut merge_fill = (options.fill_merged_cells() && !context.preserve_structure)
         .then(|| MergeFillState::new(scan.merged_cells));
 
@@ -1457,7 +1462,11 @@ where
                     return Ok(());
                 }
                 last_declared_row = Some(excel_row);
-                current_row = Some(RowState { excel_row, cells: Vec::new(), next_column: 0 });
+                current_row = Some(RowState {
+                    excel_row,
+                    cells: Vec::with_capacity(row_cell_capacity),
+                    next_column: 0,
+                });
             }
             Event::Empty(event) if in_sheet_data && is_name(event.name().as_ref(), b"row") => {
                 let excel_row = row_index(&event, xml.decoder(), last_declared_row)?;
@@ -1573,25 +1582,44 @@ where
 }
 
 fn start_cell(event: &BytesStart<'_>, decoder: Decoder, row: &mut RowState) -> Result<CellState> {
-    let column = attribute(event, decoder, b"r")?
-        .and_then(|reference| parse_column(&reference))
-        .unwrap_or(row.next_column);
+    let mut column = None;
+    let mut style = 0;
+    let mut kind = CellKind::Number;
+    for attribute in event.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| stream_error("invalid XML attribute:", error))?;
+        if !matches!(
+            attribute.key.as_ref().rsplit(|byte| *byte == b':').next(),
+            Some(b"r" | b"s" | b"t")
+        ) {
+            continue;
+        }
+        let value = attribute
+            .decode_and_unescape_value(decoder)
+            .map_err(|error| stream_error("invalid XML attribute value:", error))?;
+        match attribute.key.as_ref().rsplit(|byte| *byte == b':').next() {
+            Some(b"r") => column = parse_column(&value),
+            Some(b"s") => style = value.parse::<u32>().unwrap_or(0),
+            Some(b"t") => {
+                kind = match value.as_ref() {
+                    "s" => CellKind::SharedString,
+                    "inlineStr" => CellKind::InlineString,
+                    "b" => CellKind::Boolean,
+                    "e" => CellKind::Error,
+                    "str" => CellKind::String,
+                    "d" => CellKind::IsoDate,
+                    _ => CellKind::Number,
+                };
+            }
+            _ => {}
+        }
+    }
+    let column = column.unwrap_or(row.next_column);
     row.next_column = column.saturating_add(1);
-    let style =
-        attribute(event, decoder, b"s")?.and_then(|value| value.parse::<u32>().ok()).unwrap_or(0);
-    let kind = match attribute(event, decoder, b"t")?.as_deref() {
-        Some("s") => CellKind::SharedString,
-        Some("inlineStr") => CellKind::InlineString,
-        Some("b") => CellKind::Boolean,
-        Some("e") => CellKind::Error,
-        Some("str") => CellKind::String,
-        Some("d") => CellKind::IsoDate,
-        _ => CellKind::Number,
-    };
     Ok(CellState {
         column,
         style,
         kind,
+        shared_string_index: None,
         value: String::new(),
         inline_text: String::new(),
         formula: None,
@@ -1600,13 +1628,26 @@ fn start_cell(event: &BytesStart<'_>, decoder: Decoder, row: &mut RowState) -> R
 }
 
 fn finish_cell(cell: CellState, row: &mut RowState, context: &WorkbookContext) -> Result<()> {
-    let CellState { column, style, kind, value, inline_text, formula, capture: _ } = cell;
+    let CellState {
+        column,
+        style,
+        kind,
+        shared_string_index,
+        value,
+        inline_text,
+        formula,
+        capture: _,
+    } = cell;
     let cell_style = context.styles.get(style as usize);
     let format = cell_style.map_or(CellFormat::Other, |style| style.format);
     let number_format = cell_style.and_then(|style| style.number_format.clone());
     let data = match kind {
         CellKind::SharedString => {
-            if value.is_empty() {
+            if let Some(index) = shared_string_index {
+                Data::String(context.shared_strings.get(index)?.ok_or_else(|| {
+                    Error::stream(format!("shared string index {index} is out of range"))
+                })?)
+            } else if value.is_empty() {
                 Data::Empty
             } else {
                 let index = value
@@ -1730,14 +1771,26 @@ fn validate_range(options: &ReadOptions) -> Result<()> {
 }
 
 fn row_index(event: &BytesStart<'_>, decoder: Decoder, previous: Option<usize>) -> Result<usize> {
-    Ok(attribute(event, decoder, b"r")?
-        .and_then(|value| value.parse::<usize>().ok())
-        .and_then(|value| value.checked_sub(1))
-        .unwrap_or_else(|| previous.map_or(0, |row| row.saturating_add(1))))
+    for attribute in event.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| stream_error("invalid XML attribute:", error))?;
+        if is_name(attribute.key.as_ref(), b"r") {
+            let value = attribute
+                .decode_and_unescape_value(decoder)
+                .map_err(|error| stream_error("invalid XML attribute value:", error))?;
+            if let Some(row) = value.parse::<usize>().ok().and_then(|value| value.checked_sub(1)) {
+                return Ok(row);
+            }
+            break;
+        }
+    }
+    Ok(previous.map_or(0, |row| row.saturating_add(1)))
 }
 
 fn append_cell_text(text: &quick_xml::events::BytesText<'_>, cell: &mut CellState) -> Result<()> {
     match cell.capture {
+        Some(Capture::Value) if matches!(cell.kind, CellKind::SharedString) => {
+            append_shared_string_index(text, &mut cell.shared_string_index)
+        }
         Some(Capture::Value) => append_text(text, &mut cell.value),
         Some(Capture::InlineText) => append_text(text, &mut cell.inline_text),
         Some(Capture::Formula) => {
@@ -1745,6 +1798,32 @@ fn append_cell_text(text: &quick_xml::events::BytesText<'_>, cell: &mut CellStat
         }
         None => Ok(()),
     }
+}
+
+fn append_shared_string_index(
+    text: &quick_xml::events::BytesText<'_>,
+    target: &mut Option<usize>,
+) -> Result<()> {
+    let decoded = text
+        .xml10_content()
+        .map_err(|error| stream_error("invalid shared string index:", error))?;
+    let mut index = target.unwrap_or(0);
+    for byte in decoded.bytes() {
+        let digit = byte
+            .checked_sub(b'0')
+            .filter(|digit| *digit <= 9)
+            .ok_or_else(|| Error::stream(format!("invalid shared string index '{decoded}'")))?;
+        index = index
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(usize::from(digit)))
+            .ok_or_else(|| {
+                Error::stream(format!("shared string index '{decoded}' is too large"))
+            })?;
+    }
+    if !decoded.is_empty() {
+        *target = Some(index);
+    }
+    Ok(())
 }
 
 fn append_cell_reference(reference: &BytesRef<'_>, cell: &mut CellState) -> Result<()> {

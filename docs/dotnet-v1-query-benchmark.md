@@ -43,7 +43,7 @@ The following result was captured on 2026-08-26:
 | .NET SDK | 10.0.103 |
 | .NET MiniExcel | 1.46.1, commit `8b6feb87cfd00d0802de91bfca5616ec2dd744b7` |
 | Rust toolchain | rustc 1.85.0 (`4d91de4e4`, 2025-02-17) |
-| MiniExcel Rust base revision | `808828f3ce892dad8b00bda1cee370fae6451e1c` |
+| MiniExcel Rust | Source tree containing this document; optimization baseline `808828f3ce892dad8b00bda1cee370fae6451e1c` |
 
 ## Summary
 
@@ -51,26 +51,26 @@ Both implementations returned exactly 100,000 rows and 1,000,000 cells per pass 
 
 | Scenario | Runtime | Median Query time | Throughput | Median process time | Median peak working set | Maximum peak working set |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Cold | .NET v1 | 1,890.76 ms | 52,889 rows/s | 1,963.50 ms | 67.22 MB | 68.12 MB |
-| Cold | Rust | 1,455.79 ms | 68,691 rows/s | 1,473.66 ms | 9.71 MB | 9.77 MB |
-| Steady | .NET v1 | 2,585.18 ms | 116,046 rows/s | 4,499.20 ms | 78.75 MB | 82.07 MB |
-| Steady | Rust | 4,209.62 ms | 71,265 rows/s | 5,728.73 ms | 9.91 MB | 9.94 MB |
+| Cold | .NET v1 | 1,714.86 ms | 58,314 rows/s | 1,769.77 ms | 66.84 MB | 68.19 MB |
+| Cold | Rust | 674.59 ms | 148,238 rows/s | 681.71 ms | 9.64 MB | 9.72 MB |
+| Steady | .NET v1 | 2,330.46 ms | 128,730 rows/s | 4,069.78 ms | 80.35 MB | 84.28 MB |
+| Steady | Rust | 2,079.01 ms | 144,299 rows/s | 2,792.32 ms | 9.88 MB | 9.93 MB |
 
-For the first Query in a fresh process, Rust delivered 1.30x the .NET v1 throughput, completed in 23.0% less Query time, and used 85.6% less peak working set.
+For the first Query in a fresh process, Rust delivered 2.54x the .NET v1 throughput, completed in 60.7% less Query time, and used 85.6% less peak working set.
 
-After an in-process warm-up, Rust delivered 0.61x the .NET v1 throughput and took 62.8% more Query time. Its median peak working set remained 87.4% lower, at 9.91 MB versus 78.75 MB.
+After an in-process warm-up, Rust delivered 1.12x the .NET v1 throughput and completed in 10.8% less Query time. Its median peak working set was 87.7% lower, at 9.88 MB versus 80.35 MB.
 
-The result is therefore workload-dependent: Rust has lower first-call latency and substantially lower memory use here, while .NET v1 has higher sustained throughput after JIT warm-up.
+Relative to the Rust optimization baseline, median Query time decreased by 53.7% in the Cold scenario and 50.6% in the Steady scenario without increasing peak working set.
 
 ## Cold Results
 
 | Iteration | .NET v1 elapsed | .NET v1 peak | Rust elapsed | Rust peak |
 | ---: | ---: | ---: | ---: | ---: |
-| 1 | 2,063.54 ms | 65.97 MB | 1,571.51 ms | 9.66 MB |
-| 2 | 1,950.17 ms | 67.22 MB | 1,397.59 ms | 9.75 MB |
-| 3 | 1,890.76 ms | 68.12 MB | 1,461.67 ms | 9.77 MB |
-| 4 | 1,816.06 ms | 67.63 MB | 1,394.83 ms | 9.71 MB |
-| 5 | 1,793.67 ms | 66.70 MB | 1,455.79 ms | 9.67 MB |
+| 1 | 1,721.06 ms | 66.84 MB | 672.67 ms | 9.63 MB |
+| 2 | 1,709.83 ms | 66.30 MB | 673.35 ms | 9.64 MB |
+| 3 | 1,714.86 ms | 66.03 MB | 674.59 ms | 9.64 MB |
+| 4 | 1,657.00 ms | 68.19 MB | 707.11 ms | 9.69 MB |
+| 5 | 1,756.68 ms | 67.51 MB | 704.74 ms | 9.72 MB |
 
 ## Steady Results
 
@@ -78,19 +78,19 @@ Each timed value below covers three complete Query passes after one untimed warm
 
 | Iteration | .NET v1 elapsed | .NET v1 peak | Rust elapsed | Rust peak |
 | ---: | ---: | ---: | ---: | ---: |
-| 1 | 2,401.10 ms | 79.22 MB | 4,209.62 ms | 9.92 MB |
-| 2 | 2,602.98 ms | 78.44 MB | 4,128.13 ms | 9.91 MB |
-| 3 | 2,554.63 ms | 82.07 MB | 4,357.14 ms | 9.89 MB |
-| 4 | 2,766.50 ms | 78.75 MB | 4,205.49 ms | 9.94 MB |
-| 5 | 2,585.18 ms | 78.27 MB | 4,254.68 ms | 9.80 MB |
+| 1 | 2,408.23 ms | 80.28 MB | 2,143.49 ms | 9.86 MB |
+| 2 | 2,349.56 ms | 84.28 MB | 2,294.03 ms | 9.90 MB |
+| 3 | 2,325.04 ms | 79.41 MB | 2,079.01 ms | 9.82 MB |
+| 4 | 2,308.75 ms | 80.35 MB | 2,011.56 ms | 9.93 MB |
+| 5 | 2,330.46 ms | 80.45 MB | 2,013.23 ms | 9.88 MB |
 
 ## Interpretation
 
 The benchmark workbook contains 1,000,000 shared-string cells, 100,000 unique strings, and no merged ranges. Its worksheet XML expands to 39,167,847 bytes.
 
-Rust currently performs a complete worksheet scan before the emitting pass, even though this workbook has a valid `<dimension>` and merged-cell filling is disabled. It also clones each shared-string value into an intermediate `Data::String` and then again into the public `CellValue::String`, clones dynamic column names for every row, and transfers each parsed row through a bounded synchronous channel. These choices preserve bounded memory and iterator ownership but add steady-state work.
+Rust now uses a valid `<dimension>` as the query extent when merged-cell filling does not require a complete worksheet scan. An explicit end cell skips the preliminary extent read as well. The parser reads hot row and cell attributes in one borrowed pass, parses shared-string indices without temporary `String` allocations, preallocates bounded row storage from the selected width, and moves owned string data from the intermediate `Data::String` into the public `CellValue::String`.
 
-.NET v1 can stop its preliminary extent check as soon as it reads `<dimension ref="A1:J100000">`. Its JIT cost makes the first Query slower, but later Query passes benefit from already compiled and dynamically optimized hot paths. This explains why Rust leads in the cold scenario while .NET v1 leads in the steady scenario.
+The remaining per-row work includes cloning owned dynamic column names and transferring parsed rows through a bounded synchronous channel. These costs preserve the current `IndexMap<String, CellValue>` API, bounded memory, and iterator ownership. In this workbook, the optimized Rust path leads .NET v1 in both first-call latency and warmed sustained throughput while retaining substantially lower peak memory.
 
 These numbers describe one workbook and one machine, not a general performance guarantee. The harness does not pin CPU affinity or suppress all operating-system noise; the median limits the effect of outliers. Use representative workbooks before drawing application-specific conclusions.
 

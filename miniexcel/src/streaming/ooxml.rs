@@ -1006,6 +1006,7 @@ where
     let use_disk = allow_disk_cache
         && options.shared_string_disk_cache()
         && file.size() >= options.shared_string_cache_size();
+    let maximum_entry_count = usize::try_from(file.size()).unwrap_or(usize::MAX) / 5;
     let mut strings = if use_disk {
         SharedStrings::disk(options.shared_string_cache_path())?
     } else {
@@ -1021,6 +1022,13 @@ where
             .read_event_into(&mut buffer)
             .map_err(|error| stream_error("invalid shared strings XML:", error))?
         {
+            Event::Start(event) if is_name(event.name().as_ref(), b"sst") => {
+                if let Some(count) = attribute(&event, xml.decoder(), b"uniqueCount")?
+                    .and_then(|count| count.parse::<usize>().ok())
+                {
+                    strings.reserve(count.min(maximum_entry_count));
+                }
+            }
             Event::Start(event) if is_name(event.name().as_ref(), b"si") => {
                 current.clear();
                 in_item = true;
@@ -1035,7 +1043,7 @@ where
             Event::GeneralRef(reference) if in_text => append_reference(&reference, &mut current)?,
             Event::End(event) if is_name(event.name().as_ref(), b"t") => in_text = false,
             Event::End(event) if is_name(event.name().as_ref(), b"si") => {
-                strings.push(decode_excel_escapes(&current))?;
+                strings.push(decode_excel_escapes(std::mem::take(&mut current)))?;
                 in_item = false;
             }
             Event::Eof => break,
@@ -1658,10 +1666,10 @@ fn finish_cell(cell: CellState, row: &mut RowState, context: &WorkbookContext) -
                 })?)
             }
         }
-        CellKind::InlineString => Data::String(decode_excel_escapes(&inline_text)),
+        CellKind::InlineString => Data::String(decode_excel_escapes(inline_text)),
         CellKind::Boolean => Data::Bool(value == "1" || value.eq_ignore_ascii_case("true")),
         CellKind::Error => Data::Error(parse_cell_error(&value)?),
-        CellKind::String => Data::String(decode_excel_escapes(&value)),
+        CellKind::String => Data::String(decode_excel_escapes(value)),
         CellKind::IsoDate => Data::DateTimeIso(value),
         CellKind::Number if value.is_empty() => Data::Empty,
         CellKind::Number => {
@@ -2019,7 +2027,11 @@ fn classify_custom_format(format: &str) -> CellFormat {
     CellFormat::Other
 }
 
-fn decode_excel_escapes(value: &str) -> String {
+fn decode_excel_escapes(value: String) -> String {
+    if !value.as_bytes().windows(2).any(|bytes| matches!(bytes, b"_x" | b"_X")) {
+        return value;
+    }
+
     let bytes = value.as_bytes();
     let mut result = String::with_capacity(value.len());
     let mut index = 0;
@@ -2056,7 +2068,8 @@ mod tests {
     use zip::{ZipArchive, ZipWriter};
 
     use super::{
-        CellFormat, classify_custom_format, parse_column, prepare_query_scan, scan_worksheet,
+        CellFormat, classify_custom_format, decode_excel_escapes, parse_column, prepare_query_scan,
+        scan_worksheet,
     };
     use crate::ReadOptions;
 
@@ -2068,6 +2081,17 @@ mod tests {
         assert_eq!(classify_custom_format("0.00"), CellFormat::Other);
         assert_eq!(classify_custom_format("[Red][>=100]0.00"), CellFormat::Other);
         assert_eq!(classify_custom_format("\"days\" 0"), CellFormat::Other);
+    }
+
+    #[test]
+    fn excel_escape_decoder_reuses_plain_strings_and_decodes_escapes() {
+        let plain = "plain 中文".to_owned();
+        let plain_pointer = plain.as_ptr();
+        let decoded = decode_excel_escapes(plain);
+        assert_eq!(decoded, "plain 中文");
+        assert_eq!(decoded.as_ptr(), plain_pointer);
+
+        assert_eq!(decode_excel_escapes("line_x000A_break".to_owned()), "line\nbreak");
     }
 
     #[test]

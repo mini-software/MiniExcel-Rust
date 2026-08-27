@@ -10,13 +10,13 @@ const INDEX_RECORD_SIZE: u64 = 16;
 static NEXT_CACHE_ID: AtomicU64 = AtomicU64::new(0);
 
 pub(super) enum SharedStrings {
-    Memory(Vec<String>),
+    Memory(MemorySharedStrings),
     Disk(DiskSharedStrings),
 }
 
 impl SharedStrings {
     pub(super) fn memory() -> Self {
-        Self::Memory(Vec::new())
+        Self::Memory(MemorySharedStrings::default())
     }
 
     pub(super) fn disk(directory: &Path) -> Result<Self> {
@@ -33,11 +33,36 @@ impl SharedStrings {
         }
     }
 
+    pub(super) fn reserve(&mut self, entries: usize) {
+        if let Self::Memory(strings) = self {
+            strings.ends.reserve(entries);
+        }
+    }
+
     pub(super) fn get(&self, index: usize) -> Result<Option<String>> {
         match self {
-            Self::Memory(strings) => Ok(strings.get(index).cloned()),
+            Self::Memory(strings) => Ok(strings.get(index)),
             Self::Disk(strings) => strings.get(index),
         }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct MemorySharedStrings {
+    data: String,
+    ends: Vec<usize>,
+}
+
+impl MemorySharedStrings {
+    fn push(&mut self, value: String) {
+        self.data.push_str(&value);
+        self.ends.push(self.data.len());
+    }
+
+    fn get(&self, index: usize) -> Option<String> {
+        let end = *self.ends.get(index)?;
+        let start = index.checked_sub(1).map_or(0, |previous| self.ends[previous]);
+        Some(self.data[start..end].to_owned())
     }
 }
 
@@ -141,4 +166,22 @@ impl Drop for DiskSharedStrings {
 
 fn create_cache_file(path: &Path) -> std::io::Result<File> {
     OpenOptions::new().read(true).write(true).create_new(true).open(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MemorySharedStrings;
+
+    #[test]
+    fn memory_shared_strings_preserve_empty_and_unicode_values() {
+        let mut strings = MemorySharedStrings::default();
+        strings.push("alpha".to_owned());
+        strings.push(String::new());
+        strings.push("中文".to_owned());
+
+        assert_eq!(strings.get(0).as_deref(), Some("alpha"));
+        assert_eq!(strings.get(1).as_deref(), Some(""));
+        assert_eq!(strings.get(2).as_deref(), Some("中文"));
+        assert_eq!(strings.get(3), None);
+    }
 }

@@ -29,7 +29,7 @@ Peak working set is sampled approximately every 10 ms over the whole process. It
 
 ## Environment
 
-The following result was captured on 2026-08-26:
+The following result was captured on 2026-08-28:
 
 | Item | Value |
 | --- | --- |
@@ -51,26 +51,26 @@ Both implementations returned exactly 100,000 rows and 1,000,000 cells per pass 
 
 | Scenario | Runtime | Median Query time | Throughput | Median process time | Median peak working set | Maximum peak working set |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Cold | .NET v1 | 1,731.33 ms | 57,759 rows/s | 1,785.67 ms | 66.81 MB | 67.45 MB |
-| Cold | Rust | 660.42 ms | 151,419 rows/s | 666.39 ms | 7.23 MB | 7.32 MB |
-| Steady | .NET v1 | 2,405.57 ms | 124,711 rows/s | 4,119.75 ms | 79.58 MB | 81.49 MB |
-| Steady | Rust | 2,051.91 ms | 146,205 rows/s | 2,749.84 ms | 7.36 MB | 8.74 MB |
+| Cold | .NET v1 | 1,731.77 ms | 57,744 rows/s | 1,784.10 ms | 67.75 MB | 68.13 MB |
+| Cold | Rust | 670.45 ms | 149,154 rows/s | 675.49 ms | 6.86 MB | 7.08 MB |
+| Steady | .NET v1 | 2,230.25 ms | 134,514 rows/s | 4,044.79 ms | 80.62 MB | 83.86 MB |
+| Steady | Rust | 2,081.60 ms | 144,120 rows/s | 2,815.70 ms | 6.71 MB | 7.20 MB |
 
-For the first Query in a fresh process, Rust delivered 2.62x the .NET v1 throughput, completed in 61.9% less Query time, and used 89.2% less peak working set.
+For the first Query in a fresh process, Rust delivered 2.58x the .NET v1 throughput, completed in 61.3% less Query time, and used 89.9% less peak working set.
 
-After an in-process warm-up, Rust delivered 1.17x the .NET v1 throughput and completed in 14.7% less Query time. Its median peak working set was 90.8% lower, at 7.36 MB versus 79.58 MB.
+After an in-process warm-up, Rust delivered 1.07x the .NET v1 throughput and completed in 6.7% less Query time. Its median peak working set was 91.7% lower, at 6.71 MB versus 80.62 MB.
 
-Relative to the Rust optimization baseline, median Query time decreased by 54.6% in the Cold scenario and 51.3% in the Steady scenario while peak working set remained bounded below 9 MB.
+Relative to the Rust optimization baseline, median Query time decreased by 54.0% in the Cold scenario and 50.5% in the Steady scenario while peak working set remained bounded below 8 MB.
 
 ## Cold Results
 
 | Iteration | .NET v1 elapsed | .NET v1 peak | Rust elapsed | Rust peak |
 | ---: | ---: | ---: | ---: | ---: |
-| 1 | 1,697.58 ms | 66.09 MB | 670.55 ms | 6.59 MB |
-| 2 | 1,737.33 ms | 66.81 MB | 646.70 ms | 7.30 MB |
-| 3 | 1,626.67 ms | 66.16 MB | 660.42 ms | 7.32 MB |
-| 4 | 1,753.76 ms | 67.45 MB | 674.44 ms | 7.04 MB |
-| 5 | 1,731.33 ms | 67.40 MB | 659.06 ms | 7.23 MB |
+| 1 | 1,745.97 ms | 68.13 MB | 670.45 ms | 6.86 MB |
+| 2 | 1,679.53 ms | 66.18 MB | 642.60 ms | 6.68 MB |
+| 3 | 1,734.04 ms | 67.75 MB | 663.40 ms | 5.98 MB |
+| 4 | 1,731.77 ms | 67.93 MB | 670.64 ms | 7.08 MB |
+| 5 | 1,702.00 ms | 67.32 MB | 679.42 ms | 7.02 MB |
 
 ## Steady Results
 
@@ -78,11 +78,11 @@ Each timed value below covers three complete Query passes after one untimed warm
 
 | Iteration | .NET v1 elapsed | .NET v1 peak | Rust elapsed | Rust peak |
 | ---: | ---: | ---: | ---: | ---: |
-| 1 | 2,405.57 ms | 79.58 MB | 2,051.91 ms | 7.13 MB |
-| 2 | 2,420.05 ms | 79.01 MB | 1,977.10 ms | 8.74 MB |
-| 3 | 2,394.17 ms | 78.71 MB | 2,053.29 ms | 7.39 MB |
-| 4 | 2,389.88 ms | 81.49 MB | 2,014.16 ms | 7.27 MB |
-| 5 | 2,462.29 ms | 80.27 MB | 2,109.63 ms | 7.36 MB |
+| 1 | 2,447.41 ms | 80.35 MB | 2,081.60 ms | 6.46 MB |
+| 2 | 2,380.37 ms | 80.24 MB | 2,016.59 ms | 6.55 MB |
+| 3 | 2,188.67 ms | 83.86 MB | 1,909.48 ms | 7.04 MB |
+| 4 | 2,160.40 ms | 80.62 MB | 2,356.20 ms | 6.71 MB |
+| 5 | 2,230.25 ms | 80.81 MB | 2,426.91 ms | 7.20 MB |
 
 ## Interpretation
 
@@ -90,7 +90,9 @@ The benchmark workbook contains 1,000,000 shared-string cells, 100,000 unique st
 
 Rust now uses a valid `<dimension>` as the query extent when merged-cell filling does not require a complete worksheet scan. An explicit end cell skips the preliminary extent read as well. The parser reads hot row and cell attributes in one borrowed pass, parses shared-string indices without temporary `String` allocations, preallocates bounded row storage from the selected width, and moves owned string data from the intermediate `Data::String` into the public `CellValue::String`.
 
-Memory-resident shared strings now use one contiguous UTF-8 buffer plus an end-offset table instead of one heap allocation per unique string. The offset table is preallocated from a file-size-bounded `uniqueCount`, and strings without Excel `_xHHHH_` escapes reuse their existing allocation. Compared with the preceding optimized result, this reduced median peak working set by 25.0% in Cold and 25.5% in Steady while reducing median Query time by another 2.1% and 1.3%, respectively.
+Memory-resident shared strings now use one contiguous UTF-8 buffer plus an end-offset table instead of one heap allocation per unique string. The offset table is preallocated from a file-size-bounded `uniqueCount`, and strings without Excel `_xHHHH_` escapes reuse their existing allocation. Offsets use `u32` while the combined string data fits within 4 GiB and automatically widen to `usize` beyond that boundary, preserving large-input behavior.
+
+Compared with the preceding optimized result, the adaptive offset representation reduced median peak working set by another 5.1% in Cold and 8.8% in Steady. Two final same-period alternating A/B runs put Query timing within approximately 1% of the `usize` baseline, with no consistent regression; cross-run timing differences in the tables above remain subject to normal machine load variation.
 
 The remaining per-row work includes cloning owned dynamic column names and transferring parsed rows through a bounded synchronous channel. These costs preserve the current `IndexMap<String, CellValue>` API, bounded memory, and iterator ownership. In this workbook, the optimized Rust path leads .NET v1 in both first-call latency and warmed sustained throughput while retaining substantially lower peak memory.
 

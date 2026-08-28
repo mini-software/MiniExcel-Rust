@@ -50,7 +50,7 @@ impl SharedStrings {
 #[derive(Default)]
 pub(super) struct MemorySharedStrings {
     data: String,
-    ends: Vec<usize>,
+    ends: MemoryStringOffsets,
 }
 
 impl MemorySharedStrings {
@@ -60,9 +60,65 @@ impl MemorySharedStrings {
     }
 
     fn get(&self, index: usize) -> Option<String> {
-        let end = *self.ends.get(index)?;
-        let start = index.checked_sub(1).map_or(0, |previous| self.ends[previous]);
+        let (start, end) = self.ends.bounds(index)?;
         Some(self.data[start..end].to_owned())
+    }
+}
+
+enum MemoryStringOffsets {
+    Compact(Vec<u32>),
+    Wide(Vec<usize>),
+}
+
+impl Default for MemoryStringOffsets {
+    fn default() -> Self {
+        Self::Compact(Vec::new())
+    }
+}
+
+impl MemoryStringOffsets {
+    fn reserve(&mut self, additional: usize) {
+        match self {
+            Self::Compact(offsets) => offsets.reserve(additional),
+            Self::Wide(offsets) => offsets.reserve(additional),
+        }
+    }
+
+    fn push(&mut self, end: usize) {
+        match self {
+            Self::Compact(offsets) => {
+                let Ok(end) = u32::try_from(end) else {
+                    let mut wide = Vec::with_capacity(offsets.capacity());
+                    wide.extend(
+                        offsets
+                            .iter()
+                            .map(|offset| usize::try_from(*offset).expect("u32 offset fits usize")),
+                    );
+                    wide.push(end);
+                    *self = Self::Wide(wide);
+                    return;
+                };
+                offsets.push(end);
+            }
+            Self::Wide(offsets) => offsets.push(end),
+        }
+    }
+
+    fn bounds(&self, index: usize) -> Option<(usize, usize)> {
+        match self {
+            Self::Compact(offsets) => {
+                let end = usize::try_from(*offsets.get(index)?).expect("u32 offset fits usize");
+                let start = index.checked_sub(1).map_or(0, |previous| {
+                    usize::try_from(offsets[previous]).expect("u32 offset fits usize")
+                });
+                Some((start, end))
+            }
+            Self::Wide(offsets) => {
+                let end = *offsets.get(index)?;
+                let start = index.checked_sub(1).map_or(0, |previous| offsets[previous]);
+                Some((start, end))
+            }
+        }
     }
 }
 
@@ -170,7 +226,7 @@ fn create_cache_file(path: &Path) -> std::io::Result<File> {
 
 #[cfg(test)]
 mod tests {
-    use super::MemorySharedStrings;
+    use super::{MemorySharedStrings, MemoryStringOffsets};
 
     #[test]
     fn memory_shared_strings_preserve_empty_and_unicode_values() {
@@ -183,5 +239,23 @@ mod tests {
         assert_eq!(strings.get(1).as_deref(), Some(""));
         assert_eq!(strings.get(2).as_deref(), Some("中文"));
         assert_eq!(strings.get(3), None);
+    }
+
+    #[test]
+    fn memory_string_offsets_widen_without_changing_existing_values() {
+        if usize::BITS <= u32::BITS {
+            return;
+        }
+
+        let mut offsets = MemoryStringOffsets::default();
+        offsets.push(12);
+        offsets.push(usize::try_from(u64::from(u32::MAX) + 1).expect("wide usize"));
+
+        assert!(matches!(offsets, MemoryStringOffsets::Wide(_)));
+        assert_eq!(offsets.bounds(0), Some((0, 12)));
+        assert_eq!(
+            offsets.bounds(1),
+            usize::try_from(u64::from(u32::MAX) + 1).ok().map(|end| (12, end))
+        );
     }
 }

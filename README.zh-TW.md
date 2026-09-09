@@ -47,8 +47,8 @@ cargo add miniexcel
 
 ### .NET 套件
 
-本儲存庫也會建置預覽版 `MiniExcel.Rust` NuGet 套件。它依賴 MiniExcel v1（`1.46.0` 或更新的
-1.x 版本），重用其設定與 mapping 型別，並將透過 `MiniExcelRust` 發起的呼叫交給 Rust 原生程式庫執行。
+本儲存庫也會建置預覽版 `MiniExcel.Rust` NuGet 套件。它固定依賴 MiniExcel v1 `1.46.0`，
+重用其設定與 mapping 型別，並將透過 `MiniExcelRust` 發起的呼叫交給 Rust 原生程式庫執行。
 
 ```bash
 dotnet add package MiniExcel.Rust --prerelease

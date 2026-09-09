@@ -47,8 +47,8 @@ Nécessite Rust 1.85.0 ou ultérieur.
 
 ### Package .NET
 
-Le dépôt construit également le package NuGet préliminaire `MiniExcel.Rust`. Il dépend de
-MiniExcel v1 (`1.46.0` ou une version 1.x ultérieure), réutilise ses types de configuration et de
+Le dépôt construit également le package NuGet préliminaire `MiniExcel.Rust`. Il dépend exactement de
+MiniExcel v1 `1.46.0`, réutilise ses types de configuration et de
 mapping, et transmet les appels `MiniExcelRust` à la bibliothèque native Rust.
 
 ```bash

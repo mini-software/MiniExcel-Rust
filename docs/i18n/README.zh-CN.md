@@ -47,8 +47,8 @@ cargo add miniexcel
 
 ### .NET 包
 
-本仓库还会构建预览版 `MiniExcel.Rust` NuGet 包。它依赖 MiniExcel v1（`1.46.0` 或更新的
-1.x 版本），复用其配置和映射类型，并将通过 `MiniExcelRust` 发起的调用交给 Rust 原生库执行。
+本仓库还会构建预览版 `MiniExcel.Rust` NuGet 包。它固定依赖 MiniExcel v1 `1.46.0`，
+复用其配置和映射类型，并将通过 `MiniExcelRust` 发起的调用交给 Rust 原生库执行。
 
 ```bash
 dotnet add package MiniExcel.Rust --prerelease

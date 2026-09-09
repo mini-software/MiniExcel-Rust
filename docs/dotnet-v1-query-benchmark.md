@@ -11,6 +11,25 @@ This benchmark compares dynamic, headerless XLSX streaming over the same workboo
 
 Both runners enumerate every returned row without retaining the complete worksheet. Save performance, typed mapping, formulas, and other APIs are outside this comparison.
 
+### NuGet-To-NuGet Stress Harness
+
+To benchmark the distributable package rather than the Rust CLI, run:
+
+```powershell
+pwsh ./scripts/compare-nuget-v1-rust.ps1
+```
+
+This harness builds a local `MiniExcel.Rust` package, resolves the latest stable public MiniExcel v1
+package, restores both into an isolated `net8.0` consumer, and compares `MiniExcel.Query` with
+`MiniExcelRust.Query`. Before timing, it verifies every row, column, and normalized value. Cold and
+steady scenarios run in alternating fresh processes and report query time, first-row latency,
+managed allocation, peak working set, and peak private memory to
+`target/benchmarks/nuget-v1/benchmark-<rid>.{json,md}`.
+
+Use `-Rows`, `-Columns`, `-Iterations`, `-Passes`, and `-WarmupPasses` to change the load. The
+`NuGet Benchmark` GitHub workflow runs the same harness on Windows, Linux, and macOS for x64 and
+Arm64. Pass `-MiniExcelVersion 1.46.0` to pin a historical baseline for reproducible comparisons.
+
 ## Fairness Controls
 
 - Both runners use Release builds, the same workbook, and equivalent public dynamic Query APIs.

@@ -1,0 +1,78 @@
+name: NuGet Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: Workbook row count
+        required: true
+        default: '100000'
+        type: string
+      columns:
+        description: Workbook column count
+        required: true
+        default: '10'
+        type: string
+      iterations:
+        description: Fresh processes per runtime and scenario
+        required: true
+        default: '5'
+        type: string
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  BENCHMARK_ROWS: ${{ inputs.rows || '100000' }}
+  BENCHMARK_COLUMNS: ${{ inputs.columns || '10' }}
+  BENCHMARK_ITERATIONS: ${{ inputs.iterations || '5' }}
+  PACKAGE_VERSION: 0.1.0-benchmark.${{ github.run_number }}
+
+jobs:
+  benchmark:
+    name: Benchmark ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            rid: win-x64
+          - runner: windows-11-arm
+            rid: win-arm64
+          - runner: ubuntu-latest
+            rid: linux-x64
+          - runner: ubuntu-24.04-arm
+            rid: linux-arm64
+          - runner: macos-15-intel
+            rid: osx-x64
+          - runner: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nuget-benchmark-${{ matrix.rid }}
+      - name: Run NuGet stress benchmark
+        shell: pwsh
+        run: >-
+          ./scripts/compare-nuget-v1-rust.ps1
+          -Rid '${{ matrix.rid }}'
+          -Rows $env:BENCHMARK_ROWS
+          -Columns $env:BENCHMARK_COLUMNS
+          -Iterations $env:BENCHMARK_ITERATIONS
+          -MiniExcelRustVersion $env:PACKAGE_VERSION
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-benchmark-${{ matrix.rid }}
+          path: |
+            target/benchmarks/nuget-v1/benchmark-${{ matrix.rid }}.json
+            target/benchmarks/nuget-v1/benchmark-${{ matrix.rid }}.md
+          if-no-files-found: error

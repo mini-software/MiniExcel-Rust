@@ -1,0 +1,235 @@
+name: NuGet Release
+
+on:
+  push:
+    tags:
+      - 'nuget-v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: NuGet version, for example 0.1.0-preview.1
+        required: true
+        default: 0.1.0-preview.1
+        type: string
+      publish:
+        description: Publish to NuGet.org after all package tests pass
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - id: version
+        name: Validate version
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+        run: |
+          version="${REQUESTED_VERSION#nuget-v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+            echo "::error::Version '$version' is not a valid supported NuGet version."
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+  build-native:
+    needs: prepare
+    name: Build ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            rid: win-x64
+            target: x86_64-pc-windows-msvc
+            zig: false
+          - runner: windows-11-arm
+            rid: win-arm64
+            target: aarch64-pc-windows-msvc
+            zig: false
+          - runner: ubuntu-latest
+            rid: linux-x64
+            target: x86_64-unknown-linux-gnu
+            zig: false
+          - runner: ubuntu-24.04-arm
+            rid: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            zig: false
+          - runner: ubuntu-latest
+            rid: linux-musl-x64
+            target: x86_64-unknown-linux-musl
+            zig: true
+          - runner: ubuntu-24.04-arm
+            rid: linux-musl-arm64
+            target: aarch64-unknown-linux-musl
+            zig: true
+          - runner: macos-15-intel
+            rid: osx-x64
+            target: x86_64-apple-darwin
+            zig: false
+          - runner: macos-latest
+            rid: osx-arm64
+            target: aarch64-apple-darwin
+            zig: false
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: mlugg/setup-zig@v2
+        if: matrix.zig
+      - uses: taiki-e/install-action@v2
+        if: matrix.zig
+        with:
+          tool: cargo-zigbuild
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nuget-release-${{ matrix.rid }}
+      - name: Build native asset
+        shell: pwsh
+        run: |
+          $arguments = @{
+            Rid = '${{ matrix.rid }}'
+            Toolchain = '1.85.0'
+          }
+          if ('${{ matrix.zig }}' -eq 'true') {
+            $arguments.UseZig = $true
+          }
+          ./scripts/dotnet/Build-Native.ps1 @arguments
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: target/nuget/native/${{ matrix.rid }}/*
+          if-no-files-found: error
+
+  pack:
+    needs: [prepare, build-native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          path: target/nuget/native
+      - name: Pack complete NuGet
+        run: >-
+          dotnet pack dotnet/src/MiniExcel.Rust/MiniExcel.Rust.csproj
+          -c Release
+          -o target/nuget/packages
+          -p:PackageVersion=${{ needs.prepare.outputs.version }}
+      - name: Verify package contents
+        shell: pwsh
+        run: ./scripts/dotnet/Verify-Package.ps1 -PackagePath 'target/nuget/packages/MiniExcel.Rust.${{ needs.prepare.outputs.version }}.nupkg'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: target/nuget/packages/MiniExcel.Rust.${{ needs.prepare.outputs.version }}.*nupkg
+          if-no-files-found: error
+
+  test-package:
+    needs: [prepare, pack]
+    name: Consume ${{ matrix.rid }} package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            rid: win-x64
+            musl: false
+          - runner: windows-11-arm
+            rid: win-arm64
+            musl: false
+          - runner: ubuntu-latest
+            rid: linux-x64
+            musl: false
+          - runner: ubuntu-24.04-arm
+            rid: linux-arm64
+            musl: false
+          - runner: ubuntu-latest
+            rid: linux-musl-x64
+            musl: true
+          - runner: ubuntu-24.04-arm
+            rid: linux-musl-arm64
+            musl: true
+          - runner: macos-15-intel
+            rid: osx-x64
+            musl: false
+          - runner: macos-latest
+            rid: osx-arm64
+            musl: false
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: target/nuget/packages
+      - name: Consume package
+        if: ${{ !matrix.musl }}
+        shell: pwsh
+        run: |
+          dotnet new nugetconfig --output target/nuget/restore --force
+          dotnet nuget add source "$env:GITHUB_WORKSPACE/target/nuget/packages" --name MiniExcelRustLocal --configfile target/nuget/restore/nuget.config
+          dotnet restore dotnet/tests/MiniExcel.Rust.PackageTests/MiniExcel.Rust.PackageTests.csproj --force --no-cache --configfile target/nuget/restore/nuget.config -p:MiniExcelRustPackageVersion='${{ needs.prepare.outputs.version }}'
+          dotnet run --project dotnet/tests/MiniExcel.Rust.PackageTests/MiniExcel.Rust.PackageTests.csproj -c Release --no-restore -p:MiniExcelRustPackageVersion='${{ needs.prepare.outputs.version }}'
+      - name: Consume package in Alpine
+        if: matrix.musl
+        run: >-
+          docker run --rm
+          -v "$GITHUB_WORKSPACE:/work"
+          -w /work
+          mcr.microsoft.com/dotnet/sdk:8.0-alpine
+          sh -lc 'dotnet restore dotnet/tests/MiniExcel.Rust.PackageTests/MiniExcel.Rust.PackageTests.csproj --source target/nuget/packages --source https://api.nuget.org/v3/index.json -p:MiniExcelRustPackageVersion=${{ needs.prepare.outputs.version }} && dotnet run --project dotnet/tests/MiniExcel.Rust.PackageTests/MiniExcel.Rust.PackageTests.csproj -c Release --no-restore -p:MiniExcelRustPackageVersion=${{ needs.prepare.outputs.version }}'
+
+  publish:
+    needs: [prepare, test-package]
+    if: github.event_name == 'push' || inputs.publish == true
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: target/nuget/packages
+      - name: NuGet login
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ITWeiHan
+      - name: Publish MiniExcel.Rust
+        run: >-
+          dotnet nuget push
+          target/nuget/packages/MiniExcel.Rust.${{ needs.prepare.outputs.version }}.nupkg
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+      - name: Create GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create '${{ github.ref_name }}'
+          target/nuget/packages/*
+          --verify-tag
+          --generate-notes
+          --title 'MiniExcel.Rust ${{ needs.prepare.outputs.version }}'

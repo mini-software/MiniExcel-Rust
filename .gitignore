@@ -1,6 +1,8 @@
 /target/
 /benchmarks/dotnet-v1-query/bin/
 /benchmarks/dotnet-v1-query/obj/
+/benchmarks/nuget-v1-query/bin/
+/benchmarks/nuget-v1-query/obj/
 /dotnet/**/bin/
 /dotnet/**/obj/
 /web-demo/dist/

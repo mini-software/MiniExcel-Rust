@@ -11,6 +11,23 @@
 
 两个 runner 都会遍历所有返回行，但不会把完整 worksheet 保留在内存中。本测试不包含 Save、类型映射、公式及其他 API。
 
+### NuGet 对 NuGet 压力测试
+
+如需比较实际发布包而不是 Rust CLI，请运行：
+
+```powershell
+pwsh ./scripts/compare-nuget-v1-rust.ps1
+```
+
+该脚本先构建本地 `MiniExcel.Rust` 包，自动解析 NuGet 上最新的稳定 MiniExcel v1，再创建隔离的
+`net8.0` 消费者并对比 `MiniExcel.Query` 与 `MiniExcelRust.Query`。计时前会逐行、逐列、
+逐值验证结果；Cold 与 Steady 场景使用交替的新进程执行，并将 Query 耗时、首行延迟、托管分配、
+峰值工作集与峰值私有内存写入 `target/benchmarks/nuget-v1/benchmark-<rid>.{json,md}`。
+
+可通过 `-Rows`、`-Columns`、`-Iterations`、`-Passes` 和 `-WarmupPasses` 调整压力。
+GitHub 的 `NuGet Benchmark` workflow 会在 Windows、Linux、macOS 的 x64 与 Arm64 环境运行同一套测试。
+如需复现历史结果，可传入 `-MiniExcelVersion 1.46.0` 固定基线版本。
+
 ## 公平性控制
 
 - 两个 runner 都使用 Release 构建、同一份工作簿和语义等价的公开动态 Query API。

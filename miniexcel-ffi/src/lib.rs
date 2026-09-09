@@ -21,7 +21,7 @@ use quick_xml::events::{BytesStart, Event};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-const ABI_VERSION: u32 = 1;
+const ABI_VERSION: u32 = 2;
 const RESULT_END: i32 = 0;
 const RESULT_BATCH: i32 = 1;
 const ERROR_INVALID_ARGUMENT: i32 = -1;
@@ -1040,40 +1040,34 @@ pub unsafe extern "C" fn miniexcel_save_as_sheets(
     })
 }
 
-/// Creates an XLSX workbook from dynamic rows and a JSON write-options payload.
+/// Creates an XLSX workbook from dynamic rows and a binary write-options payload.
 ///
 /// # Safety
 ///
-/// `path`, `data`, `options_json`, and `out_row_count` must be valid for supplied lengths.
+/// `path`, `data`, `options_data`, and `out_row_count` must be valid for supplied lengths.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn miniexcel_save_as_configured(
     path: *const c_char,
     data: *const u8,
     data_length: usize,
-    options_json: *const u8,
+    options_data: *const u8,
     options_length: usize,
     out_row_count: *mut u32,
 ) -> i32 {
     ffi_result(|| {
-        if path.is_null() || data.is_null() || options_json.is_null() || out_row_count.is_null() {
-            set_last_error("path, data, options_json, and out_row_count are required");
+        if path.is_null() || data.is_null() || options_data.is_null() || out_row_count.is_null() {
+            set_last_error("path, data, options_data, and out_row_count are required");
             return Err(ERROR_INVALID_ARGUMENT);
         }
         unsafe { ptr::write(out_row_count, 0) };
         let path = unsafe { read_utf8(path) }?;
         let mut rows = decode_rows(unsafe { std::slice::from_raw_parts(data, data_length) })?;
-        let payload: serde_json::Value = serde_json::from_slice(unsafe {
-            std::slice::from_raw_parts(options_json, options_length)
-        })
-        .map_err(|error| {
-            set_last_error(format!("invalid write-options JSON: {error}"));
-            ERROR_INVALID_ARGUMENT
-        })?;
-        let options = configured_write_options(&payload)?;
-        let schema = configured_schema(&payload)?;
-        let formula_columns = configured_formula_columns(&payload)?;
+        let BinaryXlsxWritePayload { schema, options, formula_columns, overwrite_file } =
+            decode_xlsx_write_payload(unsafe {
+                std::slice::from_raw_parts(options_data, options_length)
+            })?;
         if formula_columns.is_empty() {
-            write_configured_workbook(path, &rows, schema.as_deref(), &options)?;
+            write_configured_workbook(path, &rows, Some(&schema), &options)?;
         } else {
             for row in &mut rows {
                 for column in &formula_columns {
@@ -1100,9 +1094,9 @@ pub unsafe extern "C" fn miniexcel_save_as_configured(
             std::fs::remove_file(&staging).map_err(write_error)?;
             let staging_options = options.clone().with_overwrite_file(false);
             let staging_path: &Path = staging.as_ref();
-            write_configured_workbook(staging_path, &rows, schema.as_deref(), &staging_options)?;
+            write_configured_workbook(staging_path, &rows, Some(&schema), &staging_options)?;
             let template_options = TemplateOptions::new()
-                .with_overwrite_file(json_bool(&payload, "overwriteFile", false)?)
+                .with_overwrite_file(overwrite_file)
                 .with_ignore_missing_variables(true);
             MiniExcel::save_as_template(path, &staging, &serde_json::json!({}), &template_options)
                 .map_err(|error| {
@@ -1123,7 +1117,7 @@ pub unsafe extern "C" fn miniexcel_save_as_configured(
 pub unsafe extern "C" fn miniexcel_save_as_spooled_async(
     path: *const c_char,
     spool_path: *const c_char,
-    options_json: *const u8,
+    options_data: *const u8,
     options_length: usize,
     cancellation: *mut CancellationHandle,
     out_row_count: *mut u32,
@@ -1131,30 +1125,21 @@ pub unsafe extern "C" fn miniexcel_save_as_spooled_async(
     ffi_result(|| {
         if path.is_null()
             || spool_path.is_null()
-            || options_json.is_null()
+            || options_data.is_null()
             || cancellation.is_null()
             || out_row_count.is_null()
         {
             set_last_error(
-                "path, spool_path, options_json, cancellation, and out_row_count are required",
+                "path, spool_path, options_data, cancellation, and out_row_count are required",
             );
             return Err(ERROR_INVALID_ARGUMENT);
         }
         unsafe { ptr::write(out_row_count, 0) };
         let path = unsafe { read_utf8(path) }?;
         let spool_path = unsafe { read_utf8(spool_path) }?;
-        let payload: serde_json::Value = serde_json::from_slice(unsafe {
-            std::slice::from_raw_parts(options_json, options_length)
-        })
-        .map_err(|error| {
-            set_last_error(format!("invalid write-options JSON: {error}"));
-            ERROR_INVALID_ARGUMENT
+        let BinaryXlsxWritePayload { schema, options, .. } = decode_xlsx_write_payload(unsafe {
+            std::slice::from_raw_parts(options_data, options_length)
         })?;
-        let schema = configured_schema(&payload)?.ok_or_else(|| {
-            set_last_error("async spool export requires an explicit schema");
-            ERROR_INVALID_ARGUMENT
-        })?;
-        let options = configured_write_options(&payload)?;
         let rows = SpoolRows::open(spool_path).map_err(write_error)?;
         let rows = futures_util::stream::iter(rows);
         let token = unsafe { &*cancellation }.token.clone();
@@ -1179,7 +1164,7 @@ pub unsafe extern "C" fn miniexcel_save_as_spooled_async(
 pub unsafe extern "C" fn miniexcel_save_csv_spooled_async(
     path: *const c_char,
     spool_path: *const c_char,
-    options_json: *const u8,
+    options_data: *const u8,
     options_length: usize,
     cancellation: *mut CancellationHandle,
     out_row_count: *mut u32,
@@ -1187,48 +1172,28 @@ pub unsafe extern "C" fn miniexcel_save_csv_spooled_async(
     ffi_result(|| {
         if path.is_null()
             || spool_path.is_null()
-            || options_json.is_null()
+            || options_data.is_null()
             || cancellation.is_null()
             || out_row_count.is_null()
         {
             set_last_error(
-                "path, spool_path, options_json, cancellation, and out_row_count are required",
+                "path, spool_path, options_data, cancellation, and out_row_count are required",
             );
             return Err(ERROR_INVALID_ARGUMENT);
         }
         unsafe { ptr::write(out_row_count, 0) };
         let path = unsafe { read_utf8(path) }?;
         let spool_path = unsafe { read_utf8(spool_path) }?;
-        let payload: serde_json::Value = serde_json::from_slice(unsafe {
-            std::slice::from_raw_parts(options_json, options_length)
-        })
-        .map_err(|error| {
-            set_last_error(format!("invalid CSV write-options JSON: {error}"));
-            ERROR_INVALID_ARGUMENT
-        })?;
-        let schema = configured_schema(&payload)?.ok_or_else(|| {
-            set_last_error("async CSV spool export requires an explicit schema");
-            ERROR_INVALID_ARGUMENT
-        })?;
-        let configuration = CsvConfiguration::new()
-            .with_delimiter(
-                json_u64(&payload, "delimiter", b',' as u64)?
-                    .try_into()
-                    .map_err(|_| invalid_write_options("delimiter exceeds one byte"))?,
-            )
-            .with_encoding(parse_csv_encoding(
-                json_u64(&payload, "encoding", 0)?
-                    .try_into()
-                    .map_err(|_| invalid_write_options("encoding exceeds one byte"))?,
-            )?)
-            .with_write_bom(json_bool(&payload, "writeBom", true)?);
+        let BinaryCsvWritePayload { schema, configuration, print_header, overwrite_file } =
+            decode_csv_write_payload(unsafe {
+                std::slice::from_raw_parts(options_data, options_length)
+            })?;
         let options = CsvWriteOptions::new()
             .with_configuration(configuration)
-            .with_print_header(json_bool(&payload, "printHeader", true)?)
+            .with_print_header(print_header)
             .with_overwrite_file(true);
-        let overwrite = json_bool(&payload, "overwriteFile", false)?;
         let destination = Path::new(path);
-        if destination.exists() && !overwrite {
+        if destination.exists() && !overwrite_file {
             set_last_error(format!("destination '{}' already exists", destination.display()));
             return Err(ERROR_WRITE);
         }
@@ -1484,7 +1449,7 @@ pub unsafe extern "C" fn miniexcel_copy_and_add_sheet(
     })
 }
 
-/// Fills an XLSX template from a UTF-8 JSON value and atomically writes the destination.
+/// Fills an XLSX template from a binary value payload and atomically writes the destination.
 ///
 /// # Safety
 ///
@@ -1493,23 +1458,21 @@ pub unsafe extern "C" fn miniexcel_copy_and_add_sheet(
 pub unsafe extern "C" fn miniexcel_fill_template(
     destination_path: *const c_char,
     template_path: *const c_char,
-    json_data: *const u8,
-    json_length: usize,
+    payload_data: *const u8,
+    payload_length: usize,
     overwrite_file: u8,
     ignore_missing_variables: u8,
 ) -> i32 {
     ffi_result(|| {
-        if destination_path.is_null() || template_path.is_null() || json_data.is_null() {
-            set_last_error("destination_path, template_path, and json_data are required");
+        if destination_path.is_null() || template_path.is_null() || payload_data.is_null() {
+            set_last_error("destination_path, template_path, and payload_data are required");
             return Err(ERROR_INVALID_ARGUMENT);
         }
 
         let destination_path = unsafe { read_utf8(destination_path) }?;
         let template_path = unsafe { read_utf8(template_path) }?;
-        let json = unsafe { std::slice::from_raw_parts(json_data, json_length) };
-        let value: serde_json::Value = serde_json::from_slice(json).map_err(|error| {
-            set_last_error(format!("invalid template JSON: {error}"));
-            ERROR_INVALID_ARGUMENT
+        let value = decode_template_value_payload(unsafe {
+            std::slice::from_raw_parts(payload_data, payload_length)
         })?;
         let options = TemplateOptions::new()
             .with_overwrite_file(overwrite_file != 0)
@@ -1533,23 +1496,20 @@ pub unsafe extern "C" fn miniexcel_fill_template(
 pub unsafe extern "C" fn miniexcel_fill_mapped_template(
     destination_path: *const c_char,
     template_path: *const c_char,
-    json_data: *const u8,
-    json_length: usize,
+    payload_data: *const u8,
+    payload_length: usize,
     overwrite_file: u8,
 ) -> i32 {
     ffi_result(|| {
-        if destination_path.is_null() || template_path.is_null() || json_data.is_null() {
-            set_last_error("destination_path, template_path, and json_data are required");
+        if destination_path.is_null() || template_path.is_null() || payload_data.is_null() {
+            set_last_error("destination_path, template_path, and payload_data are required");
             return Err(ERROR_INVALID_ARGUMENT);
         }
         let destination_path = unsafe { read_utf8(destination_path) }?;
         let template_path = unsafe { read_utf8(template_path) }?;
-        let payload: serde_json::Value =
-            serde_json::from_slice(unsafe { std::slice::from_raw_parts(json_data, json_length) })
-                .map_err(|error| {
-                set_last_error(format!("invalid mapped template JSON: {error}"));
-                ERROR_INVALID_ARGUMENT
-            })?;
+        let payload = decode_mapped_template_payload(unsafe {
+            std::slice::from_raw_parts(payload_data, payload_length)
+        })?;
         fill_mapped_template(destination_path, template_path, &payload, overwrite_file != 0)?;
         Ok(RESULT_BATCH)
     })
@@ -2077,40 +2037,200 @@ fn decode_rows(bytes: &[u8]) -> Result<Vec<DynamicRow>, i32> {
     Ok(rows)
 }
 
-fn configured_schema(payload: &serde_json::Value) -> Result<Option<Vec<String>>, i32> {
-    let Some(schema) = payload.get("schema") else {
-        return Ok(None);
-    };
-    let values =
-        schema.as_array().ok_or_else(|| invalid_write_options("schema must be an array"))?;
-    values
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| invalid_write_options("schema values must be strings"))
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(Some)
+struct BinaryXlsxWritePayload {
+    schema: Vec<String>,
+    options: WriteOptions,
+    formula_columns: Vec<String>,
+    overwrite_file: bool,
 }
 
-fn configured_formula_columns(payload: &serde_json::Value) -> Result<Vec<String>, i32> {
-    let Some(columns) = payload.get("formulaColumns") else {
-        return Ok(Vec::new());
+struct BinaryCsvWritePayload {
+    schema: Vec<String>,
+    configuration: CsvConfiguration,
+    print_header: bool,
+    overwrite_file: bool,
+}
+
+struct BinaryMappedTemplatePayload {
+    sheet_name: String,
+    cells: Vec<BinaryMappedCell>,
+}
+
+struct BinaryMappedCell {
+    address: String,
+    value: serde_json::Value,
+    formula: bool,
+}
+
+fn decode_xlsx_write_payload(bytes: &[u8]) -> Result<BinaryXlsxWritePayload, i32> {
+    let mut reader = binary_payload_reader(bytes, 1)?;
+    let schema = reader.read_strings()?;
+    if schema.is_empty() {
+        return Err(invalid_write_options("schema must contain at least one column"));
+    }
+    let sheet_name = reader.read_string()?;
+    let overwrite_file = reader.read_bool()?;
+    let print_header = reader.read_bool()?;
+    let auto_filter = reader.read_bool()?;
+    let right_to_left = reader.read_bool()?;
+    let auto_width = reader.read_bool()?;
+    let wrap_cell_contents = reader.read_bool()?;
+    let horizontal_alignment = parse_binary_horizontal_alignment(reader.read_byte()?)?;
+    let vertical_alignment = parse_binary_vertical_alignment(reader.read_byte()?)?;
+    let table_style = match reader.read_byte()? {
+        0 => TableStyle::None,
+        1 => TableStyle::Default,
+        _ => return Err(invalid_write_options("table style tag is invalid")),
     };
-    let values = columns
-        .as_array()
-        .ok_or_else(|| invalid_write_options("formulaColumns must be an array"))?;
-    values
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| invalid_write_options("formulaColumns values must be strings"))
-        })
-        .collect()
+    let header_wrap_text = reader.read_bool()?;
+    let header_background_color = parse_rgb_color(&reader.read_string()?)?;
+    let header_horizontal_alignment = parse_binary_horizontal_alignment(reader.read_byte()?)?;
+    let header_vertical_alignment = parse_binary_vertical_alignment(reader.read_byte()?)?;
+    let min_width = reader.read_f64()?;
+    let max_width = reader.read_f64()?;
+    let freeze_row_count = reader.read_u32()?;
+    let freeze_column_count = reader.read_u16()?;
+    let date_format = reader.read_string()?;
+    let time_format = reader.read_string()?;
+    let datetime_format = reader.read_string()?;
+    let duration_format = reader.read_string()?;
+
+    let mut options = WriteOptions::new()
+        .with_sheet_name(sheet_name)
+        .with_overwrite_file(overwrite_file)
+        .with_print_header(print_header)
+        .with_auto_filter(auto_filter)
+        .with_right_to_left(right_to_left)
+        .with_auto_width(auto_width)
+        .with_wrap_cell_contents(wrap_cell_contents)
+        .with_horizontal_alignment(horizontal_alignment)
+        .with_vertical_alignment(vertical_alignment)
+        .with_table_style(table_style)
+        .with_header_style(
+            HeaderStyle::new()
+                .with_wrap_text(header_wrap_text)
+                .with_background_color(header_background_color)
+                .with_horizontal_alignment(header_horizontal_alignment)
+                .with_vertical_alignment(header_vertical_alignment),
+        )
+        .with_min_width(min_width)
+        .with_max_width(max_width)
+        .with_freeze_row_count(freeze_row_count)
+        .with_freeze_column_count(freeze_column_count)
+        .with_date_format(date_format)
+        .with_time_format(time_format)
+        .with_datetime_format(datetime_format)
+        .with_duration_format(duration_format);
+
+    for _ in 0..reader.read_length()? {
+        options = options.with_column_format(reader.read_string()?, reader.read_string()?);
+    }
+    for _ in 0..reader.read_length()? {
+        options = options.with_column_width(reader.read_string()?, reader.read_f64()?);
+    }
+    for _ in 0..reader.read_length()? {
+        options = options.with_column_hidden(reader.read_string()?, reader.read_bool()?);
+    }
+    let formula_columns = reader.read_strings()?;
+    reader.ensure_complete()?;
+    Ok(BinaryXlsxWritePayload { schema, options, formula_columns, overwrite_file })
+}
+
+fn decode_csv_write_payload(bytes: &[u8]) -> Result<BinaryCsvWritePayload, i32> {
+    let mut reader = binary_payload_reader(bytes, 2)?;
+    let schema = reader.read_strings()?;
+    if schema.is_empty() {
+        return Err(invalid_write_options("schema must contain at least one column"));
+    }
+    let configuration = CsvConfiguration::new()
+        .with_delimiter(reader.read_byte()?)
+        .with_encoding(parse_csv_encoding(reader.read_byte()?)?)
+        .with_write_bom(reader.read_bool()?);
+    let print_header = reader.read_bool()?;
+    let overwrite_file = reader.read_bool()?;
+    reader.ensure_complete()?;
+    Ok(BinaryCsvWritePayload { schema, configuration, print_header, overwrite_file })
+}
+
+fn decode_template_value_payload(bytes: &[u8]) -> Result<serde_json::Value, i32> {
+    let mut reader = binary_payload_reader(bytes, 3)?;
+    let value = read_binary_value(&mut reader, 0)?;
+    reader.ensure_complete()?;
+    Ok(value)
+}
+
+fn decode_mapped_template_payload(bytes: &[u8]) -> Result<BinaryMappedTemplatePayload, i32> {
+    let mut reader = binary_payload_reader(bytes, 4)?;
+    let sheet_name = reader.read_string()?;
+    let count = reader.read_length()?;
+    let mut cells = Vec::with_capacity(count);
+    for _ in 0..count {
+        cells.push(BinaryMappedCell {
+            address: reader.read_string()?,
+            formula: reader.read_bool()?,
+            value: read_binary_value(&mut reader, 0)?,
+        });
+    }
+    reader.ensure_complete()?;
+    Ok(BinaryMappedTemplatePayload { sheet_name, cells })
+}
+
+fn read_binary_value(reader: &mut FrameInput<'_>, depth: usize) -> Result<serde_json::Value, i32> {
+    if depth > 64 {
+        set_last_error("binary template value exceeds the maximum nesting depth");
+        return Err(ERROR_INVALID_ARGUMENT);
+    }
+    match reader.read_byte()? {
+        0 => Ok(serde_json::Value::Null),
+        1 => Ok(serde_json::Value::Bool(reader.read_bool()?)),
+        2 => Ok(serde_json::Value::Number(reader.read_i64()?.into())),
+        3 => Ok(serde_json::Value::Number(reader.read_u64()?.into())),
+        4 => serde_json::Number::from_f64(reader.read_f64()?)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| invalid_write_options("template number must be finite")),
+        5 => Ok(serde_json::Value::String(reader.read_string()?)),
+        6 => {
+            let count = reader.read_length()?;
+            let mut values = Vec::with_capacity(count);
+            for _ in 0..count {
+                values.push(read_binary_value(reader, depth + 1)?);
+            }
+            Ok(serde_json::Value::Array(values))
+        }
+        7 => {
+            let count = reader.read_length()?;
+            let mut values = serde_json::Map::with_capacity(count);
+            for _ in 0..count {
+                values.insert(reader.read_string()?, read_binary_value(reader, depth + 1)?);
+            }
+            Ok(serde_json::Value::Object(values))
+        }
+        8 => {
+            let value = reader.read_string()?;
+            serde_json::Number::from_str(&value)
+                .map(serde_json::Value::Number)
+                .map_err(|_| invalid_write_options("template decimal is invalid"))
+        }
+        _ => Err(invalid_write_options("template value tag is invalid")),
+    }
+}
+
+fn parse_binary_horizontal_alignment(value: u8) -> Result<HorizontalAlignment, i32> {
+    match value {
+        0 => Ok(HorizontalAlignment::Left),
+        1 => Ok(HorizontalAlignment::Center),
+        2 => Ok(HorizontalAlignment::Right),
+        _ => Err(invalid_write_options("horizontal alignment tag is invalid")),
+    }
+}
+
+fn parse_binary_vertical_alignment(value: u8) -> Result<VerticalAlignment, i32> {
+    match value {
+        0 => Ok(VerticalAlignment::Bottom),
+        1 => Ok(VerticalAlignment::Center),
+        2 => Ok(VerticalAlignment::Top),
+        _ => Err(invalid_write_options("vertical alignment tag is invalid")),
+    }
 }
 
 fn write_configured_workbook(
@@ -2144,123 +2264,6 @@ fn publish_staged_file(source: &Path, destination: &Path) -> Result<(), i32> {
     std::fs::rename(source, destination).map_err(write_error)
 }
 
-fn configured_write_options(payload: &serde_json::Value) -> Result<WriteOptions, i32> {
-    let mut options = WriteOptions::new()
-        .with_sheet_name(json_string(payload, "sheetName", "Sheet1")?)
-        .with_overwrite_file(json_bool(payload, "overwriteFile", false)?)
-        .with_print_header(json_bool(payload, "printHeader", true)?)
-        .with_auto_filter(json_bool(payload, "autoFilter", true)?)
-        .with_right_to_left(json_bool(payload, "rightToLeft", false)?)
-        .with_auto_width(json_bool(payload, "autoWidth", false)?)
-        .with_wrap_cell_contents(json_bool(payload, "wrapCellContents", false)?)
-        .with_min_width(json_f64(payload, "minWidth", 8.42857143)?)
-        .with_max_width(json_f64(payload, "maxWidth", 200.0)?)
-        .with_freeze_row_count(
-            json_u64(payload, "freezeRowCount", 1)?
-                .try_into()
-                .map_err(|_| invalid_write_options("freezeRowCount exceeds UInt32"))?,
-        )
-        .with_freeze_column_count(
-            json_u64(payload, "freezeColumnCount", 0)?
-                .try_into()
-                .map_err(|_| invalid_write_options("freezeColumnCount exceeds UInt16"))?,
-        )
-        .with_horizontal_alignment(parse_horizontal_alignment(json_string(
-            payload,
-            "horizontalAlignment",
-            "left",
-        )?)?)
-        .with_vertical_alignment(parse_vertical_alignment(json_string(
-            payload,
-            "verticalAlignment",
-            "bottom",
-        )?)?)
-        .with_table_style(match json_string(payload, "tableStyle", "default")?.as_str() {
-            "none" => TableStyle::None,
-            "default" => TableStyle::Default,
-            _ => return Err(invalid_write_options("tableStyle must be none or default")),
-        });
-    let header_style = HeaderStyle::new()
-        .with_wrap_text(json_bool(payload, "headerWrapText", false)?)
-        .with_background_color(parse_rgb_color(&json_string(
-            payload,
-            "headerBackgroundColor",
-            "4472C4",
-        )?)?)
-        .with_horizontal_alignment(parse_horizontal_alignment(json_string(
-            payload,
-            "headerHorizontalAlignment",
-            "left",
-        )?)?)
-        .with_vertical_alignment(parse_vertical_alignment(json_string(
-            payload,
-            "headerVerticalAlignment",
-            "bottom",
-        )?)?);
-    options = options.with_header_style(header_style);
-    for (property, setter) in
-        [("dateFormat", 0_u8), ("timeFormat", 1), ("dateTimeFormat", 2), ("durationFormat", 3)]
-    {
-        if let Some(value) = payload.get(property).and_then(serde_json::Value::as_str) {
-            options = match setter {
-                0 => options.with_date_format(value),
-                1 => options.with_time_format(value),
-                2 => options.with_datetime_format(value),
-                _ => options.with_duration_format(value),
-            };
-        }
-    }
-    if let Some(values) = payload.get("columnFormats").and_then(serde_json::Value::as_object) {
-        for (name, value) in values {
-            options = options.with_column_format(
-                name,
-                value
-                    .as_str()
-                    .ok_or_else(|| invalid_write_options("columnFormats values must be strings"))?,
-            );
-        }
-    }
-    if let Some(values) = payload.get("columnWidths").and_then(serde_json::Value::as_object) {
-        for (name, value) in values {
-            options = options.with_column_width(
-                name,
-                value
-                    .as_f64()
-                    .ok_or_else(|| invalid_write_options("columnWidths values must be numbers"))?,
-            );
-        }
-    }
-    if let Some(values) = payload.get("hiddenColumns").and_then(serde_json::Value::as_object) {
-        for (name, value) in values {
-            options = options.with_column_hidden(
-                name,
-                value.as_bool().ok_or_else(|| {
-                    invalid_write_options("hiddenColumns values must be booleans")
-                })?,
-            );
-        }
-    }
-    Ok(options)
-}
-
-fn parse_horizontal_alignment(value: String) -> Result<HorizontalAlignment, i32> {
-    match value.as_str() {
-        "left" => Ok(HorizontalAlignment::Left),
-        "center" => Ok(HorizontalAlignment::Center),
-        "right" => Ok(HorizontalAlignment::Right),
-        _ => Err(invalid_write_options("horizontal alignment must be left, center, or right")),
-    }
-}
-
-fn parse_vertical_alignment(value: String) -> Result<VerticalAlignment, i32> {
-    match value.as_str() {
-        "bottom" => Ok(VerticalAlignment::Bottom),
-        "center" => Ok(VerticalAlignment::Center),
-        "top" => Ok(VerticalAlignment::Top),
-        _ => Err(invalid_write_options("vertical alignment must be bottom, center, or top")),
-    }
-}
-
 fn parse_rgb_color(value: &str) -> Result<RgbColor, i32> {
     let value = value.strip_prefix('#').unwrap_or(value);
     if value.len() != 6 {
@@ -2273,43 +2276,6 @@ fn parse_rgb_color(value: &str) -> Result<RgbColor, i32> {
         ((color >> 8) & 0xff) as u8,
         (color & 0xff) as u8,
     ))
-}
-
-fn json_string(payload: &serde_json::Value, name: &str, default: &str) -> Result<String, i32> {
-    match payload.get(name) {
-        None => Ok(default.to_owned()),
-        Some(value) => value
-            .as_str()
-            .map(str::to_owned)
-            .ok_or_else(|| invalid_write_options(&format!("{name} must be a string"))),
-    }
-}
-
-fn json_bool(payload: &serde_json::Value, name: &str, default: bool) -> Result<bool, i32> {
-    match payload.get(name) {
-        None => Ok(default),
-        Some(value) => value
-            .as_bool()
-            .ok_or_else(|| invalid_write_options(&format!("{name} must be a boolean"))),
-    }
-}
-
-fn json_f64(payload: &serde_json::Value, name: &str, default: f64) -> Result<f64, i32> {
-    match payload.get(name) {
-        None => Ok(default),
-        Some(value) => {
-            value.as_f64().ok_or_else(|| invalid_write_options(&format!("{name} must be a number")))
-        }
-    }
-}
-
-fn json_u64(payload: &serde_json::Value, name: &str, default: u64) -> Result<u64, i32> {
-    match payload.get(name) {
-        None => Ok(default),
-        Some(value) => value.as_u64().ok_or_else(|| {
-            invalid_write_options(&format!("{name} must be a non-negative integer"))
-        }),
-    }
 }
 
 fn invalid_write_options(message: &str) -> i32 {
@@ -2840,17 +2806,10 @@ fn write_rewritten_package(
 fn fill_mapped_template(
     destination_path: &str,
     template_path: &str,
-    payload: &serde_json::Value,
+    payload: &BinaryMappedTemplatePayload,
     overwrite: bool,
 ) -> Result<(), i32> {
-    let sheet_name = payload
-        .get("sheetName")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| invalid_write_options("sheetName is required"))?;
-    let cells = payload
-        .get("cells")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| invalid_write_options("cells must be an array"))?;
+    let sheet_name = &payload.sheet_name;
     let file = File::open(template_path).map_err(write_error)?;
     let mut archive = ZipArchive::new(file).map_err(write_error)?;
     let workbook = read_zip_entry(&mut archive, "xl/workbook.xml")?;
@@ -2871,23 +2830,17 @@ fn fill_mapped_template(
         })?);
     let mut worksheet =
         String::from_utf8(read_zip_entry(&mut archive, &worksheet_path)?).map_err(write_error)?;
-    let mut ordered_cells = cells.iter().collect::<Vec<_>>();
+    let mut ordered_cells = payload.cells.iter().collect::<Vec<_>>();
     ordered_cells.sort_by_key(|cell| {
-        let address = cell.get("address").and_then(serde_json::Value::as_str).unwrap_or_default();
         (
-            cell_row_index(address).unwrap_or(usize::MAX),
-            cell_column_index(address).unwrap_or(usize::MAX),
+            cell_row_index(&cell.address).unwrap_or(usize::MAX),
+            cell_column_index(&cell.address).unwrap_or(usize::MAX),
         )
     });
     for cell in ordered_cells {
-        let address = cell
-            .get("address")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| invalid_write_options("each mapped cell requires an address"))?;
+        let address = &cell.address;
         let row = cell_row_index(address)?;
-        let formula = cell.get("formula").and_then(serde_json::Value::as_bool).unwrap_or(false);
-        let value = cell.get("value").unwrap_or(&serde_json::Value::Null);
-        worksheet = upsert_worksheet_cell(&worksheet, address, row, value, formula)?;
+        worksheet = upsert_worksheet_cell(&worksheet, address, row, &cell.value, cell.formula)?;
     }
     let mut replacements = BTreeMap::new();
     replacements.insert(worksheet_path, worksheet.into_bytes());
@@ -3306,6 +3259,14 @@ impl<'a> FrameInput<'a> {
         Ok(u32::from_le_bytes(value))
     }
 
+    fn read_u16(&mut self) -> Result<u16, i32> {
+        self.ensure_available(2)?;
+        let mut value = [0_u8; 2];
+        value.copy_from_slice(&self.bytes[self.offset..self.offset + 2]);
+        self.offset += 2;
+        Ok(u16::from_le_bytes(value))
+    }
+
     fn read_u64(&mut self) -> Result<u64, i32> {
         self.ensure_available(8)?;
         let mut value = [0_u8; 8];
@@ -3316,6 +3277,21 @@ impl<'a> FrameInput<'a> {
 
     fn read_i64(&mut self) -> Result<i64, i32> {
         self.read_u64().map(|value| i64::from_le_bytes(value.to_le_bytes()))
+    }
+
+    fn read_f64(&mut self) -> Result<f64, i32> {
+        self.read_u64().map(f64::from_bits)
+    }
+
+    fn read_bool(&mut self) -> Result<bool, i32> {
+        match self.read_byte()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => {
+                set_last_error("binary payload boolean tag is invalid");
+                Err(ERROR_INVALID_ARGUMENT)
+            }
+        }
     }
 
     fn read_length(&mut self) -> Result<usize, i32> {
@@ -3333,6 +3309,11 @@ impl<'a> FrameInput<'a> {
             .to_owned();
         self.offset += length;
         Ok(value)
+    }
+
+    fn read_strings(&mut self) -> Result<Vec<String>, i32> {
+        let count = self.read_length()?;
+        (0..count).map(|_| self.read_string()).collect()
     }
 
     fn ensure_complete(&self) -> Result<(), i32> {
@@ -3354,6 +3335,25 @@ impl<'a> FrameInput<'a> {
     }
 }
 
+fn binary_payload_reader(bytes: &[u8], expected_kind: u8) -> Result<FrameInput<'_>, i32> {
+    let mut reader = FrameInput::new(bytes);
+    let magic =
+        [reader.read_byte()?, reader.read_byte()?, reader.read_byte()?, reader.read_byte()?];
+    if magic != *b"MXBP" {
+        set_last_error("binary payload magic is invalid");
+        return Err(ERROR_INVALID_ARGUMENT);
+    }
+    if reader.read_byte()? != 1 {
+        set_last_error("binary payload version is unsupported");
+        return Err(ERROR_INVALID_ARGUMENT);
+    }
+    if reader.read_byte()? != expected_kind {
+        set_last_error("binary payload kind is invalid");
+        return Err(ERROR_INVALID_ARGUMENT);
+    }
+    Ok(reader)
+}
+
 fn write_length(frame: &mut Vec<u8>, length: usize) -> Result<(), i32> {
     let length = u32::try_from(length).map_err(|_| {
         set_last_error("FFI frame value exceeds the 4 GiB format limit");
@@ -3373,7 +3373,33 @@ mod tests {
 
     #[test]
     fn reports_the_supported_abi_version() {
-        assert_eq!(miniexcel_abi_version(), 1);
+        assert_eq!(miniexcel_abi_version(), 2);
+    }
+
+    #[test]
+    fn rejects_invalid_binary_payload_headers() {
+        assert_eq!(decode_template_value_payload(b"JSON"), Err(ERROR_INVALID_ARGUMENT));
+        assert_eq!(decode_template_value_payload(b"MXBP\x02\x03"), Err(ERROR_INVALID_ARGUMENT));
+        assert_eq!(decode_template_value_payload(b"MXBP\x01\x02"), Err(ERROR_INVALID_ARGUMENT));
+    }
+
+    #[test]
+    fn decodes_nested_binary_template_values() {
+        let mut payload = b"MXBP\x01\x03".to_vec();
+        payload.push(7);
+        write_u32(&mut payload, 1);
+        write_string(&mut payload, "items").unwrap();
+        payload.push(6);
+        write_u32(&mut payload, 2);
+        payload.push(2);
+        payload.extend_from_slice(&10_i64.to_le_bytes());
+        payload.push(5);
+        write_string(&mut payload, "Ada").unwrap();
+
+        assert_eq!(
+            decode_template_value_payload(&payload).unwrap(),
+            serde_json::json!({ "items": [10, "Ada"] })
+        );
     }
 
     #[test]

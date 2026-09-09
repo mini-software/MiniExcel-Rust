@@ -4,7 +4,6 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Win32.SafeHandles;
 
 namespace MiniExcelLibs;
@@ -1094,13 +1093,14 @@ public static class MiniExcelRust
             if (schema is null)
                 throw new InvalidOperationException("Async export requires at least one row to infer its schema.");
 
-            var payload = JsonSerializer.SerializeToUtf8Bytes(new
-            {
+            var payload = MiniExcelBinaryPayload.EncodeXlsxWrite(
                 schema,
-                sheetName,
-                overwriteFile,
-                printHeader
-            }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+                new MiniExcelRustWriteOptions
+                {
+                    SheetName = sheetName,
+                    OverwriteFile = overwriteFile,
+                    PrintHeader = printHeader
+                });
             using var nativePath = new Utf8String(Path.GetFullPath(path));
             using var nativeSpoolPath = new Utf8String(spoolPath);
             using var nativeCancellation = NativeCancellationHandle.Create();
@@ -1262,43 +1262,9 @@ public static class MiniExcelRust
         if (rows is null)
             throw new ArgumentNullException(nameof(rows));
         options ??= new MiniExcelRustWriteOptions();
-        var formulaColumns = options.DynamicColumns
-            .Where(column => column.Value.IsFormula)
-            .Select(column => string.IsNullOrWhiteSpace(column.Value.Name) ? column.Key : column.Value.Name!)
-            .ToArray();
-
         EnsureAbiVersion();
         var frame = EncodeRows(rows);
-        var payload = JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            schema,
-            options.SheetName,
-            options.OverwriteFile,
-            options.PrintHeader,
-            options.AutoFilter,
-            options.RightToLeft,
-            options.AutoWidth,
-            options.WrapCellContents,
-            horizontalAlignment = options.HorizontalAlignment.ToString().ToLowerInvariant(),
-            verticalAlignment = options.VerticalAlignment.ToString().ToLowerInvariant(),
-            tableStyle = options.TableStyle.ToString().ToLowerInvariant(),
-            options.HeaderWrapText,
-            options.HeaderBackgroundColor,
-            headerHorizontalAlignment = options.HeaderHorizontalAlignment.ToString().ToLowerInvariant(),
-            headerVerticalAlignment = options.HeaderVerticalAlignment.ToString().ToLowerInvariant(),
-            options.MinWidth,
-            options.MaxWidth,
-            options.FreezeRowCount,
-            options.FreezeColumnCount,
-            options.DateFormat,
-            options.TimeFormat,
-            options.DateTimeFormat,
-            options.DurationFormat,
-            options.ColumnFormats,
-            options.ColumnWidths,
-            options.HiddenColumns,
-            formulaColumns
-        }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var payload = MiniExcelBinaryPayload.EncodeXlsxWrite(schema, options);
         using var nativePath = new Utf8String(Path.GetFullPath(path));
         var frameHandle = GCHandle.Alloc(frame, GCHandleType.Pinned);
         var payloadHandle = GCHandle.Alloc(payload, GCHandleType.Pinned);
@@ -1444,15 +1410,7 @@ public static class MiniExcelRust
             }
             if (schema is null)
                 throw new InvalidOperationException("Async CSV export requires at least one row to infer its schema.");
-            var payload = JsonSerializer.SerializeToUtf8Bytes(new
-            {
-                schema,
-                delimiter = (byte)configuration.Delimiter,
-                encoding = (byte)configuration.Encoding,
-                configuration.WriteBom,
-                configuration.PrintHeader,
-                configuration.OverwriteFile
-            }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var payload = MiniExcelBinaryPayload.EncodeCsvWrite(schema, configuration);
             using var nativePath = new Utf8String(Path.GetFullPath(path));
             using var nativeSpoolPath = new Utf8String(spoolPath);
             using var nativeCancellation = NativeCancellationHandle.Create();
@@ -1812,17 +1770,17 @@ public static class MiniExcelRust
             throw new ArgumentNullException(nameof(value));
 
         EnsureAbiVersion();
-        var json = JsonSerializer.SerializeToUtf8Bytes(value, value.GetType());
+        var payload = MiniExcelBinaryPayload.EncodeTemplateValue(value);
         using var nativeDestinationPath = new Utf8String(Path.GetFullPath(destinationPath));
         using var nativeTemplatePath = new Utf8String(Path.GetFullPath(templatePath));
-        var jsonHandle = GCHandle.Alloc(json, GCHandleType.Pinned);
+        var payloadHandle = GCHandle.Alloc(payload, GCHandleType.Pinned);
         try
         {
             var result = NativeMethods.FillTemplate(
                 nativeDestinationPath.Pointer,
                 nativeTemplatePath.Pointer,
-                jsonHandle.AddrOfPinnedObject(),
-                (UIntPtr)(uint)json.Length,
+            payloadHandle.AddrOfPinnedObject(),
+            (UIntPtr)(uint)payload.Length,
                 overwriteFile ? (byte)1 : (byte)0,
                 ignoreMissingVariables ? (byte)1 : (byte)0);
             if (result < 0)
@@ -1830,7 +1788,7 @@ public static class MiniExcelRust
         }
         finally
         {
-            jsonHandle.Free();
+            payloadHandle.Free();
         }
     }
 
@@ -2739,7 +2697,7 @@ public static class MiniExcelRust
     private static void EnsureAbiVersion()
     {
         var version = NativeMethods.GetAbiVersion();
-        if (version != 1)
+        if (version != 2)
             throw new NotSupportedException($"MiniExcel Rust ABI version {version} is not supported.");
     }
 
@@ -3077,7 +3035,7 @@ public static class MiniExcelRust
             IntPtr path,
             IntPtr data,
             UIntPtr dataLength,
-            IntPtr optionsJson,
+            IntPtr optionsData,
             UIntPtr optionsLength,
             out uint rowCount);
 
@@ -3141,8 +3099,8 @@ public static class MiniExcelRust
         internal static extern int FillTemplate(
             IntPtr destinationPath,
             IntPtr templatePath,
-            IntPtr jsonData,
-            UIntPtr jsonLength,
+            IntPtr payloadData,
+            UIntPtr payloadLength,
             byte overwriteFile,
             byte ignoreMissingVariables);
 
@@ -3150,8 +3108,8 @@ public static class MiniExcelRust
         internal static extern int FillMappedTemplate(
             IntPtr destinationPath,
             IntPtr templatePath,
-            IntPtr jsonData,
-            UIntPtr jsonLength,
+            IntPtr payloadData,
+            UIntPtr payloadLength,
             byte overwriteFile);
 
         [DllImport(LibraryName, EntryPoint = "miniexcel_merge_same_cells", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -3177,7 +3135,7 @@ public static class MiniExcelRust
         internal static extern int SaveAsSpooledAsync(
             IntPtr path,
             IntPtr spoolPath,
-            IntPtr optionsJson,
+            IntPtr optionsData,
             UIntPtr optionsLength,
             NativeCancellationHandle cancellation,
             out uint rowCount);
@@ -3186,7 +3144,7 @@ public static class MiniExcelRust
         internal static extern int SaveCsvSpooledAsync(
             IntPtr path,
             IntPtr spoolPath,
-            IntPtr optionsJson,
+            IntPtr optionsData,
             UIntPtr optionsLength,
             NativeCancellationHandle cancellation,
             out uint rowCount);

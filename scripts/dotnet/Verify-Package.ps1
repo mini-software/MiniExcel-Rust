@@ -72,6 +72,10 @@ try {
     if ($dependencies.Count -ne 2 -or $invalidDependencies.Count -ne 0) {
         throw 'Every target framework must depend on MiniExcel [1.46.0].'
     }
+    $jsonDependencies = @($nuspec.SelectNodes('//n:dependency[@id="System.Text.Json"]', $namespace))
+    if ($jsonDependencies.Count -ne 0) {
+        throw 'MiniExcel.Rust must not expose a System.Text.Json package dependency.'
+    }
 }
 finally {
     $archive.Dispose()

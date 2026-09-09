@@ -48,7 +48,7 @@ Requires Rust 1.85.0 or later.
 ### .NET Package
 
 The repository also builds the prerelease `MiniExcel.Rust` NuGet package. It depends on MiniExcel
-v1 (`1.46.0` or a later 1.x release), reuses its configuration and mapping types, and routes calls
+v1 `1.46.0`, reuses its configuration and mapping types, and routes calls
 made through `MiniExcelRust` to the Rust native library.
 
 ```bash

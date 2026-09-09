@@ -28,7 +28,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MiniExcel" Version="[1.46.0,2.0.0-0)" />
+    <PackageReference Include="MiniExcel" Version="[1.46.0]" />
     <PackageReference Include="System.Text.Json" Version="10.0.10" />
   </ItemGroup>
 

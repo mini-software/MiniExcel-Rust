@@ -68,9 +68,9 @@ try {
         throw "Unexpected package ID '$packageId'."
     }
     $dependencies = @($nuspec.SelectNodes('//n:dependency[@id="MiniExcel"]', $namespace))
-    $invalidDependencies = @($dependencies | Where-Object version -ne '[1.46.0, 2.0.0-0)')
+    $invalidDependencies = @($dependencies | Where-Object version -ne '[1.46.0]')
     if ($dependencies.Count -ne 2 -or $invalidDependencies.Count -ne 0) {
-        throw 'Every target framework must depend on MiniExcel [1.46.0, 2.0.0-0).'
+        throw 'Every target framework must depend on MiniExcel [1.46.0].'
     }
 }
 finally {

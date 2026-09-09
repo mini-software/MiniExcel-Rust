@@ -1,0 +1,16 @@
+[package]
+name = "miniexcel-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Native C ABI for MiniExcel .NET interop"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+miniexcel = { path = "../miniexcel" }

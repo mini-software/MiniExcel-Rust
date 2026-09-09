@@ -1,5 +1,5 @@
 [workspace]
-members = ["miniexcel", "miniexcel-cli", "miniexcel-wasm"]
+members = ["miniexcel", "miniexcel-cli", "miniexcel-ffi", "miniexcel-wasm"]
 resolver = "2"
 
 [workspace.package]

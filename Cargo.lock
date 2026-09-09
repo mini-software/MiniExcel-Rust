@@ -633,6 +633,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "miniexcel-ffi"
+version = "0.4.0"
+dependencies = [
+ "miniexcel",
+]
+
+[[package]]
 name = "miniexcel-wasm"
 version = "0.4.0"
 dependencies = [

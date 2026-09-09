@@ -13,7 +13,7 @@ $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $packageDirectory = Join-Path $repositoryRoot 'target/nuget/packages'
 $packageCache = Join-Path $repositoryRoot 'target/nuget/packages-cache'
 $restoreDirectory = Join-Path $repositoryRoot 'target/nuget/restore'
-$restoreConfig = Join-Path $restoreDirectory 'NuGet.Config'
+$restoreConfig = Join-Path $restoreDirectory 'nuget.config'
 $consumerProject = Join-Path $repositoryRoot 'dotnet/tests/MiniExcel.Rust.PackageTests/MiniExcel.Rust.PackageTests.csproj'
 
 if (-not $SkipNativeBuild) {

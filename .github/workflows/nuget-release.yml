@@ -186,8 +186,8 @@ jobs:
         shell: pwsh
         run: |
           dotnet new nugetconfig --output target/nuget/restore --force
-          dotnet nuget add source "$env:GITHUB_WORKSPACE/target/nuget/packages" --name MiniExcelRustLocal --configfile target/nuget/restore/NuGet.Config
-          dotnet restore dotnet/tests/MiniExcel.Rust.PackageTests/MiniExcel.Rust.PackageTests.csproj --force --no-cache --configfile target/nuget/restore/NuGet.Config -p:MiniExcelRustPackageVersion='${{ needs.prepare.outputs.version }}'
+          dotnet nuget add source "$env:GITHUB_WORKSPACE/target/nuget/packages" --name MiniExcelRustLocal --configfile target/nuget/restore/nuget.config
+          dotnet restore dotnet/tests/MiniExcel.Rust.PackageTests/MiniExcel.Rust.PackageTests.csproj --force --no-cache --configfile target/nuget/restore/nuget.config -p:MiniExcelRustPackageVersion='${{ needs.prepare.outputs.version }}'
           dotnet run --project dotnet/tests/MiniExcel.Rust.PackageTests/MiniExcel.Rust.PackageTests.csproj -c Release --no-restore -p:MiniExcelRustPackageVersion='${{ needs.prepare.outputs.version }}'
       - name: Consume package in Alpine
         if: matrix.musl

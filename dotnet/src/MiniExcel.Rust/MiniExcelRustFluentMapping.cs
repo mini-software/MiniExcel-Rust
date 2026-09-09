@@ -2,7 +2,6 @@ using System.Collections;
 using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Text.Json;
 
 namespace MiniExcelLibs;
 
@@ -401,16 +400,12 @@ internal sealed class MappedGrid
 
     public byte[] CreateTemplatePayload(string sheetName)
     {
-        return JsonSerializer.SerializeToUtf8Bytes(new
-        {
+        return MiniExcelBinaryPayload.EncodeMappedTemplate(
             sheetName,
-            cells = _values.Select(cell => new
-            {
-                address = $"{ColumnName(cell.Key.Column)}{cell.Key.Row}",
-                value = cell.Value,
-                formula = _formulaCells.Contains(cell.Key)
-            })
-        });
+            _values.Select(cell => new MiniExcelBinaryPayload.MappedCell(
+                $"{ColumnName(cell.Key.Column)}{cell.Key.Row}",
+                cell.Value,
+                _formulaCells.Contains(cell.Key))));
     }
 
     internal static (int Row, int Column) ParseCell(string cellAddress)

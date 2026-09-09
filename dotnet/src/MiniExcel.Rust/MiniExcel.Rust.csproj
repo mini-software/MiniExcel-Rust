@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>MiniExcelLibs</RootNamespace>
+    <AssemblyName>MiniExcel.Rust</AssemblyName>
+    <PackageId>MiniExcel.Rust</PackageId>
+    <Version>0.1.0-preview.1</Version>
+    <Title>MiniExcel.Rust</Title>
+    <Description>MiniExcel-compatible spreadsheet APIs for .NET powered by MiniExcel for Rust.</Description>
+    <Authors>Mini-Software</Authors>
+    <Company>Mini-Software</Company>
+    <PackageTags>excel;xlsx;csv;rust;native;streaming;miniexcel</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/mini-software/MiniExcel-Rust</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/mini-software/MiniExcel-Rust</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <MiniExcelRustArtifactsRoot>$(MSBuildThisFileDirectory)..\..\..\target\nuget\native</MiniExcelRustArtifactsRoot>
+    <MiniExcelRustRequireAllNativeAssets Condition="'$(MiniExcelRustRequireAllNativeAssets)' == ''">true</MiniExcelRustRequireAllNativeAssets>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MiniExcel" Version="[1.46.0,2.0.0-0)" />
+    <PackageReference Include="System.Text.Json" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\..\README.md" Pack="true" PackagePath="\" />
+
+    <ExpectedNativeAsset Include="$(MiniExcelRustArtifactsRoot)\win-x64\miniexcel_ffi.dll" Rid="win-x64" PackagePath="runtimes/win-x64/native/miniexcel_ffi.dll" />
+    <ExpectedNativeAsset Include="$(MiniExcelRustArtifactsRoot)\win-arm64\miniexcel_ffi.dll" Rid="win-arm64" PackagePath="runtimes/win-arm64/native/miniexcel_ffi.dll" />
+    <ExpectedNativeAsset Include="$(MiniExcelRustArtifactsRoot)\linux-x64\libminiexcel_ffi.so" Rid="linux-x64" PackagePath="runtimes/linux-x64/native/libminiexcel_ffi.so" />
+    <ExpectedNativeAsset Include="$(MiniExcelRustArtifactsRoot)\linux-arm64\libminiexcel_ffi.so" Rid="linux-arm64" PackagePath="runtimes/linux-arm64/native/libminiexcel_ffi.so" />
+    <ExpectedNativeAsset Include="$(MiniExcelRustArtifactsRoot)\linux-musl-x64\libminiexcel_ffi.so" Rid="linux-musl-x64" PackagePath="runtimes/linux-musl-x64/native/libminiexcel_ffi.so" />
+    <ExpectedNativeAsset Include="$(MiniExcelRustArtifactsRoot)\linux-musl-arm64\libminiexcel_ffi.so" Rid="linux-musl-arm64" PackagePath="runtimes/linux-musl-arm64/native/libminiexcel_ffi.so" />
+    <ExpectedNativeAsset Include="$(MiniExcelRustArtifactsRoot)\osx-x64\libminiexcel_ffi.dylib" Rid="osx-x64" PackagePath="runtimes/osx-x64/native/libminiexcel_ffi.dylib" />
+    <ExpectedNativeAsset Include="$(MiniExcelRustArtifactsRoot)\osx-arm64\libminiexcel_ffi.dylib" Rid="osx-arm64" PackagePath="runtimes/osx-arm64/native/libminiexcel_ffi.dylib" />
+
+    <None Include="$(MiniExcelRustArtifactsRoot)\win-x64\miniexcel_ffi.dll" Pack="true" PackagePath="runtimes/win-x64/native/miniexcel_ffi.dll" Condition="Exists('$(MiniExcelRustArtifactsRoot)\win-x64\miniexcel_ffi.dll')" />
+    <None Include="$(MiniExcelRustArtifactsRoot)\win-arm64\miniexcel_ffi.dll" Pack="true" PackagePath="runtimes/win-arm64/native/miniexcel_ffi.dll" Condition="Exists('$(MiniExcelRustArtifactsRoot)\win-arm64\miniexcel_ffi.dll')" />
+    <None Include="$(MiniExcelRustArtifactsRoot)\linux-x64\libminiexcel_ffi.so" Pack="true" PackagePath="runtimes/linux-x64/native/libminiexcel_ffi.so" Condition="Exists('$(MiniExcelRustArtifactsRoot)\linux-x64\libminiexcel_ffi.so')" />
+    <None Include="$(MiniExcelRustArtifactsRoot)\linux-arm64\libminiexcel_ffi.so" Pack="true" PackagePath="runtimes/linux-arm64/native/libminiexcel_ffi.so" Condition="Exists('$(MiniExcelRustArtifactsRoot)\linux-arm64\libminiexcel_ffi.so')" />
+    <None Include="$(MiniExcelRustArtifactsRoot)\linux-musl-x64\libminiexcel_ffi.so" Pack="true" PackagePath="runtimes/linux-musl-x64/native/libminiexcel_ffi.so" Condition="Exists('$(MiniExcelRustArtifactsRoot)\linux-musl-x64\libminiexcel_ffi.so')" />
+    <None Include="$(MiniExcelRustArtifactsRoot)\linux-musl-arm64\libminiexcel_ffi.so" Pack="true" PackagePath="runtimes/linux-musl-arm64/native/libminiexcel_ffi.so" Condition="Exists('$(MiniExcelRustArtifactsRoot)\linux-musl-arm64\libminiexcel_ffi.so')" />
+    <None Include="$(MiniExcelRustArtifactsRoot)\osx-x64\libminiexcel_ffi.dylib" Pack="true" PackagePath="runtimes/osx-x64/native/libminiexcel_ffi.dylib" Condition="Exists('$(MiniExcelRustArtifactsRoot)\osx-x64\libminiexcel_ffi.dylib')" />
+    <None Include="$(MiniExcelRustArtifactsRoot)\osx-arm64\libminiexcel_ffi.dylib" Pack="true" PackagePath="runtimes/osx-arm64/native/libminiexcel_ffi.dylib" Condition="Exists('$(MiniExcelRustArtifactsRoot)\osx-arm64\libminiexcel_ffi.dylib')" />
+  </ItemGroup>
+
+  <Target Name="ValidateMiniExcelRustNativeAssets" BeforeTargets="Pack" Condition="'$(MiniExcelRustRequireAllNativeAssets)' == 'true'">
+    <Error Condition="!Exists('%(ExpectedNativeAsset.Identity)')" Text="Missing native asset for %(ExpectedNativeAsset.Rid): %(ExpectedNativeAsset.Identity)" />
+  </Target>
+
+</Project>

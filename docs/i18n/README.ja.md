@@ -45,6 +45,29 @@ cargo add miniexcel
 
 Rust 1.85.0 以降が必要です。
 
+### .NET パッケージ
+
+このリポジトリはプレビュー版 `MiniExcel.Rust` NuGet パッケージもビルドします。MiniExcel
+v1（`1.46.0` またはそれ以降の 1.x）に依存し、その設定型と mapping 型を再利用しながら、
+`MiniExcelRust` の呼び出しを Rust ネイティブライブラリで実行します。
+
+```bash
+dotnet add package MiniExcel.Rust --prerelease
+```
+
+```csharp
+using MiniExcelLibs;
+using MiniExcelLibs.OpenXml;
+
+var rows = MiniExcelRust.Query(
+    "book.xlsx",
+    useHeaderRow: true,
+    configuration: new OpenXmlConfiguration { IgnoreEmptyRows = true });
+```
+
+`MiniExcel.Query` は元の managed 実装を、`MiniExcelRust.Query` は Rust backend を使用します。
+ローカルパッケージは `./scripts/dotnet/Test-Package.ps1 -Rid win-x64` でビルドして検証できます。
+
 ## クイックスタート
 
 ```rust

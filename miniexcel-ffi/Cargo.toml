@@ -13,4 +13,14 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-miniexcel = { path = "../miniexcel" }
+chrono.workspace = true
+futures-executor.workspace = true
+futures-util.workspace = true
+miniexcel = { path = "../miniexcel", features = ["async"] }
+quick-xml.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+zip.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+atomicwrites.workspace = true

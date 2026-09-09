@@ -1,0 +1,165 @@
+name: .NET NuGet
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/dotnet-nuget.yml'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'miniexcel/**'
+      - 'miniexcel-ffi/**'
+      - 'dotnet/**'
+      - 'scripts/dotnet/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dotnet-nuget.yml'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'miniexcel/**'
+      - 'miniexcel-ffi/**'
+      - 'dotnet/**'
+      - 'scripts/dotnet/**'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  PACKAGE_VERSION: 0.1.0-ci.${{ github.run_number }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: dotnet-ffi
+      - name: Check FFI formatting
+        run: cargo fmt --all -- --check
+      - name: Check FFI lints
+        run: cargo clippy -p miniexcel-ffi --all-targets --locked -- -D warnings
+      - name: Test FFI
+        run: cargo test -p miniexcel-ffi --all-targets --locked
+      - name: Build managed package
+        run: dotnet build dotnet/src/MiniExcel.Rust/MiniExcel.Rust.csproj -c Release
+
+  native-package-test:
+    name: Test ${{ matrix.rid }} package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            rid: win-x64
+          - runner: windows-11-arm
+            rid: win-arm64
+          - runner: ubuntu-latest
+            rid: linux-x64
+          - runner: ubuntu-24.04-arm
+            rid: linux-arm64
+          - runner: macos-15-intel
+            rid: osx-x64
+          - runner: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: dotnet-${{ matrix.rid }}
+      - name: Build, pack, and consume package
+        shell: pwsh
+        run: ./scripts/dotnet/Test-Package.ps1 -Rid '${{ matrix.rid }}' -Version $env:PACKAGE_VERSION
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: target/nuget/native/${{ matrix.rid }}/*
+          if-no-files-found: error
+
+  musl-package-test:
+    name: Test ${{ matrix.rid }} package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            rid: linux-musl-x64
+          - runner: ubuntu-24.04-arm
+            rid: linux-musl-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: ${{ matrix.rid == 'linux-musl-x64' && 'x86_64-unknown-linux-musl' || 'aarch64-unknown-linux-musl' }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: mlugg/setup-zig@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: dotnet-${{ matrix.rid }}
+      - name: Build native asset
+        shell: pwsh
+        run: ./scripts/dotnet/Build-Native.ps1 -Rid '${{ matrix.rid }}' -UseZig -Toolchain 1.85.0
+      - name: Pack one-RID package
+        run: >-
+          dotnet pack dotnet/src/MiniExcel.Rust/MiniExcel.Rust.csproj
+          -c Release
+          -o target/nuget/packages
+          -p:PackageVersion=${{ env.PACKAGE_VERSION }}
+          -p:MiniExcelRustRequireAllNativeAssets=false
+      - name: Consume package in Alpine
+        run: >-
+          docker run --rm
+          -v "$GITHUB_WORKSPACE:/work"
+          -w /work
+          mcr.microsoft.com/dotnet/sdk:8.0-alpine
+          sh -lc 'dotnet restore dotnet/tests/MiniExcel.Rust.PackageTests/MiniExcel.Rust.PackageTests.csproj --source target/nuget/packages --source https://api.nuget.org/v3/index.json -p:MiniExcelRustPackageVersion=${{ env.PACKAGE_VERSION }} && dotnet run --project dotnet/tests/MiniExcel.Rust.PackageTests/MiniExcel.Rust.PackageTests.csproj -c Release --no-restore -p:MiniExcelRustPackageVersion=${{ env.PACKAGE_VERSION }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: target/nuget/native/${{ matrix.rid }}/*
+          if-no-files-found: error
+
+  assemble-package:
+    needs: [validate, native-package-test, musl-package-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          path: target/nuget/native
+      - name: Pack complete NuGet
+        run: >-
+          dotnet pack dotnet/src/MiniExcel.Rust/MiniExcel.Rust.csproj
+          -c Release
+          -o target/nuget/packages
+          -p:PackageVersion=${{ env.PACKAGE_VERSION }}
+      - name: Verify package contents
+        shell: pwsh
+        run: ./scripts/dotnet/Verify-Package.ps1 -PackagePath "target/nuget/packages/MiniExcel.Rust.$env:PACKAGE_VERSION.nupkg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MiniExcel.Rust
+          path: target/nuget/packages/MiniExcel.Rust.${{ env.PACKAGE_VERSION }}.*nupkg
+          if-no-files-found: error

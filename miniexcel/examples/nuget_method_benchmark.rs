@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
     for _ in 0..warmups {
         if matches!(method, "query" | "query-first") {
-            query(&input_path, method == "query-first", None)?;
+            query(&input_path, method == "query-first", None, None)?;
         } else {
             run_write_method(
                 method,
@@ -68,18 +68,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut total_rows = 0_u64;
     let mut total_cells = 0_u64;
     let mut first_row_milliseconds = None;
-    let mut content_hash = None;
+    let mut content_hasher = matches!(method, "query" | "query-first").then(Sha256::new);
     for _ in 0..passes {
         match method {
             "query" | "query-first" => {
-                let (result_rows, result_cells, hash, first_row) =
-                    query(&input_path, method == "query-first", Some(started))?;
+                let (result_rows, result_cells, first_row) = query(
+                    &input_path,
+                    method == "query-first",
+                    Some(started),
+                    content_hasher.as_mut(),
+                )?;
                 total_rows += result_rows;
                 total_cells += result_cells;
                 if first_row_milliseconds.is_none() {
                     first_row_milliseconds = Some(first_row);
                 }
-                content_hash = Some(hash);
             }
             "create" | "template" => {
                 run_write_method(
@@ -96,6 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     let elapsed_milliseconds = started.elapsed().as_secs_f64() * 1000.0;
+    let content_hash = content_hasher.map(|hasher| format!("{:X}", hasher.finalize()));
     println!(
         "{}",
         serde_json::to_string(&BenchmarkResult {
@@ -120,11 +124,11 @@ fn query(
     path: &Path,
     first_only: bool,
     started: Option<Instant>,
-) -> Result<(u64, u64, String, f64), Box<dyn Error>> {
+    mut hasher: Option<&mut Sha256>,
+) -> Result<(u64, u64, f64), Box<dyn Error>> {
     let mut rows = 0_u64;
     let mut cells = 0_u64;
     let mut first_row_milliseconds = 0.0;
-    let mut hasher = Sha256::new();
     for row in MiniExcel::query(path)? {
         let row = row?;
         if rows == 0 {
@@ -133,15 +137,17 @@ fn query(
         }
         rows += 1;
         cells += row.len() as u64;
-        for (name, value) in &row {
-            append_text(&mut hasher, name);
-            append_text(&mut hasher, &normalize(value));
+        if let Some(hasher) = hasher.as_deref_mut() {
+            for (name, value) in &row {
+                append_text(hasher, name);
+                append_text(hasher, &normalize(value));
+            }
         }
         if first_only {
             break;
         }
     }
-    Ok((rows, cells, format!("{:X}", hasher.finalize()), first_row_milliseconds))
+    Ok((rows, cells, first_row_milliseconds))
 }
 
 fn run_write_method(

@@ -29,21 +29,25 @@ processes and report query time, first-row latency, managed allocation where app
 Use `-Rows`, `-Columns`, `-Iterations`, `-Passes`, and `-WarmupPasses` to change the load. The
 `NuGet Benchmark` GitHub workflow runs the same harness on Windows, Linux, and macOS for x64 and
 Arm64. Pass `-MiniExcelVersion 1.46.0` to pin a historical baseline for reproducible comparisons.
+Generated workbooks declare their worksheet dimension by default. Pass `-OmitDimension` to measure
+the fallback path that scans the worksheet before returning its first row. Content hashing uses
+stack or pooled UTF-8 buffers so temporary benchmark arrays do not dominate managed allocation.
 
 #### Latest NuGet Result
 
-The 2026-09-10 Windows x64 run used 100,000 rows x 10 columns and five fresh processes per runtime
-and scenario. `MiniExcel 1.46.0`, `MiniExcel.Rust 0.1.0-preview.1` through .NET, and native
+The 2026-09-10 Windows x64 run used a declared-dimension workbook with 100,000 rows x 10 columns
+and five fresh processes per runtime and scenario. `MiniExcel 1.46.0`,
+`MiniExcel.Rust 0.1.0-preview.2` through .NET, and native
 `MiniExcel Rust 0.4.0` matched every normalized value.
 
 | Scenario | Runtime | Median elapsed | Rows/s | First row | Managed allocation | Peak working set |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Cold | MiniExcel | 2,598.50 ms | 38,484 | 1,051.97 ms | 2,541.93 MB | 50.93 MB |
-| Cold | MiniExcel.Rust (.NET) | 1,899.42 ms | 52,648 | 450.85 ms | 289.36 MB | 49.64 MB |
-| Cold | MiniExcel.Rust | 1,220.82 ms | 81,912 | 537.17 ms | n/a | 4.14 MB |
-| Steady | MiniExcel | 5,997.76 ms | 50,019 | 616.40 ms | 7,625.15 MB | 52.80 MB |
-| Steady | MiniExcel.Rust (.NET) | 4,202.10 ms | 71,393 | 442.59 ms | 868.05 MB | 48.79 MB |
-| Steady | MiniExcel.Rust | 3,344.20 ms | 89,708 | 467.30 ms | n/a | 4.20 MB |
+| Cold | MiniExcel | 2,145.90 ms | 46,600 | 38.77 ms | 1,167.07 MB | 51.26 MB |
+| Cold | MiniExcel.Rust (.NET) | 1,047.67 ms | 95,450 | 12.05 ms | 107.04 MB | 44.59 MB |
+| Cold | MiniExcel.Rust | 855.09 ms | 116,947 | 0.42 ms | n/a | 3.70 MB |
+| Steady | MiniExcel | 4,341.55 ms | 69,100 | 3.95 ms | 3,500.58 MB | 54.74 MB |
+| Steady | MiniExcel.Rust (.NET) | 2,972.94 ms | 100,910 | 5.50 ms | 321.09 MB | 48.08 MB |
+| Steady | MiniExcel.Rust | 2,143.31 ms | 139,970 | 0.41 ms | n/a | 3.79 MB |
 
 ## Fairness Controls
 

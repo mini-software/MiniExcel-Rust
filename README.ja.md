@@ -52,7 +52,7 @@ v1 `1.46.0` に固定して依存し、その設定型と mapping 型を再利�
 `MiniExcelRust` の呼び出しを Rust ネイティブライブラリで実行します。
 
 ```bash
-dotnet add package MiniExcel.Rust --prerelease
+dotnet add package MiniExcel.Rust --version 0.1.0-preview.2
 ```
 
 ```csharp
@@ -113,18 +113,21 @@ MiniExcel::save_as("book.xlsx", &[row])?;
 
 ### 最新 NuGet 結果
 
-最新の Windows x64 テストでは、100,000 行 x 10 列の workbook で `MiniExcel 1.46.0`、
-.NET wrapper `MiniExcel.Rust 0.1.0-preview.1`、native `MiniExcel Rust 0.4.0` を比較しました。
+最新の Windows x64 テストでは、dimension を宣言した 100,000 行 x 10 列の workbook で
+`MiniExcel 1.46.0`、.NET wrapper `MiniExcel.Rust 0.1.0-preview.2`、native `MiniExcel Rust 0.4.0` を比較しました。
 runtime とシナリオごとに 5 個の新規 process を使用し、計測前にすべての値を検証しています。
 
 | シナリオ | Runtime | 中央値 | 行/秒 | 最初の行 | Managed allocation | Peak working set |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Cold | MiniExcel | 2,598.50 ms | 38,484 | 1,051.97 ms | 2,541.93 MB | 50.93 MB |
-| Cold | MiniExcel.Rust (.NET) | 1,899.42 ms | 52,648 | 450.85 ms | 289.36 MB | 49.64 MB |
-| Cold | MiniExcel.Rust | 1,220.82 ms | 81,912 | 537.17 ms | n/a | 4.14 MB |
-| Steady | MiniExcel | 5,997.76 ms | 50,019 | 616.40 ms | 7,625.15 MB | 52.80 MB |
-| Steady | MiniExcel.Rust (.NET) | 4,202.10 ms | 71,393 | 442.59 ms | 868.05 MB | 48.79 MB |
-| Steady | MiniExcel.Rust | 3,344.20 ms | 89,708 | 467.30 ms | n/a | 4.20 MB |
+| Cold | MiniExcel | 2,145.90 ms | 46,600 | 38.77 ms | 1,167.07 MB | 51.26 MB |
+| Cold | MiniExcel.Rust (.NET) | 1,047.67 ms | 95,450 | 12.05 ms | 107.04 MB | 44.59 MB |
+| Cold | MiniExcel.Rust | 855.09 ms | 116,947 | 0.42 ms | n/a | 3.70 MB |
+| Steady | MiniExcel | 4,341.55 ms | 69,100 | 3.95 ms | 3,500.58 MB | 54.74 MB |
+| Steady | MiniExcel.Rust (.NET) | 2,972.94 ms | 100,910 | 5.50 ms | 321.09 MB | 48.08 MB |
+| Steady | MiniExcel.Rust | 2,143.31 ms | 139,970 | 0.41 ms | n/a | 3.79 MB |
+
+完全な Query では、preview.2 は MiniExcel v1 より Cold で 2.05 倍、Steady で 1.46 倍高速で、
+managed allocation は両シナリオで 90.8% 少なくなりました。
 
 結果はマシンに依存します。代表的な workbook で `pwsh ./scripts/compare-nuget-v1-rust.ps1` を実行し、
 [測定方法](docs/dotnet-v1-query-benchmark.md)を参照してください。

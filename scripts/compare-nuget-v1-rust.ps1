@@ -12,6 +12,8 @@ param(
     [ValidateRange(1, 26)]
     [int] $Columns = 10,
 
+    [switch] $OmitDimension,
+
     [ValidateRange(1, 100)]
     [int] $Passes = 3,
 
@@ -47,7 +49,12 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repositoryRoot 'target/benchmarks/nuget-v1'
 }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
-$workbook = Join-Path $OutputDirectory "benchmark-$Rows`x$Columns.xlsx"
+$workbookName = if ($OmitDimension) {
+    "benchmark-no-dimension-$Rows`x$Columns.xlsx"
+} else {
+    "benchmark-$Rows`x$Columns.xlsx"
+}
+$workbook = Join-Path $OutputDirectory $workbookName
 $template = Join-Path $OutputDirectory 'template.xlsx'
 
 if ([string]::IsNullOrWhiteSpace($MiniExcelVersion)) {
@@ -102,7 +109,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Benchmark build failed.' }
 & cargo +1.85.0 build --release -p miniexcel --example nuget_method_benchmark --locked
 if ($LASTEXITCODE -ne 0) { throw 'Native Rust benchmark build failed.' }
 
-& dotnet $runner generate $workbook $Rows $Columns
+$generateMode = if ($OmitDimension) { 'generate-no-dimension' } else { 'generate' }
+& dotnet $runner $generateMode $workbook $Rows $Columns
 if ($LASTEXITCODE -ne 0) { throw 'Benchmark workbook generation failed.' }
 & dotnet $runner verify $workbook
 if ($LASTEXITCODE -ne 0) { throw 'MiniExcel and MiniExcel.Rust returned different data.' }
@@ -331,6 +339,7 @@ $report = [ordered]@{
     RustRevision = (& git -C $repositoryRoot rev-parse HEAD).Trim()
     Rows = $Rows
     Columns = $Columns
+    HasWorksheetDimension = -not $OmitDimension.IsPresent
     WorkbookSha256 = (Get-FileHash $workbook -Algorithm SHA256).Hash.ToLowerInvariant()
     PackageSha256 = (Get-FileHash $package -Algorithm SHA256).Hash.ToLowerInvariant()
     Iterations = $Iterations
@@ -353,6 +362,7 @@ $markdown.Add("- MiniExcel: $MiniExcelVersion")
 $markdown.Add("- MiniExcel.Rust: $MiniExcelRustVersion")
 $markdown.Add("- MiniExcel.Rust native: 0.4.0 ($($report.RustRevision))")
 $markdown.Add("- Workbook: $Rows rows x $Columns columns")
+$markdown.Add("- Worksheet dimension: $(if ($OmitDimension) { 'omitted' } else { 'declared' })")
 $markdown.Add("- Iterations: $Iterations fresh processes per runtime and scenario")
 $markdown.Add('')
 $markdown.Add('| Method | Scenario | Runtime | Median elapsed (ms) | Rows/s | First row (ms) | Allocated (MB) | Peak working set (MB) |')

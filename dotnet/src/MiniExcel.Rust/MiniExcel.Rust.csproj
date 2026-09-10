@@ -8,9 +8,10 @@
     <RootNamespace>MiniExcelLibs</RootNamespace>
     <AssemblyName>MiniExcel.Rust</AssemblyName>
     <PackageId>MiniExcel.Rust</PackageId>
-    <Version>0.1.0-preview.1</Version>
+    <Version>0.1.0-preview.2</Version>
     <Title>MiniExcel.Rust</Title>
     <Description>MiniExcel-compatible spreadsheet APIs for .NET powered by MiniExcel for Rust.</Description>
+    <PackageReleaseNotes>Improves query streaming latency and allocation by fetching one initial row and reusing managed column names across native batches. Expands comparative NuGet benchmarks and separates declared-dimension from fallback worksheet scans.</PackageReleaseNotes>
     <Authors>Mini-Software</Authors>
     <Company>Mini-Software</Company>
     <PackageTags>excel;xlsx;csv;rust;native;streaming;miniexcel</PackageTags>

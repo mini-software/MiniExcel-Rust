@@ -52,7 +52,7 @@ v1 `1.46.0`, reuses its configuration and mapping types, and routes calls
 made through `MiniExcelRust` to the Rust native library.
 
 ```bash
-dotnet add package MiniExcel.Rust --prerelease
+dotnet add package MiniExcel.Rust --version 0.1.0-preview.2
 ```
 
 ```csharp
@@ -115,18 +115,21 @@ See the [compatibility matrix](docs/compatibility.md), [analytics and RAG contra
 ### Latest NuGet Results
 
 The latest Windows x64 run compared public `MiniExcel 1.46.0`, the
-`MiniExcel.Rust 0.1.0-preview.1` .NET wrapper, and native `MiniExcel Rust 0.4.0` over 100,000 rows
-x 10 columns, using five fresh processes per runtime and scenario. Every row, column, and
-normalized value matched before timing.
+`MiniExcel.Rust 0.1.0-preview.2` .NET wrapper, and native `MiniExcel Rust 0.4.0` over a declared-dimension
+workbook containing 100,000 rows x 10 columns. Five fresh processes ran per runtime and scenario;
+every row, column, and normalized value matched before timing.
 
 | Scenario | Runtime | Median elapsed | Rows/s | First row | Managed allocation | Peak working set |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Cold | MiniExcel | 2,598.50 ms | 38,484 | 1,051.97 ms | 2,541.93 MB | 50.93 MB |
-| Cold | MiniExcel.Rust (.NET) | 1,899.42 ms | 52,648 | 450.85 ms | 289.36 MB | 49.64 MB |
-| Cold | MiniExcel.Rust | 1,220.82 ms | 81,912 | 537.17 ms | n/a | 4.14 MB |
-| Steady | MiniExcel | 5,997.76 ms | 50,019 | 616.40 ms | 7,625.15 MB | 52.80 MB |
-| Steady | MiniExcel.Rust (.NET) | 4,202.10 ms | 71,393 | 442.59 ms | 868.05 MB | 48.79 MB |
-| Steady | MiniExcel.Rust | 3,344.20 ms | 89,708 | 467.30 ms | n/a | 4.20 MB |
+| Cold | MiniExcel | 2,145.90 ms | 46,600 | 38.77 ms | 1,167.07 MB | 51.26 MB |
+| Cold | MiniExcel.Rust (.NET) | 1,047.67 ms | 95,450 | 12.05 ms | 107.04 MB | 44.59 MB |
+| Cold | MiniExcel.Rust | 855.09 ms | 116,947 | 0.42 ms | n/a | 3.70 MB |
+| Steady | MiniExcel | 4,341.55 ms | 69,100 | 3.95 ms | 3,500.58 MB | 54.74 MB |
+| Steady | MiniExcel.Rust (.NET) | 2,972.94 ms | 100,910 | 5.50 ms | 321.09 MB | 48.08 MB |
+| Steady | MiniExcel.Rust | 2,143.31 ms | 139,970 | 0.41 ms | n/a | 3.79 MB |
+
+For full Query, preview.2 is 2.05x faster in Cold and 1.46x faster in Steady than MiniExcel v1,
+with 90.8% less managed allocation in both scenarios.
 
 Results are machine-specific. Run `pwsh ./scripts/compare-nuget-v1-rust.ps1` on representative
 workbooks; see the [benchmark methodology](docs/dotnet-v1-query-benchmark.md).

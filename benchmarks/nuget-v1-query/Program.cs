@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO.Compression;
@@ -12,7 +14,8 @@ if (args.Length == 0)
 
 return args[0].ToLowerInvariant() switch
 {
-    "generate" => Generate(args),
+    "generate" => Generate(args, includeDimension: true),
+    "generate-no-dimension" => Generate(args, includeDimension: false),
     "generate-template" => GenerateTemplate(args),
     "verify" => Verify(args),
     "fingerprint" => Fingerprint(args),
@@ -27,14 +30,14 @@ return args[0].ToLowerInvariant() switch
     _ => Usage()
 };
 
-static int Generate(string[] arguments)
+static int Generate(string[] arguments, bool includeDimension)
 {
     if (arguments.Length != 4 ||
         !int.TryParse(arguments[2], out var rowCount) || rowCount < 1 ||
         !int.TryParse(arguments[3], out var columnCount) || columnCount is < 1 or > 26)
         return Usage();
 
-    CreateWorkbook(Path.GetFullPath(arguments[1]), rowCount, columnCount);
+    CreateWorkbook(Path.GetFullPath(arguments[1]), rowCount, columnCount, includeDimension);
     return 0;
 }
 
@@ -287,7 +290,7 @@ static void AppendRow(IncrementalHash hash, IDictionary<string, object?> row)
     foreach (var cell in row)
     {
         AppendText(hash, cell.Key);
-        AppendText(hash, Normalize(cell.Value));
+        AppendValue(hash, cell.Value);
     }
 }
 
@@ -306,11 +309,54 @@ static (long Rows, long Cells, string ContentHash) FingerprintRows(
     return (rows, cells, Convert.ToHexString(hash.GetHashAndReset()));
 }
 
-static void AppendText(IncrementalHash hash, string value)
+static void AppendValue(IncrementalHash hash, object? value)
 {
-    var bytes = Encoding.UTF8.GetBytes(value);
-    hash.AppendData(BitConverter.GetBytes(bytes.Length));
-    hash.AppendData(bytes);
+    if (value is null or DBNull)
+    {
+        AppendText(hash, "null");
+        return;
+    }
+    if (value is string text)
+    {
+        AppendText(hash, text);
+        return;
+    }
+    if (value is ISpanFormattable spanFormattable)
+    {
+        Span<char> characters = stackalloc char[128];
+        if (spanFormattable.TryFormat(characters, out var written, default, CultureInfo.InvariantCulture))
+        {
+            AppendCharacters(hash, characters[..written]);
+            return;
+        }
+    }
+    AppendText(hash, Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty);
+}
+
+static void AppendText(IncrementalHash hash, string value) => AppendCharacters(hash, value.AsSpan());
+
+static void AppendCharacters(IncrementalHash hash, ReadOnlySpan<char> value)
+{
+    var byteCount = Encoding.UTF8.GetByteCount(value);
+    Span<byte> length = stackalloc byte[sizeof(int)];
+    BinaryPrimitives.WriteInt32LittleEndian(length, byteCount);
+    hash.AppendData(length);
+
+    const int StackBufferSize = 256;
+    byte[]? rented = null;
+    Span<byte> bytes = byteCount <= StackBufferSize
+        ? stackalloc byte[StackBufferSize]
+        : rented = ArrayPool<byte>.Shared.Rent(byteCount);
+    try
+    {
+        var written = Encoding.UTF8.GetBytes(value, bytes);
+        hash.AppendData(bytes[..written]);
+    }
+    finally
+    {
+        if (rented is not null)
+            ArrayPool<byte>.Shared.Return(rented);
+    }
 }
 
 static string Normalize(object? value) => value switch
@@ -320,7 +366,7 @@ static string Normalize(object? value) => value switch
     _ => value.ToString() ?? string.Empty
 };
 
-static void CreateWorkbook(string path, int rows, int columns)
+static void CreateWorkbook(string path, int rows, int columns, bool includeDimension)
 {
     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
     if (File.Exists(path))
@@ -356,7 +402,11 @@ static void CreateWorkbook(string path, int rows, int columns)
 
     var entry = archive.CreateEntry("xl/worksheets/sheet1.xml", CompressionLevel.Fastest);
     using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
-    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>");
+    var endCell = $"{(char)('A' + columns - 1)}{rows}";
+    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
+    if (includeDimension)
+        writer.Write($"<dimension ref=\"A1:{endCell}\"/>");
+    writer.Write("<sheetData>");
     for (var row = 1; row <= rows; row++)
     {
         writer.Write($"<row r=\"{row}\">");
@@ -388,6 +438,7 @@ static int Usage()
 {
     Console.Error.WriteLine("Usage:");
     Console.Error.WriteLine("  NuGetV1Query generate <xlsx-path> <rows> <columns>");
+    Console.Error.WriteLine("  NuGetV1Query generate-no-dimension <xlsx-path> <rows> <columns>");
     Console.Error.WriteLine("  NuGetV1Query generate-template <xlsx-path>");
     Console.Error.WriteLine("  NuGetV1Query verify <xlsx-path>");
     Console.Error.WriteLine("  NuGetV1Query fingerprint <xlsx-path>");

@@ -114,14 +114,19 @@ See the [compatibility matrix](docs/compatibility.md), [analytics and RAG contra
 
 ### Latest NuGet Results
 
-The latest Windows x64 run compared public `MiniExcel 1.46.0` with
-`MiniExcel.Rust 0.1.0-preview.1` over 100,000 rows x 10 columns, using five fresh processes per
-runtime and scenario. Every row, column, and normalized value matched before timing.
+The latest Windows x64 run compared public `MiniExcel 1.46.0`, the
+`MiniExcel.Rust 0.1.0-preview.1` .NET wrapper, and native `MiniExcel Rust 0.4.0` over 100,000 rows
+x 10 columns, using five fresh processes per runtime and scenario. Every row, column, and
+normalized value matched before timing.
 
-| Scenario | MiniExcel | MiniExcel.Rust | Rust speedup | Allocation reduction | Working-set reduction |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Cold | 2,052.91 ms | 1,278.59 ms | 1.61x | 88.6% | 4.6% |
-| Steady | 4,635.98 ms | 3,380.16 ms | 1.37x | 88.6% | 10.1% |
+| Scenario | Runtime | Median elapsed | Rows/s | First row | Managed allocation | Peak working set |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | MiniExcel | 2,598.50 ms | 38,484 | 1,051.97 ms | 2,541.93 MB | 50.93 MB |
+| Cold | MiniExcel.Rust (.NET) | 1,899.42 ms | 52,648 | 450.85 ms | 289.36 MB | 49.64 MB |
+| Cold | MiniExcel.Rust | 1,220.82 ms | 81,912 | 537.17 ms | n/a | 4.14 MB |
+| Steady | MiniExcel | 5,997.76 ms | 50,019 | 616.40 ms | 7,625.15 MB | 52.80 MB |
+| Steady | MiniExcel.Rust (.NET) | 4,202.10 ms | 71,393 | 442.59 ms | 868.05 MB | 48.79 MB |
+| Steady | MiniExcel.Rust | 3,344.20 ms | 89,708 | 467.30 ms | n/a | 4.20 MB |
 
 Results are machine-specific. Run `pwsh ./scripts/compare-nuget-v1-rust.ps1` on representative
 workbooks; see the [benchmark methodology](docs/dotnet-v1-query-benchmark.md).

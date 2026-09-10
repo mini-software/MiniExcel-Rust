@@ -282,13 +282,18 @@ cargo run -p miniexcel-cli -- rag-export book.xlsx --header --chunk-rows 25 --fo
 
 ### 最新 NuGet 结果
 
-最新 Windows x64 测试使用 100,000 行 x 10 列工作簿，对比公开的 `MiniExcel 1.46.0` 与
-`MiniExcel.Rust 0.1.0-preview.1`；每个 runtime、每个场景运行 5 个独立进程。计时前已逐行、逐列、逐值验证一致。
+最新 Windows x64 测试使用 100,000 行 x 10 列工作簿，对比公开的 `MiniExcel 1.46.0`、
+`.NET` 包装器 `MiniExcel.Rust 0.1.0-preview.1` 与原生 `MiniExcel Rust 0.4.0`；每个 runtime、
+每个场景运行 5 个独立进程。计时前已逐行、逐列、逐值验证一致。
 
-| 场景 | MiniExcel | MiniExcel.Rust | Rust 加速 | 分配内存降低 | 工作集降低 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Cold | 2,052.91 ms | 1,278.59 ms | 1.61x | 88.6% | 4.6% |
-| Steady | 4,635.98 ms | 3,380.16 ms | 1.37x | 88.6% | 10.1% |
+| 场景 | Runtime | 耗时中位数 | 行/秒 | 首行延迟 | 托管分配 | 峰值工作集 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | MiniExcel | 2,598.50 ms | 38,484 | 1,051.97 ms | 2,541.93 MB | 50.93 MB |
+| Cold | MiniExcel.Rust (.NET) | 1,899.42 ms | 52,648 | 450.85 ms | 289.36 MB | 49.64 MB |
+| Cold | MiniExcel.Rust | 1,220.82 ms | 81,912 | 537.17 ms | 不适用 | 4.14 MB |
+| Steady | MiniExcel | 5,997.76 ms | 50,019 | 616.40 ms | 7,625.15 MB | 52.80 MB |
+| Steady | MiniExcel.Rust (.NET) | 4,202.10 ms | 71,393 | 442.59 ms | 868.05 MB | 48.79 MB |
+| Steady | MiniExcel.Rust | 3,344.20 ms | 89,708 | 467.30 ms | 不适用 | 4.20 MB |
 
 结果与机器和工作簿相关。请用 `pwsh ./scripts/compare-nuget-v1-rust.ps1` 在代表性工作簿上复测；
 详见[测试方法](../dotnet-v1-query-benchmark.zh-CN.md)。

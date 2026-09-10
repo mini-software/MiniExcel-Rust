@@ -15,7 +15,7 @@ return args[0].ToLowerInvariant() switch
     "generate" => Generate(args),
     "verify" => Verify(args),
     "managed" => Benchmark(args, useRust: false),
-    "rust" => Benchmark(args, useRust: true),
+    "rust-dotnet" => Benchmark(args, useRust: true),
     _ => Usage()
 };
 
@@ -90,7 +90,7 @@ static int Benchmark(string[] arguments, bool useRust)
     stopwatch.Stop();
 
     Console.WriteLine(JsonSerializer.Serialize(new BenchmarkResult(
-        useRust ? "MiniExcel.Rust" : "MiniExcel",
+        useRust ? "MiniExcel.Rust (.NET)" : "MiniExcel",
         Environment.Version.ToString(),
         measuredPasses,
         rows,
@@ -222,7 +222,7 @@ static int Usage()
     Console.Error.WriteLine("Usage:");
     Console.Error.WriteLine("  NuGetV1Query generate <xlsx-path> <rows> <columns>");
     Console.Error.WriteLine("  NuGetV1Query verify <xlsx-path>");
-    Console.Error.WriteLine("  NuGetV1Query <managed|rust> <xlsx-path> [passes] [warmup-passes]");
+    Console.Error.WriteLine("  NuGetV1Query <managed|rust-dotnet> <xlsx-path> [passes] [warmup-passes]");
     return 2;
 }
 

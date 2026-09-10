@@ -30,6 +30,16 @@ Use `-Rows`, `-Columns`, `-Iterations`, `-Passes`, and `-WarmupPasses` to change
 `NuGet Benchmark` GitHub workflow runs the same harness on Windows, Linux, and macOS for x64 and
 Arm64. Pass `-MiniExcelVersion 1.46.0` to pin a historical baseline for reproducible comparisons.
 
+#### Latest NuGet Result
+
+The 2026-09-10 Windows x64 run used 100,000 rows x 10 columns and five fresh processes per runtime
+and scenario. `MiniExcel 1.46.0` and `MiniExcel.Rust 0.1.0-preview.1` matched every normalized value.
+
+| Scenario | MiniExcel | MiniExcel.Rust | Rust speedup | Allocation reduction | Working-set reduction |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | 2,052.91 ms | 1,278.59 ms | 1.61x | 88.6% | 4.6% |
+| Steady | 4,635.98 ms | 3,380.16 ms | 1.37x | 88.6% | 10.1% |
+
 ## Fairness Controls
 
 - Both runners use Release builds, the same workbook, and equivalent public dynamic Query APIs.

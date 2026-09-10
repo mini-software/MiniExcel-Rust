@@ -112,6 +112,20 @@ See the [compatibility matrix](docs/compatibility.md), [analytics and RAG contra
 
 ## Rust And .NET Benchmark
 
+### Latest NuGet Results
+
+The latest Windows x64 run compared public `MiniExcel 1.46.0` with
+`MiniExcel.Rust 0.1.0-preview.1` over 100,000 rows x 10 columns, using five fresh processes per
+runtime and scenario. Every row, column, and normalized value matched before timing.
+
+| Scenario | MiniExcel | MiniExcel.Rust | Rust speedup | Allocation reduction | Working-set reduction |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | 2,052.91 ms | 1,278.59 ms | 1.61x | 88.6% | 4.6% |
+| Steady | 4,635.98 ms | 3,380.16 ms | 1.37x | 88.6% | 10.1% |
+
+Results are machine-specific. Run `pwsh ./scripts/compare-nuget-v1-rust.ps1` on representative
+workbooks; see the [benchmark methodology](docs/dotnet-v1-query-benchmark.md).
+
 Place this repository beside [.NET MiniExcel](https://github.com/mini-software/MiniExcel), then run:
 
 ```powershell

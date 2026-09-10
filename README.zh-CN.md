@@ -110,6 +110,19 @@ MiniExcel::save_as("book.xlsx", &[row])?;
 
 ## Rust 与 .NET 性能对比
 
+### 最新 NuGet 结果
+
+最新 Windows x64 测试使用 100,000 行 x 10 列工作簿，对比公开的 `MiniExcel 1.46.0` 与
+`MiniExcel.Rust 0.1.0-preview.1`；每个 runtime、每个场景运行 5 个独立进程。计时前已逐行、逐列、逐值验证一致。
+
+| 场景 | MiniExcel | MiniExcel.Rust | Rust 加速 | 分配内存降低 | 工作集降低 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | 2,052.91 ms | 1,278.59 ms | 1.61x | 88.6% | 4.6% |
+| Steady | 4,635.98 ms | 3,380.16 ms | 1.37x | 88.6% | 10.1% |
+
+结果与机器和工作簿相关。请用 `pwsh ./scripts/compare-nuget-v1-rust.ps1` 在代表性工作簿上复测；
+详见[测试方法](docs/dotnet-v1-query-benchmark.zh-CN.md)。
+
 将本仓库与 [.NET MiniExcel](https://github.com/mini-software/MiniExcel) 放在同级目录后运行：
 
 ```powershell

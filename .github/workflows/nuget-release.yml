@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: NuGet version, for example 0.1.0-preview.1
+        description: NuGet version, for example 0.1.0-preview.2
         required: true
-        default: 0.1.0-preview.1
+        default: 0.1.0-preview.2
         type: string
       publish:
         description: Publish to NuGet.org after all package tests pass
@@ -227,9 +227,17 @@ jobs:
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create '${{ github.ref_name }}'
-          target/nuget/packages/*
-          --verify-tag
-          --generate-notes
-          --title 'MiniExcel.Rust ${{ needs.prepare.outputs.version }}'
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          arguments=(
+            '${{ github.ref_name }}'
+            target/nuget/packages/*
+            --verify-tag
+            --generate-notes
+            --title "MiniExcel.Rust $RELEASE_VERSION"
+          )
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            arguments+=(--prerelease)
+          fi
+          gh release create "${arguments[@]}"

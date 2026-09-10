@@ -51,7 +51,7 @@ cargo add miniexcel
 重用其設定與 mapping 型別，並將透過 `MiniExcelRust` 發起的呼叫交給 Rust 原生程式庫執行。
 
 ```bash
-dotnet add package MiniExcel.Rust --prerelease
+dotnet add package MiniExcel.Rust --version 0.1.0-preview.2
 ```
 
 ```csharp
@@ -282,18 +282,21 @@ Template、公式或格式功能前，請先在[相容性矩陣](../compatibilit
 
 ### 最新 NuGet 結果
 
-最新 Windows x64 測試使用 100,000 列 x 10 欄 workbook，比較公開的 `MiniExcel 1.46.0`、
-`.NET` 包裝器 `MiniExcel.Rust 0.1.0-preview.1` 與原生 `MiniExcel Rust 0.4.0`；每個 runtime、
-每個場景執行 5 個獨立 process。計時前已逐列、逐欄、逐值驗證一致。
+最新 Windows x64 測試使用已宣告 dimension 的 100,000 列 x 10 欄 workbook，比較公開的
+`MiniExcel 1.46.0`、`.NET` 包裝器 `MiniExcel.Rust 0.1.0-preview.2` 與原生
+`MiniExcel Rust 0.4.0`；每個 runtime、每個場景執行 5 個獨立 process。計時前已逐列、逐欄、逐值驗證一致。
 
 | 場景 | Runtime | 耗時中位數 | 列/秒 | 首列延遲 | Managed allocation | Peak working set |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Cold | MiniExcel | 2,598.50 ms | 38,484 | 1,051.97 ms | 2,541.93 MB | 50.93 MB |
-| Cold | MiniExcel.Rust (.NET) | 1,899.42 ms | 52,648 | 450.85 ms | 289.36 MB | 49.64 MB |
-| Cold | MiniExcel.Rust | 1,220.82 ms | 81,912 | 537.17 ms | 不適用 | 4.14 MB |
-| Steady | MiniExcel | 5,997.76 ms | 50,019 | 616.40 ms | 7,625.15 MB | 52.80 MB |
-| Steady | MiniExcel.Rust (.NET) | 4,202.10 ms | 71,393 | 442.59 ms | 868.05 MB | 48.79 MB |
-| Steady | MiniExcel.Rust | 3,344.20 ms | 89,708 | 467.30 ms | 不適用 | 4.20 MB |
+| Cold | MiniExcel | 2,145.90 ms | 46,600 | 38.77 ms | 1,167.07 MB | 51.26 MB |
+| Cold | MiniExcel.Rust (.NET) | 1,047.67 ms | 95,450 | 12.05 ms | 107.04 MB | 44.59 MB |
+| Cold | MiniExcel.Rust | 855.09 ms | 116,947 | 0.42 ms | 不適用 | 3.70 MB |
+| Steady | MiniExcel | 4,341.55 ms | 69,100 | 3.95 ms | 3,500.58 MB | 54.74 MB |
+| Steady | MiniExcel.Rust (.NET) | 2,972.94 ms | 100,910 | 5.50 ms | 321.09 MB | 48.08 MB |
+| Steady | MiniExcel.Rust | 2,143.31 ms | 139,970 | 0.41 ms | 不適用 | 3.79 MB |
+
+完整 Query 中，preview.2 在 Cold 與 Steady 場景分別比 MiniExcel v1 快 2.05 倍與 1.46 倍，
+兩個場景的 managed allocation 都減少 90.8%。
 
 結果會受機器與 workbook 影響。請用 `pwsh ./scripts/compare-nuget-v1-rust.ps1` 在代表性 workbook 上重測；
 詳見[測試方法](../dotnet-v1-query-benchmark.md)。

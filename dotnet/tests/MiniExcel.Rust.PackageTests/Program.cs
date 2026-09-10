@@ -41,6 +41,23 @@ try
         configuration: readConfiguration).Single();
     Require(typed.Name == "Ada" && typed.Score == 42, "MiniExcel v1 attributes were not honored by typed mapping.");
 
+    var batchInputPath = Path.Combine(temporaryDirectory, "batch-input.xlsx");
+    global::MiniExcelLibs.MiniExcel.SaveAs(
+        batchInputPath,
+        Enumerable.Range(1, 130)
+            .Select(index => new Dictionary<string, object?>
+            {
+                ["Name"] = $"Row {index}",
+                ["Score"] = index
+            }));
+    var batchRows = MiniExcelRust.Query(batchInputPath, useHeaderRow: true).ToList();
+    Require(batchRows.Count == 130, "Multi-batch query returned an unexpected row count.");
+    Require(batchRows[64]["Name"]?.ToString() == "Row 65", "Multi-batch query lost row order.");
+    var firstColumnName = batchRows[0].Keys.First();
+    Require(
+        batchRows.All(batchRow => ReferenceEquals(firstColumnName, batchRow.Keys.First())),
+        "Multi-batch query did not reuse managed column names.");
+
     var outputPath = Path.Combine(temporaryDirectory, "output.xlsx");
     var writeConfiguration = new OpenXmlConfiguration
     {

@@ -288,14 +288,18 @@ Workbook editing、Template、formula、formatting に依存する前に、
 
 ### 最新 NuGet 結果
 
-最新の Windows x64 テストでは、100,000 行 x 10 列の workbook で `MiniExcel 1.46.0` と
-`MiniExcel.Rust 0.1.0-preview.1` を比較し、runtime とシナリオごとに 5 個の新規 process を使用しました。
-計測前に全行・全列・正規化した値の一致を確認しています。
+最新の Windows x64 テストでは、100,000 行 x 10 列の workbook で `MiniExcel 1.46.0`、
+.NET wrapper `MiniExcel.Rust 0.1.0-preview.1`、native `MiniExcel Rust 0.4.0` を比較しました。
+runtime とシナリオごとに 5 個の新規 process を使用し、計測前にすべての値を検証しています。
 
-| シナリオ | MiniExcel | MiniExcel.Rust | Rust 高速化 | Allocation 削減 | Working set 削減 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Cold | 2,052.91 ms | 1,278.59 ms | 1.61x | 88.6% | 4.6% |
-| Steady | 4,635.98 ms | 3,380.16 ms | 1.37x | 88.6% | 10.1% |
+| シナリオ | Runtime | 中央値 | 行/秒 | 最初の行 | Managed allocation | Peak working set |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | MiniExcel | 2,598.50 ms | 38,484 | 1,051.97 ms | 2,541.93 MB | 50.93 MB |
+| Cold | MiniExcel.Rust (.NET) | 1,899.42 ms | 52,648 | 450.85 ms | 289.36 MB | 49.64 MB |
+| Cold | MiniExcel.Rust | 1,220.82 ms | 81,912 | 537.17 ms | n/a | 4.14 MB |
+| Steady | MiniExcel | 5,997.76 ms | 50,019 | 616.40 ms | 7,625.15 MB | 52.80 MB |
+| Steady | MiniExcel.Rust (.NET) | 4,202.10 ms | 71,393 | 442.59 ms | 868.05 MB | 48.79 MB |
+| Steady | MiniExcel.Rust | 3,344.20 ms | 89,708 | 467.30 ms | n/a | 4.20 MB |
 
 結果はマシンに依存します。代表的な workbook で `pwsh ./scripts/compare-nuget-v1-rust.ps1` を実行し、
 [測定方法](../dotnet-v1-query-benchmark.md)を参照してください。

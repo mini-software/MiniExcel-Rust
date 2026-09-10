@@ -20,9 +20,10 @@ pwsh ./scripts/compare-nuget-v1-rust.ps1
 ```
 
 该脚本先构建本地 `MiniExcel.Rust` 包，自动解析 NuGet 上最新的稳定 MiniExcel v1，再创建隔离的
-`net8.0` 消费者并对比 `MiniExcel.Query` 与 `MiniExcelRust.Query`。计时前会逐行、逐列、
-逐值验证结果；Cold 与 Steady 场景使用交替的新进程执行，并将 Query 耗时、首行延迟、托管分配、
-峰值工作集与峰值私有内存写入 `target/benchmarks/nuget-v1/benchmark-<rid>.{json,md}`。
+`net8.0` 消费者，并对比 `MiniExcel.Query`、`MiniExcelRust.Query` 与原生 `MiniExcel::query`。
+计时前会在三条路径间逐行、逐列、逐值验证结果；Cold 与 Steady 场景使用轮换的新进程执行，
+并将 Query 耗时、首行延迟、适用时的托管分配、峰值工作集与峰值私有内存写入
+`target/benchmarks/nuget-v1/benchmark-<rid>.{json,md}`。
 
 可通过 `-Rows`、`-Columns`、`-Iterations`、`-Passes` 和 `-WarmupPasses` 调整压力。
 GitHub 的 `NuGet Benchmark` workflow 会在 Windows、Linux、macOS 的 x64 与 Arm64 环境运行同一套测试。
@@ -31,12 +32,17 @@ GitHub 的 `NuGet Benchmark` workflow 会在 Windows、Linux、macOS 的 x64 与
 #### 最新 NuGet 结果
 
 2026-09-10 的 Windows x64 测试使用 100,000 行 x 10 列工作簿，每个 runtime、每个场景运行
-5 个独立进程。`MiniExcel 1.46.0` 与 `MiniExcel.Rust 0.1.0-preview.1` 的所有规范化值完全一致。
+5 个独立进程。`MiniExcel 1.46.0`、通过 .NET 调用的 `MiniExcel.Rust 0.1.0-preview.1` 与原生
+`MiniExcel Rust 0.4.0` 的所有规范化值完全一致。
 
-| 场景 | MiniExcel | MiniExcel.Rust | Rust 加速 | 分配内存降低 | 工作集降低 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Cold | 2,052.91 ms | 1,278.59 ms | 1.61x | 88.6% | 4.6% |
-| Steady | 4,635.98 ms | 3,380.16 ms | 1.37x | 88.6% | 10.1% |
+| 场景 | Runtime | 耗时中位数 | 行/秒 | 首行延迟 | 托管分配 | 峰值工作集 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | MiniExcel | 2,598.50 ms | 38,484 | 1,051.97 ms | 2,541.93 MB | 50.93 MB |
+| Cold | MiniExcel.Rust (.NET) | 1,899.42 ms | 52,648 | 450.85 ms | 289.36 MB | 49.64 MB |
+| Cold | MiniExcel.Rust | 1,220.82 ms | 81,912 | 537.17 ms | 不适用 | 4.14 MB |
+| Steady | MiniExcel | 5,997.76 ms | 50,019 | 616.40 ms | 7,625.15 MB | 52.80 MB |
+| Steady | MiniExcel.Rust (.NET) | 4,202.10 ms | 71,393 | 442.59 ms | 868.05 MB | 48.79 MB |
+| Steady | MiniExcel.Rust | 3,344.20 ms | 89,708 | 467.30 ms | 不适用 | 4.20 MB |
 
 ## 公平性控制
 

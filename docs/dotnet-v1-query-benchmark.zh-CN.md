@@ -28,6 +28,16 @@ pwsh ./scripts/compare-nuget-v1-rust.ps1
 GitHub 的 `NuGet Benchmark` workflow 会在 Windows、Linux、macOS 的 x64 与 Arm64 环境运行同一套测试。
 如需复现历史结果，可传入 `-MiniExcelVersion 1.46.0` 固定基线版本。
 
+#### 最新 NuGet 结果
+
+2026-09-10 的 Windows x64 测试使用 100,000 行 x 10 列工作簿，每个 runtime、每个场景运行
+5 个独立进程。`MiniExcel 1.46.0` 与 `MiniExcel.Rust 0.1.0-preview.1` 的所有规范化值完全一致。
+
+| 场景 | MiniExcel | MiniExcel.Rust | Rust 加速 | 分配内存降低 | 工作集降低 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | 2,052.91 ms | 1,278.59 ms | 1.61x | 88.6% | 4.6% |
+| Steady | 4,635.98 ms | 3,380.16 ms | 1.37x | 88.6% | 10.1% |
+
 ## 公平性控制
 
 - 两个 runner 都使用 Release 构建、同一份工作簿和语义等价的公开动态 Query API。

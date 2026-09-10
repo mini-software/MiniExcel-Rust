@@ -280,6 +280,19 @@ Template、公式或格式功能前，請先在[相容性矩陣](../compatibilit
 
 ## Rust 與 .NET 效能比較
 
+### 最新 NuGet 結果
+
+最新 Windows x64 測試使用 100,000 列 x 10 欄 workbook，比較公開的 `MiniExcel 1.46.0` 與
+`MiniExcel.Rust 0.1.0-preview.1`；每個 runtime、每個場景執行 5 個獨立 process。計時前已逐列、逐欄、逐值驗證一致。
+
+| 場景 | MiniExcel | MiniExcel.Rust | Rust 加速 | 配置記憶體降低 | Working set 降低 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | 2,052.91 ms | 1,278.59 ms | 1.61x | 88.6% | 4.6% |
+| Steady | 4,635.98 ms | 3,380.16 ms | 1.37x | 88.6% | 10.1% |
+
+結果會受機器與 workbook 影響。請用 `pwsh ./scripts/compare-nuget-v1-rust.ps1` 在代表性 workbook 上重測；
+詳見[測試方法](../dotnet-v1-query-benchmark.md)。
+
 將本儲存庫與 [.NET MiniExcel](https://github.com/mini-software/MiniExcel) 放在同層目錄後執行：
 
 ```powershell

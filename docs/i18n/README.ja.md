@@ -286,6 +286,20 @@ Workbook editing、Template、formula、formatting に依存する前に、
 
 ## Rust と .NET の Benchmark
 
+### 最新 NuGet 結果
+
+最新の Windows x64 テストでは、100,000 行 x 10 列の workbook で `MiniExcel 1.46.0` と
+`MiniExcel.Rust 0.1.0-preview.1` を比較し、runtime とシナリオごとに 5 個の新規 process を使用しました。
+計測前に全行・全列・正規化した値の一致を確認しています。
+
+| シナリオ | MiniExcel | MiniExcel.Rust | Rust 高速化 | Allocation 削減 | Working set 削減 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | 2,052.91 ms | 1,278.59 ms | 1.61x | 88.6% | 4.6% |
+| Steady | 4,635.98 ms | 3,380.16 ms | 1.37x | 88.6% | 10.1% |
+
+結果はマシンに依存します。代表的な workbook で `pwsh ./scripts/compare-nuget-v1-rust.ps1` を実行し、
+[測定方法](../dotnet-v1-query-benchmark.md)を参照してください。
+
 このリポジトリを [.NET MiniExcel](https://github.com/mini-software/MiniExcel) と隣接配置して実行します。
 
 ```powershell

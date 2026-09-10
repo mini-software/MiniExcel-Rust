@@ -13,9 +13,17 @@ if (args.Length == 0)
 return args[0].ToLowerInvariant() switch
 {
     "generate" => Generate(args),
+    "generate-template" => GenerateTemplate(args),
     "verify" => Verify(args),
-    "managed" => Benchmark(args, useRust: false),
-    "rust-dotnet" => Benchmark(args, useRust: true),
+    "fingerprint" => Fingerprint(args),
+    "managed" or "managed-query" => BenchmarkQuery(args, useRust: false, firstOnly: false),
+    "rust-dotnet" or "rust-dotnet-query" => BenchmarkQuery(args, useRust: true, firstOnly: false),
+    "managed-query-first" => BenchmarkQuery(args, useRust: false, firstOnly: true),
+    "rust-dotnet-query-first" => BenchmarkQuery(args, useRust: true, firstOnly: true),
+    "managed-create" => BenchmarkCreate(args, useRust: false),
+    "rust-dotnet-create" => BenchmarkCreate(args, useRust: true),
+    "managed-template" => BenchmarkTemplate(args, useRust: false),
+    "rust-dotnet-template" => BenchmarkTemplate(args, useRust: true),
     _ => Usage()
 };
 
@@ -54,7 +62,34 @@ static int Verify(string[] arguments)
     return 0;
 }
 
-static int Benchmark(string[] arguments, bool useRust)
+static int GenerateTemplate(string[] arguments)
+{
+    if (arguments.Length != 2)
+        return Usage();
+    var path = Path.GetFullPath(arguments[1]);
+    if (File.Exists(path))
+        File.Delete(path);
+    MiniExcelRust.SaveAs(
+        path,
+        new[]
+        {
+            new Dictionary<string, object?> { ["Name"] = "Name", ["Department"] = "Department" },
+            new Dictionary<string, object?> { ["Name"] = "{{employees.name}}", ["Department"] = "{{employees.department}}" }
+        },
+        printHeader: false);
+    return 0;
+}
+
+static int Fingerprint(string[] arguments)
+{
+    if (arguments.Length != 2)
+        return Usage();
+    var (rows, cells, contentHash) = FingerprintRows(MiniExcelRust.Query(Path.GetFullPath(arguments[1])));
+    Console.WriteLine(JsonSerializer.Serialize(new { Rows = rows, Cells = cells, ContentHash = contentHash }));
+    return 0;
+}
+
+static int BenchmarkQuery(string[] arguments, bool useRust, bool firstOnly)
 {
     if (arguments.Length is < 2 or > 4 ||
         arguments.Length >= 3 && (!int.TryParse(arguments[2], out var passes) || passes < 1) ||
@@ -65,7 +100,7 @@ static int Benchmark(string[] arguments, bool useRust)
     var measuredPasses = arguments.Length >= 3 ? int.Parse(arguments[2], CultureInfo.InvariantCulture) : 1;
     var warmupPasses = arguments.Length >= 4 ? int.Parse(arguments[3], CultureInfo.InvariantCulture) : 0;
     for (var pass = 0; pass < warmupPasses; pass++)
-        Consume(path, useRust);
+        Consume(path, useRust, firstOnly);
 
     GC.Collect();
     GC.WaitForPendingFinalizers();
@@ -85,19 +120,96 @@ static int Benchmark(string[] arguments, bool useRust)
             rows++;
             cells += row.Count;
             AppendRow(hash, row);
+            if (firstOnly)
+                break;
         }
     }
     stopwatch.Stop();
 
     Console.WriteLine(JsonSerializer.Serialize(new BenchmarkResult(
+        firstOnly ? "QueryFirst" : "Query",
         useRust ? "MiniExcel.Rust (.NET)" : "MiniExcel",
         Environment.Version.ToString(),
         measuredPasses,
         rows,
         cells,
         Convert.ToHexString(hash.GetHashAndReset()),
+        null,
         stopwatch.Elapsed.TotalMilliseconds,
         firstRowMilliseconds,
+        GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore)));
+    return 0;
+}
+
+static int BenchmarkCreate(string[] arguments, bool useRust)
+{
+    if (arguments.Length != 6 ||
+        !int.TryParse(arguments[2], out var rows) || rows < 1 ||
+        !int.TryParse(arguments[3], out var columns) || columns is < 1 or > 26 ||
+        !int.TryParse(arguments[4], out var passes) || passes < 1 ||
+        !int.TryParse(arguments[5], out var warmups) || warmups < 0)
+        return Usage();
+    var outputPath = Path.GetFullPath(arguments[1]);
+    var values = CreateRows(rows, columns);
+    for (var pass = 0; pass < warmups; pass++)
+        WriteWorkbook(outputPath, values, useRust);
+
+    ForceCollection();
+    var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+    var stopwatch = Stopwatch.StartNew();
+    for (var pass = 0; pass < passes; pass++)
+        WriteWorkbook(outputPath, values, useRust);
+    stopwatch.Stop();
+    Console.WriteLine(JsonSerializer.Serialize(new BenchmarkResult(
+        "Create",
+        useRust ? "MiniExcel.Rust (.NET)" : "MiniExcel",
+        Environment.Version.ToString(),
+        passes,
+        (long)rows * passes,
+        (long)rows * columns * passes,
+        null,
+        outputPath,
+        stopwatch.Elapsed.TotalMilliseconds,
+        null,
+        GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore)));
+    return 0;
+}
+
+static int BenchmarkTemplate(string[] arguments, bool useRust)
+{
+    if (arguments.Length != 6 ||
+        !int.TryParse(arguments[3], out var rows) || rows < 1 ||
+        !int.TryParse(arguments[4], out var passes) || passes < 1 ||
+        !int.TryParse(arguments[5], out var warmups) || warmups < 0)
+        return Usage();
+    var templatePath = Path.GetFullPath(arguments[1]);
+    var outputPath = Path.GetFullPath(arguments[2]);
+    var value = new
+    {
+        employees = Enumerable.Range(1, rows)
+            .Select(_ => new { name = "Jack", department = "HR" })
+            .ToArray()
+    };
+    for (var pass = 0; pass < warmups; pass++)
+        FillTemplate(outputPath, templatePath, value, useRust);
+
+    ForceCollection();
+    var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+    var stopwatch = Stopwatch.StartNew();
+    for (var pass = 0; pass < passes; pass++)
+        FillTemplate(outputPath, templatePath, value, useRust);
+    stopwatch.Stop();
+    Console.WriteLine(JsonSerializer.Serialize(new BenchmarkResult(
+        "Template",
+        useRust ? "MiniExcel.Rust (.NET)" : "MiniExcel",
+        Environment.Version.ToString(),
+        passes,
+        (long)rows * passes,
+        (long)rows * 2 * passes,
+        null,
+        outputPath,
+        stopwatch.Elapsed.TotalMilliseconds,
+        null,
         GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore)));
     return 0;
 }
@@ -110,10 +222,50 @@ static IEnumerable<IDictionary<string, object?>> Query(string path, bool useRust
         .Cast<IDictionary<string, object?>>();
 }
 
-static void Consume(string path, bool useRust)
+static void Consume(string path, bool useRust, bool firstOnly)
 {
     foreach (var row in Query(path, useRust))
+    {
         _ = row.Count;
+        if (firstOnly)
+            break;
+    }
+}
+
+static List<IDictionary<string, object?>> CreateRows(int rows, int columns) =>
+    Enumerable.Range(1, rows)
+        .Select(_ => (IDictionary<string, object?>)Enumerable.Range(1, columns)
+            .ToDictionary(column => $"Column{column}", _ => (object?)"Hello World"))
+        .ToList();
+
+static void WriteWorkbook(
+    string path,
+    IEnumerable<IDictionary<string, object?>> values,
+    bool useRust)
+{
+    if (File.Exists(path))
+        File.Delete(path);
+    if (useRust)
+        MiniExcelRust.SaveAs(path, values);
+    else
+        ManagedMiniExcel.SaveAs(path, values);
+}
+
+static void FillTemplate(string outputPath, string templatePath, object value, bool useRust)
+{
+    if (File.Exists(outputPath))
+        File.Delete(outputPath);
+    if (useRust)
+        MiniExcelRust.FillTemplate(outputPath, templatePath, value);
+    else
+        ManagedMiniExcel.SaveAsByTemplate(outputPath, templatePath, value);
+}
+
+static void ForceCollection()
+{
+    GC.Collect();
+    GC.WaitForPendingFinalizers();
+    GC.Collect();
 }
 
 static void CompareRows(
@@ -137,6 +289,21 @@ static void AppendRow(IncrementalHash hash, IDictionary<string, object?> row)
         AppendText(hash, cell.Key);
         AppendText(hash, Normalize(cell.Value));
     }
+}
+
+static (long Rows, long Cells, string ContentHash) FingerprintRows(
+    IEnumerable<IDictionary<string, object?>> values)
+{
+    long rows = 0;
+    long cells = 0;
+    using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+    foreach (var row in values)
+    {
+        rows++;
+        cells += row.Count;
+        AppendRow(hash, row);
+    }
+    return (rows, cells, Convert.ToHexString(hash.GetHashAndReset()));
 }
 
 static void AppendText(IncrementalHash hash, string value)
@@ -221,18 +388,24 @@ static int Usage()
 {
     Console.Error.WriteLine("Usage:");
     Console.Error.WriteLine("  NuGetV1Query generate <xlsx-path> <rows> <columns>");
+    Console.Error.WriteLine("  NuGetV1Query generate-template <xlsx-path>");
     Console.Error.WriteLine("  NuGetV1Query verify <xlsx-path>");
-    Console.Error.WriteLine("  NuGetV1Query <managed|rust-dotnet> <xlsx-path> [passes] [warmup-passes]");
+    Console.Error.WriteLine("  NuGetV1Query fingerprint <xlsx-path>");
+    Console.Error.WriteLine("  NuGetV1Query <managed|rust-dotnet>-<query|query-first> <xlsx-path> [passes] [warmups]");
+    Console.Error.WriteLine("  NuGetV1Query <managed|rust-dotnet>-create <output-path> <rows> <columns> <passes> <warmups>");
+    Console.Error.WriteLine("  NuGetV1Query <managed|rust-dotnet>-template <template-path> <output-path> <rows> <passes> <warmups>");
     return 2;
 }
 
 internal sealed record BenchmarkResult(
+    string Method,
     string Runtime,
     string DotNetRuntime,
     int Passes,
     long Rows,
     long Cells,
-    string ContentHash,
+    string? ContentHash,
+    string? OutputPath,
     double ElapsedMilliseconds,
-    double FirstRowMilliseconds,
-    long AllocatedBytes);
+    double? FirstRowMilliseconds,
+    long? AllocatedBytes);

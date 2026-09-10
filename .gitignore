@@ -10,3 +10,4 @@
 /web-demo/playwright-report/
 /web-demo/test-results/
 *.log
+*.html

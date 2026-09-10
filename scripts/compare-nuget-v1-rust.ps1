@@ -21,6 +21,9 @@ param(
     [ValidateSet('Cold', 'Steady', 'Both')]
     [string] $Scenario = 'Both',
 
+    [ValidateSet('QueryFirst', 'Query', 'Create', 'Template')]
+    [string[]] $Methods = @('QueryFirst', 'Query', 'Create', 'Template'),
+
     [string] $MiniExcelVersion,
 
     [string] $MiniExcelRustVersion = '0.1.0-benchmark',
@@ -39,12 +42,13 @@ $restoreConfig = Join-Path $restoreDirectory 'nuget.config'
 $project = Join-Path $repositoryRoot 'benchmarks/nuget-v1-query/NuGetV1Query.csproj'
 $runner = Join-Path $repositoryRoot 'benchmarks/nuget-v1-query/bin/Release/net8.0/NuGetV1Query.dll'
 $nativeSuffix = if ($env:OS -eq 'Windows_NT') { '.exe' } else { '' }
-$nativeRunner = Join-Path $repositoryRoot "target/release/examples/stress_query$nativeSuffix"
+$nativeRunner = Join-Path $repositoryRoot "target/release/examples/nuget_method_benchmark$nativeSuffix"
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repositoryRoot 'target/benchmarks/nuget-v1'
 }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 $workbook = Join-Path $OutputDirectory "benchmark-$Rows`x$Columns.xlsx"
+$template = Join-Path $OutputDirectory 'template.xlsx'
 
 if ([string]::IsNullOrWhiteSpace($MiniExcelVersion)) {
     $versionIndex = Invoke-RestMethod 'https://api.nuget.org/v3-flatcontainer/miniexcel/index.json'
@@ -95,30 +99,54 @@ if ($LASTEXITCODE -ne 0) { throw 'Benchmark restore failed.' }
     -p:MiniExcelVersion=$MiniExcelVersion `
     -p:MiniExcelRustPackageVersion=$MiniExcelRustVersion
 if ($LASTEXITCODE -ne 0) { throw 'Benchmark build failed.' }
-& cargo +1.85.0 build --release -p miniexcel --example stress_query --locked
+& cargo +1.85.0 build --release -p miniexcel --example nuget_method_benchmark --locked
 if ($LASTEXITCODE -ne 0) { throw 'Native Rust benchmark build failed.' }
 
 & dotnet $runner generate $workbook $Rows $Columns
 if ($LASTEXITCODE -ne 0) { throw 'Benchmark workbook generation failed.' }
 & dotnet $runner verify $workbook
 if ($LASTEXITCODE -ne 0) { throw 'MiniExcel and MiniExcel.Rust returned different data.' }
+& dotnet $runner generate-template $template
+if ($LASTEXITCODE -ne 0) { throw 'Benchmark template generation failed.' }
 
 function Invoke-MeasuredProcess {
     param(
         [string] $Runtime,
+        [string] $Method,
         [pscustomobject] $BenchmarkScenario,
         [int] $Iteration
     )
 
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $methodKey = if ($Method -eq 'QueryFirst') { 'query-first' } else { $Method.ToLowerInvariant() }
+    $outputPath = Join-Path $OutputDirectory "output-$methodKey-$Runtime-$PID-$Iteration.xlsx"
     $startInfo.FileName = if ($Runtime -eq 'rust-native') { $nativeRunner } else { 'dotnet' }
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     $arguments = if ($Runtime -eq 'rust-native') {
-        @($workbook, "$($BenchmarkScenario.Passes)", "$($BenchmarkScenario.WarmupPasses)")
+        @(
+            $methodKey,
+            $(if ($Method -eq 'Template') { $template } else { $workbook }),
+            $outputPath,
+            "$Rows",
+            $(if ($Method -eq 'Template') { '2' } else { "$Columns" }),
+            "$($BenchmarkScenario.Passes)",
+            "$($BenchmarkScenario.WarmupPasses)"
+        )
     } else {
-        @($runner, $Runtime, $workbook, "$($BenchmarkScenario.Passes)", "$($BenchmarkScenario.WarmupPasses)")
+        $mode = "$Runtime-$methodKey"
+        switch ($Method) {
+            'Create' {
+                @($runner, $mode, $outputPath, "$Rows", "$Columns", "$($BenchmarkScenario.Passes)", "$($BenchmarkScenario.WarmupPasses)")
+            }
+            'Template' {
+                @($runner, $mode, $template, $outputPath, "$Rows", "$($BenchmarkScenario.Passes)", "$($BenchmarkScenario.WarmupPasses)")
+            }
+            default {
+                @($runner, $mode, $workbook, "$($BenchmarkScenario.Passes)", "$($BenchmarkScenario.WarmupPasses)")
+            }
+        }
     }
     foreach ($argument in $arguments) {
         $startInfo.ArgumentList.Add($argument)
@@ -140,7 +168,19 @@ function Invoke-MeasuredProcess {
         throw "$Runtime $($BenchmarkScenario.Name) failed: $errors"
     }
     $measurement = $output | ConvertFrom-Json
+    if ($Method -in @('Create', 'Template')) {
+        $fingerprintOutput = & dotnet $runner fingerprint $measurement.OutputPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "$Runtime $Method output verification failed."
+        }
+        $fingerprint = $fingerprintOutput | ConvertFrom-Json
+        $measurement.Rows = $fingerprint.Rows
+        $measurement.Cells = $fingerprint.Cells
+        $measurement.ContentHash = $fingerprint.ContentHash
+        Remove-Item $measurement.OutputPath -Force
+    }
     [pscustomobject]@{
+        Method = $Method
         Scenario = $BenchmarkScenario.Name
         Runtime = $measurement.Runtime
         Iteration = $Iteration
@@ -149,7 +189,11 @@ function Invoke-MeasuredProcess {
         Cells = $measurement.Cells
         ContentHash = $measurement.ContentHash
         ElapsedMs = [Math]::Round($measurement.ElapsedMilliseconds, 2)
-        FirstRowMs = [Math]::Round($measurement.FirstRowMilliseconds, 2)
+        FirstRowMs = if ($null -eq $measurement.FirstRowMilliseconds) {
+            $null
+        } else {
+            [Math]::Round($measurement.FirstRowMilliseconds, 2)
+        }
         AllocatedMB = if ($null -eq $measurement.AllocatedBytes) {
             $null
         } else {
@@ -180,72 +224,97 @@ if ($Scenario -in @('Steady', 'Both')) {
     $scenarios += [pscustomobject]@{ Name = 'Steady'; Passes = $Passes; WarmupPasses = $WarmupPasses }
 }
 
-foreach ($runtime in @('managed', 'rust-dotnet', 'rust-native')) {
-    $null = Invoke-MeasuredProcess -Runtime $runtime `
-        -BenchmarkScenario ([pscustomobject]@{ Name = 'Preflight'; Passes = 1; WarmupPasses = 0 }) `
-        -Iteration 0
+$runtimeKeys = @('managed', 'rust-dotnet', 'rust-native')
+$preflight = [Collections.Generic.List[object]]::new()
+foreach ($method in $Methods) {
+    foreach ($runtime in $runtimeKeys) {
+        $preflight.Add((Invoke-MeasuredProcess -Runtime $runtime -Method $method `
+            -BenchmarkScenario ([pscustomobject]@{ Name = 'Preflight'; Passes = 1; WarmupPasses = 0 }) `
+            -Iteration 0))
+    }
+    $methodPreflight = @($preflight | Where-Object Method -eq $method)
+    if (($methodPreflight.Rows | Select-Object -Unique).Count -ne 1 -or
+        ($methodPreflight.Cells | Select-Object -Unique).Count -ne 1 -or
+        ($methodPreflight.ContentHash | Select-Object -Unique).Count -ne 1) {
+        throw "$method preflight: the three runners returned different results."
+    }
 }
 
 $results = [Collections.Generic.List[object]]::new()
-$runtimeKeys = @('managed', 'rust-dotnet', 'rust-native')
-for ($scenarioIndex = 0; $scenarioIndex -lt $scenarios.Count; $scenarioIndex++) {
-    $benchmarkScenario = $scenarios[$scenarioIndex]
-    foreach ($iteration in 1..$Iterations) {
-        $offset = ($iteration + $scenarioIndex - 1) % $runtimeKeys.Count
-        $order = @(0..($runtimeKeys.Count - 1) | ForEach-Object {
-            $runtimeKeys[($_ + $offset) % $runtimeKeys.Count]
-        })
-        foreach ($runtime in $order) {
-            $results.Add((Invoke-MeasuredProcess -Runtime $runtime -BenchmarkScenario $benchmarkScenario -Iteration $iteration))
+for ($methodIndex = 0; $methodIndex -lt $Methods.Count; $methodIndex++) {
+    $method = $Methods[$methodIndex]
+    for ($scenarioIndex = 0; $scenarioIndex -lt $scenarios.Count; $scenarioIndex++) {
+        $benchmarkScenario = $scenarios[$scenarioIndex]
+        foreach ($iteration in 1..$Iterations) {
+            $offset = ($iteration + $scenarioIndex + $methodIndex - 1) % $runtimeKeys.Count
+            $order = @(0..($runtimeKeys.Count - 1) | ForEach-Object {
+                $runtimeKeys[($_ + $offset) % $runtimeKeys.Count]
+            })
+            foreach ($runtime in $order) {
+                $results.Add((Invoke-MeasuredProcess -Runtime $runtime -Method $method -BenchmarkScenario $benchmarkScenario -Iteration $iteration))
+            }
         }
     }
 }
 
-foreach ($benchmarkScenario in $scenarios) {
-    $scenarioResults = @($results | Where-Object Scenario -eq $benchmarkScenario.Name)
-    if (($scenarioResults.Rows | Select-Object -Unique).Count -ne 1 -or
-        ($scenarioResults.Cells | Select-Object -Unique).Count -ne 1 -or
-        ($scenarioResults.ContentHash | Select-Object -Unique).Count -ne 1) {
-        throw "$($benchmarkScenario.Name): the three runners returned different results."
-    }
-}
-
-$summary = foreach ($benchmarkScenario in $scenarios) {
-    foreach ($runtime in @('MiniExcel', 'MiniExcel.Rust (.NET)', 'MiniExcel.Rust')) {
-        $group = @($results | Where-Object { $_.Scenario -eq $benchmarkScenario.Name -and $_.Runtime -eq $runtime })
-        $medianElapsed = Get-Median ([double[]]$group.ElapsedMs)
-        $allocatedValues = @($group.AllocatedMB | Where-Object { $null -ne $_ })
-        [pscustomobject]@{
-            Scenario = $benchmarkScenario.Name
-            Runtime = $runtime
-            MedianElapsedMs = [Math]::Round($medianElapsed, 2)
-            RowsPerSecond = [Math]::Round($group[0].Rows / ($medianElapsed / 1000), 0)
-            MedianFirstRowMs = [Math]::Round((Get-Median ([double[]]$group.FirstRowMs)), 2)
-            MedianAllocatedMB = if ($allocatedValues.Count -eq 0) {
-                $null
-            } else {
-                [Math]::Round((Get-Median ([double[]]$allocatedValues)), 2)
-            }
-            MedianPeakWorkingSetMB = [Math]::Round((Get-Median ([double[]]$group.PeakWorkingSetMB)), 2)
-            MedianPeakPrivateMB = [Math]::Round((Get-Median ([double[]]$group.PeakPrivateMB)), 2)
+foreach ($method in $Methods) {
+    foreach ($benchmarkScenario in $scenarios) {
+        $scenarioResults = @($results | Where-Object { $_.Method -eq $method -and $_.Scenario -eq $benchmarkScenario.Name })
+        if (($scenarioResults.Rows | Select-Object -Unique).Count -ne 1 -or
+            ($scenarioResults.Cells | Select-Object -Unique).Count -ne 1 -or
+            ($scenarioResults.ContentHash | Select-Object -Unique).Count -ne 1) {
+            throw "$method $($benchmarkScenario.Name): the three runners returned different results."
         }
     }
 }
 
-$comparison = foreach ($benchmarkScenario in $scenarios) {
-    $managed = $summary | Where-Object { $_.Scenario -eq $benchmarkScenario.Name -and $_.Runtime -eq 'MiniExcel' }
-    foreach ($runtime in @('MiniExcel.Rust (.NET)', 'MiniExcel.Rust')) {
-        $rust = $summary | Where-Object { $_.Scenario -eq $benchmarkScenario.Name -and $_.Runtime -eq $runtime }
-        [pscustomobject]@{
-            Scenario = $benchmarkScenario.Name
-            Runtime = $runtime
-            RustSpeedup = [Math]::Round($managed.MedianElapsedMs / $rust.MedianElapsedMs, 2)
-            AllocationReductionPercent = if ($null -eq $rust.MedianAllocatedMB) {
-                $null
-            } else {
-                [Math]::Round((1 - $rust.MedianAllocatedMB / $managed.MedianAllocatedMB) * 100, 1)
+$summary = foreach ($method in $Methods) {
+    foreach ($benchmarkScenario in $scenarios) {
+        foreach ($runtime in @('MiniExcel', 'MiniExcel.Rust (.NET)', 'MiniExcel.Rust')) {
+            $group = @($results | Where-Object { $_.Method -eq $method -and $_.Scenario -eq $benchmarkScenario.Name -and $_.Runtime -eq $runtime })
+            $medianElapsed = Get-Median ([double[]]$group.ElapsedMs)
+            $allocatedValues = @($group.AllocatedMB | Where-Object { $null -ne $_ })
+            $firstRowValues = @($group.FirstRowMs | Where-Object { $null -ne $_ })
+            [pscustomobject]@{
+                Method = $method
+                Scenario = $benchmarkScenario.Name
+                Runtime = $runtime
+                MedianElapsedMs = [Math]::Round($medianElapsed, 2)
+                RowsPerSecond = [Math]::Round($group[0].Rows / ($medianElapsed / 1000), 0)
+                MedianFirstRowMs = if ($firstRowValues.Count -eq 0) {
+                    $null
+                } else {
+                    [Math]::Round((Get-Median ([double[]]$firstRowValues)), 2)
+                }
+                MedianAllocatedMB = if ($allocatedValues.Count -eq 0) {
+                    $null
+                } else {
+                    [Math]::Round((Get-Median ([double[]]$allocatedValues)), 2)
+                }
+                MedianPeakWorkingSetMB = [Math]::Round((Get-Median ([double[]]$group.PeakWorkingSetMB)), 2)
+                MedianPeakPrivateMB = [Math]::Round((Get-Median ([double[]]$group.PeakPrivateMB)), 2)
             }
-            WorkingSetReductionPercent = [Math]::Round((1 - $rust.MedianPeakWorkingSetMB / $managed.MedianPeakWorkingSetMB) * 100, 1)
+        }
+    }
+}
+
+$comparison = foreach ($method in $Methods) {
+    foreach ($benchmarkScenario in $scenarios) {
+        $managed = $summary | Where-Object { $_.Method -eq $method -and $_.Scenario -eq $benchmarkScenario.Name -and $_.Runtime -eq 'MiniExcel' }
+        foreach ($runtime in @('MiniExcel.Rust (.NET)', 'MiniExcel.Rust')) {
+            $rust = $summary | Where-Object { $_.Method -eq $method -and $_.Scenario -eq $benchmarkScenario.Name -and $_.Runtime -eq $runtime }
+            [pscustomobject]@{
+                Method = $method
+                Scenario = $benchmarkScenario.Name
+                Runtime = $runtime
+                RustSpeedup = [Math]::Round($managed.MedianElapsedMs / $rust.MedianElapsedMs, 2)
+                AllocationReductionPercent = if ($null -eq $rust.MedianAllocatedMB) {
+                    $null
+                } else {
+                    [Math]::Round((1 - $rust.MedianAllocatedMB / $managed.MedianAllocatedMB) * 100, 1)
+                }
+                WorkingSetReductionPercent = [Math]::Round((1 - $rust.MedianPeakWorkingSetMB / $managed.MedianPeakWorkingSetMB) * 100, 1)
+            }
         }
     }
 }
@@ -265,6 +334,7 @@ $report = [ordered]@{
     WorkbookSha256 = (Get-FileHash $workbook -Algorithm SHA256).Hash.ToLowerInvariant()
     PackageSha256 = (Get-FileHash $package -Algorithm SHA256).Hash.ToLowerInvariant()
     Iterations = $Iterations
+    Methods = $Methods
     Results = $results
     Summary = $summary
     Comparison = $comparison
@@ -272,8 +342,8 @@ $report = [ordered]@{
 $jsonPath = Join-Path $OutputDirectory "benchmark-$Rid.json"
 $markdownPath = Join-Path $OutputDirectory "benchmark-$Rid.md"
 $report | ConvertTo-Json -Depth 6 | Set-Content $jsonPath
-$results | Format-Table Scenario,Runtime,Iteration,ElapsedMs,FirstRowMs,AllocatedMB,PeakWorkingSetMB,PeakPrivateMB -AutoSize
-$summary | Format-Table Scenario,Runtime,MedianElapsedMs,RowsPerSecond,MedianFirstRowMs,MedianAllocatedMB,MedianPeakWorkingSetMB -AutoSize
+$results | Format-Table Method,Scenario,Runtime,Iteration,ElapsedMs,FirstRowMs,AllocatedMB,PeakWorkingSetMB,PeakPrivateMB -AutoSize
+$summary | Format-Table Method,Scenario,Runtime,MedianElapsedMs,RowsPerSecond,MedianFirstRowMs,MedianAllocatedMB,MedianPeakWorkingSetMB -AutoSize
 
 $markdown = [Collections.Generic.List[string]]::new()
 $markdown.Add("# MiniExcel v1 vs MiniExcel.Rust (.NET) vs MiniExcel.Rust ($Rid)")
@@ -285,16 +355,17 @@ $markdown.Add("- MiniExcel.Rust native: 0.4.0 ($($report.RustRevision))")
 $markdown.Add("- Workbook: $Rows rows x $Columns columns")
 $markdown.Add("- Iterations: $Iterations fresh processes per runtime and scenario")
 $markdown.Add('')
-$markdown.Add('| Scenario | Runtime | Median elapsed (ms) | Rows/s | First row (ms) | Allocated (MB) | Peak working set (MB) |')
-$markdown.Add('| --- | --- | ---: | ---: | ---: | ---: | ---: |')
+$markdown.Add('| Method | Scenario | Runtime | Median elapsed (ms) | Rows/s | First row (ms) | Allocated (MB) | Peak working set (MB) |')
+$markdown.Add('| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |')
 foreach ($item in $summary) {
     $allocated = if ($null -eq $item.MedianAllocatedMB) { 'n/a' } else { $item.MedianAllocatedMB }
-    $markdown.Add("| $($item.Scenario) | $($item.Runtime) | $($item.MedianElapsedMs) | $($item.RowsPerSecond) | $($item.MedianFirstRowMs) | $allocated | $($item.MedianPeakWorkingSetMB) |")
+    $firstRow = if ($null -eq $item.MedianFirstRowMs) { 'n/a' } else { $item.MedianFirstRowMs }
+    $markdown.Add("| $($item.Method) | $($item.Scenario) | $($item.Runtime) | $($item.MedianElapsedMs) | $($item.RowsPerSecond) | $firstRow | $allocated | $($item.MedianPeakWorkingSetMB) |")
 }
 $markdown.Add('')
 foreach ($item in $comparison) {
     $allocation = if ($null -eq $item.AllocationReductionPercent) { 'n/a' } else { "$($item.AllocationReductionPercent)%" }
-    $markdown.Add("- $($item.Scenario), $($item.Runtime): speedup $($item.RustSpeedup)x; allocation reduction $allocation; working-set reduction $($item.WorkingSetReductionPercent)%.")
+    $markdown.Add("- $($item.Method), $($item.Scenario), $($item.Runtime): speedup $($item.RustSpeedup)x; allocation reduction $allocation; working-set reduction $($item.WorkingSetReductionPercent)%.")
 }
 $markdown | Set-Content $markdownPath
 Write-Host "Report: $jsonPath"

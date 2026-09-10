@@ -13,7 +13,8 @@ namespace MiniExcelLibs;
 /// </summary>
 public static class MiniExcelRust
 {
-    private const int BatchSize = 64;
+    private const uint InitialBatchSize = 1;
+    private const uint StreamingBatchSize = 64;
 
     public static IAsyncEnumerable<IDictionary<string, object?>> QueryAsync(
         string path,
@@ -2236,32 +2237,46 @@ public static class MiniExcelRust
     private static IEnumerable<IDictionary<string, object?>> ReadRows(IntPtr rawHandle)
     {
         using var handle = new NativeQueryHandle(rawHandle);
+        var batchSize = InitialBatchSize;
+        var columns = new List<FrameColumn>();
         while (true)
         {
-            var result = NativeMethods.QueryNextBatch(handle, BatchSize, out var data, out var length);
+            var result = NativeMethods.QueryNextBatch(handle, batchSize, out var data, out var length);
             if (result == 0)
                 yield break;
             if (result < 0)
                 throw CreateNativeException(result);
+            batchSize = StreamingBatchSize;
 
             var byteLength = checked((int)length.ToUInt64());
             var frame = new byte[byteLength];
             Marshal.Copy(data, frame, 0, byteLength);
-            foreach (var row in DecodeBatch(frame))
+            foreach (var row in DecodeBatch(frame, columns))
                 yield return row;
         }
     }
 
-    private static IEnumerable<IDictionary<string, object?>> DecodeBatch(byte[] frame)
+    private static IEnumerable<IDictionary<string, object?>> DecodeBatch(
+        byte[] frame,
+        List<FrameColumn>? columns = null)
     {
         var reader = new FrameReader(frame);
         var rowCount = reader.ReadLength();
         for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
             var cellCount = reader.ReadLength();
+            var reuseColumns = columns is not null && columns.Count == cellCount;
+            var captureColumns = columns is not null && columns.Count == 0 && rowIndex == 0;
             IDictionary<string, object?> row = new Dictionary<string, object?>(cellCount, StringComparer.Ordinal);
             for (var cellIndex = 0; cellIndex < cellCount; cellIndex++)
-                row.Add(reader.ReadString(), reader.ReadValue());
+            {
+                var column = reuseColumns
+                    ? reader.ReadString(columns![cellIndex])
+                    : reader.ReadString();
+                if (captureColumns)
+                    columns!.Add(new FrameColumn(column, Encoding.UTF8.GetBytes(column)));
+                row.Add(column, reader.ReadValue());
+            }
             yield return row;
         }
 
@@ -2713,6 +2728,12 @@ public static class MiniExcelRust
         return new InvalidOperationException(Encoding.UTF8.GetString(bytes));
     }
 
+    private sealed class FrameColumn(string name, byte[] utf8Name)
+    {
+        public string Name { get; } = name;
+        public byte[] Utf8Name { get; } = utf8Name;
+    }
+
     private sealed class FrameReader(byte[] frame)
     {
         private int _offset;
@@ -2730,6 +2751,20 @@ public static class MiniExcelRust
             var length = ReadLength();
             EnsureAvailable(length);
             var value = Encoding.UTF8.GetString(frame, _offset, length);
+            _offset += length;
+            return value;
+        }
+
+        public string ReadString(FrameColumn expected)
+        {
+            var length = ReadLength();
+            EnsureAvailable(length);
+            var matches = length == expected.Utf8Name.Length;
+            for (var index = 0; matches && index < length; index++)
+                matches = frame[_offset + index] == expected.Utf8Name[index];
+            var value = matches
+                ? expected.Name
+                : Encoding.UTF8.GetString(frame, _offset, length);
             _offset += length;
             return value;
         }

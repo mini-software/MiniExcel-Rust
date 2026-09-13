@@ -12,10 +12,13 @@ for (const project of ["desktop", "mobile"]) {
     await expect(implementation.getByRole("link", { name: ".NET" })).toHaveAttribute("href", "/MiniExcel/");
     await expect(implementation.getByRole("link", { name: "Rust" })).toHaveAttribute("href", "/MiniExcel-Rust/");
     await expect(implementation.getByRole("link", { name: "Rust" })).toHaveAttribute("aria-current", "page");
-    await expect(page.getByRole("link", { name: "View MiniExcel Rust on GitHub" })).toHaveAttribute(
+    const githubLink = page.getByRole("link", { name: "View MiniExcel Rust on GitHub" });
+    await expect(githubLink).toHaveAttribute(
       "href",
       "https://github.com/mini-software/MiniExcel-Rust",
     );
+    await expect(githubLink).toHaveAttribute("target", "_blank");
+    await expect(githubLink).toHaveAttribute("rel", "noopener noreferrer");
     await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
     await expect(page.getByRole("cell", { name: "MiniExcel", exact: true })).toBeVisible();
     await expect(page.getByRole("cell", { name: "Browser WASM", exact: true })).toBeVisible();

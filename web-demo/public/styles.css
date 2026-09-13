@@ -348,6 +348,11 @@ input:disabled {
 
 .command-row-stack {
   align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.command-row-stack .button {
+  flex: 1 1 140px;
 }
 
 .button,

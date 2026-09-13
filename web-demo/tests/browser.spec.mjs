@@ -51,6 +51,33 @@ test("end cell limits the preview range", async ({ page }) => {
   await expect(page.getByRole("cell", { name: "MiniExcel", exact: true })).toBeVisible();
 });
 
+test("RAG export buttons wrap without clipping", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
+
+  await page.getByRole("tab", { name: "RAG", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Chunks JSONL" })).toBeVisible();
+
+  const layout = await page.locator(".export-section .command-row-stack").evaluate((container) => {
+    const buttons = [...container.querySelectorAll("button:not([hidden])")];
+    const containerRect = container.getBoundingClientRect();
+    const rects = buttons.map((button) => button.getBoundingClientRect());
+    return {
+      buttonCount: buttons.length,
+      rowCount: new Set(rects.map((rect) => Math.round(rect.top))).size,
+      maxRight: Math.max(...rects.map((rect) => rect.right)),
+      containerRight: containerRect.right,
+      scrollWidth: container.scrollWidth,
+      clientWidth: container.clientWidth,
+    };
+  });
+
+  expect(layout.buttonCount).toBe(5);
+  expect(layout.rowCount).toBeGreaterThan(1);
+  expect(layout.maxRight).toBeLessThanOrEqual(layout.containerRight + 1);
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 1);
+});
+
 test("grouped analysis runs from the visual query plan", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");

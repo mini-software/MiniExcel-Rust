@@ -190,6 +190,31 @@ input:disabled {
   background: var(--ink);
 }
 
+.github-link {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+
+.github-link:hover {
+  color: var(--green);
+  background: var(--green-soft);
+  border-color: var(--green);
+}
+
+.github-link svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
 .workspace {
   min-height: 0;
   display: grid;

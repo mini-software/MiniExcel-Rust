@@ -1019,6 +1019,12 @@ input:disabled {
   }
 }
 
+@media (max-width: 360px) {
+  .runtime-badge {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

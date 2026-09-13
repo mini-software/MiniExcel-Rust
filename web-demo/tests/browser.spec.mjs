@@ -296,16 +296,37 @@ test("control rail toggle hides and restores the panel across reloads", async ({
   await expect(page.locator("#controlRail")).toBeVisible();
 });
 
-test("invalid stored layout falls back to the expanded default", async ({ page }, testInfo) => {
+const invalidLayouts = [
+  { width: "wide", collapsed: "yes" },
+  { width: 0, collapsed: true },
+  { width: 900, collapsed: true },
+  { width: null, collapsed: false },
+  { width: 380, collapsed: "yes" },
+  { width: 380 },
+  { collapsed: true },
+  [],
+  "380",
+];
+
+test("invalid stored layouts fall back to the expanded default", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "Two-column layout is desktop-only");
   await page.goto("/");
-  await seedLayout(page, { width: "wide", collapsed: "yes" });
-  await page.reload();
 
-  await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
-  await expect(page.locator("#controlRail")).toBeVisible();
-  await expect(page.getByTestId("rail-toggle")).toHaveAttribute("aria-expanded", "true");
-  expect(await railWidth(page)).toBe(380);
+  for (const invalid of invalidLayouts) {
+    const payload = JSON.stringify(invalid);
+    await seedLayout(page, invalid);
+    await page.reload();
+
+    await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
+    await expect(page.locator("#controlRail"), payload).toBeVisible();
+    await expect(page.getByTestId("rail-toggle"), payload).toHaveAttribute("aria-expanded", "true");
+    expect(await railWidth(page), payload).toBe(380);
+
+    await page.getByTestId("rail-toggle").click();
+    await expect.poll(() => readLayout(page), { message: payload }).toEqual({ width: 380, collapsed: true });
+    await page.getByTestId("rail-toggle").click();
+    await expect.poll(() => railWidth(page), { message: payload }).toBe(380);
+  }
 });
 
 test("splitter drag resizes the control rail and persists the width", async ({ page }, testInfo) => {
@@ -358,6 +379,55 @@ test("splitter drag resizes the control rail and persists the width", async ({ p
 
   await page.reload();
   await expect.poll(() => railWidth(page)).toBe(364);
+});
+
+test("splitter drag keeps the resize cursor over interactive descendants", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "The splitter only exists in the two-column layout");
+  await page.goto("/");
+  await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
+
+  const probe = page.locator("#rowsModeButton");
+  const cursorOf = (locator) => locator.evaluate((element) => getComputedStyle(element).cursor);
+  await expect.poll(() => cursorOf(probe)).toBe("pointer");
+
+  const splitter = page.getByTestId("rail-splitter");
+  const handle = await splitter.boundingBox();
+  const handleX = handle.x + handle.width / 2;
+  const handleY = handle.y + handle.height / 2;
+  const dragX = handleX + 120;
+
+  await page.mouse.move(handleX, handleY);
+  await page.mouse.down();
+  await page.mouse.move(dragX, handleY, { steps: 6 });
+
+  const dragging = await page.evaluate(
+    ([x, y, selector]) => {
+      const underPointer = document.elementFromPoint(x, y);
+      return {
+        isResizing: document.body.classList.contains("is-resizing"),
+        bodyCursor: getComputedStyle(document.body).cursor,
+        bodyUserSelect: getComputedStyle(document.body).userSelect,
+        probeCursor: getComputedStyle(document.querySelector(selector)).cursor,
+        probeUserSelect: getComputedStyle(document.querySelector(selector)).userSelect,
+        underPointerCursor: underPointer ? getComputedStyle(underPointer).cursor : null,
+      };
+    },
+    [dragX, handleY, "#rowsModeButton"],
+  );
+
+  expect(dragging.isResizing).toBe(true);
+  expect(dragging.bodyCursor).toBe("col-resize");
+  expect(dragging.bodyUserSelect).toBe("none");
+  expect(dragging.probeCursor).toBe("col-resize");
+  expect(dragging.probeUserSelect).toBe("none");
+  expect(dragging.underPointerCursor).toBe("col-resize");
+  expect(await railWidth(page)).toBeGreaterThan(380);
+
+  await page.mouse.up();
+
+  await expect.poll(() => page.evaluate(() => document.body.classList.contains("is-resizing"))).toBe(false);
+  await expect.poll(() => cursorOf(probe)).toBe("pointer");
+  await expect.poll(() => cursorOf(page.getByTestId("rail-splitter"))).toBe("col-resize");
 });
 
 for (const project of ["mobile", "mobile-narrow"]) {

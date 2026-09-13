@@ -157,10 +157,11 @@ function readStoredLayout() {
     const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw);
-    return {
-      width: Number.isFinite(parsed?.width) ? parsed.width : fallback.width,
-      collapsed: parsed?.collapsed === true,
-    };
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return fallback;
+    const { width, collapsed } = parsed;
+    if (!Number.isFinite(width) || width < RAIL_WIDTH_MIN || width > RAIL_WIDTH_MAX) return fallback;
+    if (typeof collapsed !== "boolean") return fallback;
+    return { width, collapsed };
   } catch {
     return fallback;
   }

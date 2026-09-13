@@ -274,9 +274,10 @@ body.is-resizing .rail-splitter::before {
   outline-offset: -2px;
 }
 
-body.is-resizing {
-  cursor: col-resize;
-  user-select: none;
+body.is-resizing,
+body.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 .control-section {

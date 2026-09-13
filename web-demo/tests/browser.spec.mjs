@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 
-for (const project of ["desktop", "mobile"]) {
+for (const project of ["desktop", "mobile", "mobile-narrow"]) {
   test(`${project} renders the generated workbook`, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== project);
     await page.goto("/");

@@ -1,4 +1,10 @@
 const MAX_FILE_SIZE = 64 * 1024 * 1024;
+const LAYOUT_STORAGE_KEY = "miniexcel.browser-lab.layout/v1";
+const RAIL_WIDTH_DEFAULT = 380;
+const RAIL_WIDTH_MIN = 260;
+const RAIL_WIDTH_MAX = 720;
+const RAIL_WIDTH_RATIO = 0.6;
+const RAIL_KEYBOARD_STEP = 16;
 const worker = new Worker(new URL("./analysis-worker.js", import.meta.url), { type: "module" });
 let nextRequestId = 1;
 const pendingRequests = new Map();
@@ -17,11 +23,14 @@ const state = {
   columnTypes: new Map(),
   builderInitialized: false,
   toastTimer: null,
+  railWidth: RAIL_WIDTH_DEFAULT,
+  railCollapsed: false,
 };
 
 const elements = Object.fromEntries(
   [
-    "runtimeStatus", "fileInput", "openFileButton", "loadDemoButton", "downloadDemoButton",
+    "runtimeStatus", "workspace", "controlRail", "railSplitter", "railToggleButton", "fileInput",
+    "openFileButton", "loadDemoButton", "downloadDemoButton",
     "downloadJsonButton", "downloadChunksButton", "downloadMarkdownChunksButton",
     "downloadManifestButton", "downloadMarkdownButton", "dropZone",
     "fileName", "fileSize", "sheetCount", "sheetSelect", "startCellInput", "endCellInput",
@@ -51,6 +60,7 @@ worker.addEventListener("error", (event) => {
   pendingRequests.clear();
 });
 
+initLayout();
 bindEvents();
 boot();
 
@@ -130,6 +140,119 @@ function bindEvents() {
   elements.previewTab.addEventListener("click", () => setTab("grid"));
   elements.jsonTab.addEventListener("click", () => setTab("json"));
   elements.markdownTab.addEventListener("click", () => setTab("markdown"));
+  elements.railToggleButton.addEventListener("click", () => setRailCollapsed(!state.railCollapsed));
+  bindRailSplitter();
+  window.addEventListener("resize", applyRailWidth);
+}
+
+function initLayout() {
+  const stored = readStoredLayout();
+  state.railWidth = stored.width;
+  setRailCollapsed(stored.collapsed, { persist: false });
+}
+
+function readStoredLayout() {
+  const fallback = { width: RAIL_WIDTH_DEFAULT, collapsed: false };
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return {
+      width: Number.isFinite(parsed?.width) ? parsed.width : fallback.width,
+      collapsed: parsed?.collapsed === true,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function persistLayout() {
+  try {
+    window.localStorage.setItem(
+      LAYOUT_STORAGE_KEY,
+      JSON.stringify({ width: Math.round(state.railWidth), collapsed: state.railCollapsed }),
+    );
+  } catch {
+    // Storage can be unavailable (private browsing); the layout then only lasts for this session.
+  }
+}
+
+function railWidthBounds() {
+  const available = elements.workspace.clientWidth || window.innerWidth;
+  const scaled = Math.round(available * RAIL_WIDTH_RATIO);
+  return { min: RAIL_WIDTH_MIN, max: Math.max(RAIL_WIDTH_MIN, Math.min(RAIL_WIDTH_MAX, scaled)) };
+}
+
+function applyRailWidth() {
+  const { min, max } = railWidthBounds();
+  const width = Math.min(Math.max(Math.round(state.railWidth), min), max);
+  elements.workspace.style.setProperty("--rail-width", `${width}px`);
+  elements.railSplitter.setAttribute("aria-valuemin", String(min));
+  elements.railSplitter.setAttribute("aria-valuemax", String(max));
+  elements.railSplitter.setAttribute("aria-valuenow", String(width));
+}
+
+function setRailWidth(width, { persist = true } = {}) {
+  const { min, max } = railWidthBounds();
+  state.railWidth = Math.min(Math.max(Math.round(width), min), max);
+  applyRailWidth();
+  if (persist) persistLayout();
+}
+
+function setRailCollapsed(collapsed, { persist = true } = {}) {
+  state.railCollapsed = collapsed;
+  elements.controlRail.hidden = collapsed;
+  elements.railSplitter.hidden = collapsed;
+  elements.workspace.classList.toggle("is-collapsed", collapsed);
+  elements.railToggleButton.setAttribute("aria-expanded", String(!collapsed));
+  elements.railToggleButton.title = collapsed ? "Show workbook controls" : "Hide workbook controls";
+  if (!collapsed) applyRailWidth();
+  if (persist) persistLayout();
+}
+
+function bindRailSplitter() {
+  let activePointer = null;
+
+  elements.railSplitter.addEventListener("pointerdown", (event) => {
+    if (state.railCollapsed || event.button !== 0) return;
+    activePointer = event.pointerId;
+    elements.railSplitter.setPointerCapture(event.pointerId);
+    document.body.classList.add("is-resizing");
+  });
+
+  elements.railSplitter.addEventListener("pointermove", (event) => {
+    if (activePointer === null || event.pointerId !== activePointer) return;
+    const left = elements.controlRail.getBoundingClientRect().left;
+    setRailWidth(event.clientX - left, { persist: false });
+  });
+
+  const endResize = (event) => {
+    if (activePointer === null || (event && event.pointerId !== activePointer)) return;
+    if (elements.railSplitter.hasPointerCapture(activePointer)) {
+      elements.railSplitter.releasePointerCapture(activePointer);
+    }
+    activePointer = null;
+    document.body.classList.remove("is-resizing");
+    persistLayout();
+  };
+  elements.railSplitter.addEventListener("pointerup", endResize);
+  elements.railSplitter.addEventListener("pointercancel", endResize);
+
+  elements.railSplitter.addEventListener("dblclick", () => setRailWidth(RAIL_WIDTH_DEFAULT));
+
+  elements.railSplitter.addEventListener("keydown", (event) => {
+    const { min, max } = railWidthBounds();
+    const current = Math.round(elements.controlRail.getBoundingClientRect().width) || state.railWidth;
+    const next = {
+      ArrowLeft: current - RAIL_KEYBOARD_STEP,
+      ArrowRight: current + RAIL_KEYBOARD_STEP,
+      Home: min,
+      End: max,
+    }[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    setRailWidth(next);
+  });
 }
 
 async function loadFile(file) {

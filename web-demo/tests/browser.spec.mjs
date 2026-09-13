@@ -228,3 +228,164 @@ test("uploaded workbook shows metadata and requires hidden-sheet RAG opt-in", as
   await expect(page.locator("#resultEyebrow")).toHaveText("Markdown conversion");
   await expect(page.locator("#downloadMarkdownButton")).toBeEnabled();
 });
+
+const LAYOUT_KEY = "miniexcel.browser-lab.layout/v1";
+
+const readLayout = (page) =>
+  page.evaluate((key) => {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  }, LAYOUT_KEY);
+
+const seedLayout = (page, layout) =>
+  page.evaluate(
+    ([key, value]) => window.localStorage.setItem(key, value),
+    [LAYOUT_KEY, JSON.stringify(layout)],
+  );
+
+const hasNoHorizontalOverflow = (page) =>
+  page.evaluate(
+    () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
+  );
+
+const railWidth = async (page) => {
+  const box = await page.locator("#controlRail").boundingBox();
+  return Math.round(box.width);
+};
+
+const panelWidth = async (page, selector) => {
+  const box = await page.locator(selector).boundingBox();
+  return Math.round(box.width);
+};
+
+test("control rail toggle hides and restores the panel across reloads", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Two-column layout is desktop-only");
+  await page.goto("/");
+  const rail = page.locator("#controlRail");
+  const toggle = page.getByTestId("rail-toggle");
+  await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
+
+  await expect(rail).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(toggle).toHaveAttribute("title", "Hide workbook controls");
+  const expandedPreview = await panelWidth(page, ".preview-panel");
+
+  await toggle.click();
+
+  await expect(rail).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toHaveAttribute("title", "Show workbook controls");
+  expect(await panelWidth(page, ".preview-panel")).toBeGreaterThan(expandedPreview);
+  expect(await readLayout(page)).toEqual({ width: 380, collapsed: true });
+  await expect.poll(() => hasNoHorizontalOverflow(page)).toBe(true);
+
+  await page.reload();
+
+  await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
+  await expect(page.locator("#controlRail")).toBeHidden();
+  await expect(page.getByTestId("rail-toggle")).toHaveAttribute("aria-expanded", "false");
+
+  await page.getByTestId("rail-toggle").click();
+
+  await expect(page.locator("#controlRail")).toBeVisible();
+  await expect(page.getByTestId("rail-toggle")).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(() => railWidth(page)).toBe(380);
+  expect(await readLayout(page)).toEqual({ width: 380, collapsed: false });
+
+  await page.reload();
+  await expect(page.locator("#controlRail")).toBeVisible();
+});
+
+test("invalid stored layout falls back to the expanded default", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Two-column layout is desktop-only");
+  await page.goto("/");
+  await seedLayout(page, { width: "wide", collapsed: "yes" });
+  await page.reload();
+
+  await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
+  await expect(page.locator("#controlRail")).toBeVisible();
+  await expect(page.getByTestId("rail-toggle")).toHaveAttribute("aria-expanded", "true");
+  expect(await railWidth(page)).toBe(380);
+});
+
+test("splitter drag resizes the control rail and persists the width", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "The splitter only exists in the two-column layout");
+  await page.goto("/");
+  const splitter = page.getByTestId("rail-splitter");
+  await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
+  await expect(splitter).toBeVisible();
+  expect(await railWidth(page)).toBe(380);
+
+  const start = await splitter.boundingBox();
+  const handleY = start.y + start.height / 2;
+  await page.mouse.move(start.x + start.width / 2, handleY);
+  await page.mouse.down();
+  await page.mouse.move(start.x + start.width / 2 + 160, handleY, { steps: 10 });
+  await page.mouse.up();
+
+  const dragged = await railWidth(page);
+  expect(dragged).toBeGreaterThan(520);
+  expect(dragged).toBeLessThanOrEqual(560);
+  await expect.poll(async () => (await readLayout(page)).width).toBe(dragged);
+  expect(await panelWidth(page, ".preview-panel")).toBeGreaterThan(320);
+
+  await page.reload();
+  await expect.poll(() => railWidth(page)).toBe(dragged);
+
+  const wideHandle = await page.getByTestId("rail-splitter").boundingBox();
+  await page.mouse.move(wideHandle.x + wideHandle.width / 2, handleY);
+  await page.mouse.down();
+  await page.mouse.move(wideHandle.x + 2000, handleY, { steps: 10 });
+  await page.mouse.up();
+
+  const clamped = await railWidth(page);
+  expect(clamped).toBeLessThanOrEqual(720);
+  expect(clamped).toBeGreaterThan(600);
+  expect(await panelWidth(page, ".preview-panel")).toBeGreaterThanOrEqual(320);
+  await expect.poll(() => hasNoHorizontalOverflow(page)).toBe(true);
+
+  const resetHandle = await page.getByTestId("rail-splitter").boundingBox();
+  await page.mouse.dblclick(resetHandle.x + resetHandle.width / 2, handleY);
+
+  await expect.poll(() => railWidth(page)).toBe(380);
+  await expect.poll(async () => (await readLayout(page)).width).toBe(380);
+
+  await splitter.focus();
+  await page.keyboard.press("ArrowLeft");
+
+  await expect.poll(() => railWidth(page)).toBe(364);
+  await expect.poll(async () => (await readLayout(page)).width).toBe(364);
+
+  await page.reload();
+  await expect.poll(() => railWidth(page)).toBe(364);
+});
+
+for (const project of ["mobile", "mobile-narrow"]) {
+  test(`${project} toggles the stacked control rail without horizontal overflow`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== project);
+    await page.goto("/");
+    await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
+    await expect(page.getByTestId("rail-splitter")).toBeHidden();
+
+    await seedLayout(page, { width: 720, collapsed: false });
+    await page.reload();
+
+    await expect(page.locator("#controlRail")).toBeVisible();
+    await expect.poll(() => hasNoHorizontalOverflow(page)).toBe(true);
+
+    await page.getByTestId("rail-toggle").click();
+
+    await expect(page.locator("#controlRail")).toBeHidden();
+    await expect.poll(() => hasNoHorizontalOverflow(page)).toBe(true);
+
+    await page.reload();
+
+    await expect(page.locator("#controlRail")).toBeHidden();
+    expect((await readLayout(page)).collapsed).toBe(true);
+    await expect.poll(() => hasNoHorizontalOverflow(page)).toBe(true);
+
+    await page.getByTestId("rail-toggle").click();
+    await expect(page.locator("#controlRail")).toBeVisible();
+    await expect.poll(() => hasNoHorizontalOverflow(page)).toBe(true);
+  });
+}

@@ -8,8 +8,10 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use super::donor::DonorWorksheet;
 use super::package::{DefinedName, PackageInventory, WorkbookSheet, WorksheetAllocation};
-use super::style::rebase_styles;
-use crate::{Error, Result, SheetVisibility, TargetRelationshipPolicy};
+use super::style::{
+    collect_cell_styles, rebase_styles, rewrite_worksheet_font_colors, update_font_colors,
+};
+use crate::{CellReference, Error, Result, RgbColor, SheetVisibility, TargetRelationshipPolicy};
 
 const CONTENT_TYPES_PATH: &str = "[Content_Types].xml";
 const WORKBOOK_PATH: &str = "xl/workbook.xml";
@@ -457,6 +459,68 @@ where
         &replacements,
         &BTreeSet::new(),
         None,
+        None,
+        &mut checkpoint,
+    )
+}
+
+pub(super) fn update_font_colors_to_writer_with_hook<R, W, F>(
+    mut source: R,
+    destination: W,
+    worksheet_path: &str,
+    styles_path: &str,
+    colors: &BTreeMap<CellReference, RgbColor>,
+    mut checkpoint: F,
+) -> Result<W>
+where
+    R: Read + Seek,
+    W: Write + Seek,
+    F: FnMut(PackageRewriteStage) -> Result<()>,
+{
+    source.seek(SeekFrom::Start(0))?;
+    let (styles_xml, cell_styles) = {
+        let mut archive = ZipArchive::new(&mut source).map_err(|error| {
+            Error::insert_package(format!("cannot reopen source workbook: {error}"))
+        })?;
+        let styles_xml = read_part(&mut archive, styles_path)?;
+        let worksheet = archive.by_name(worksheet_path).map_err(|error| {
+            Error::insert_package(format!("cannot read worksheet '{worksheet_path}': {error}"))
+        })?;
+        let cells = colors.keys().copied().collect::<BTreeSet<_>>();
+        let cell_styles = collect_cell_styles(BufReader::new(worksheet), &cells)?;
+        (styles_xml, cell_styles)
+    };
+    let (styles_xml, rewritten_styles) = update_font_colors(&styles_xml, &cell_styles, colors)?;
+
+    source.seek(SeekFrom::Start(0))?;
+    let mut worksheet_xml = tempfile::NamedTempFile::new()?;
+    {
+        let mut archive = ZipArchive::new(&mut source).map_err(|error| {
+            Error::insert_package(format!("cannot reopen source workbook: {error}"))
+        })?;
+        let worksheet = archive.by_name(worksheet_path).map_err(|error| {
+            Error::insert_package(format!("cannot read worksheet '{worksheet_path}': {error}"))
+        })?;
+        rewrite_worksheet_font_colors(
+            BufReader::new(worksheet),
+            worksheet_xml.as_file_mut(),
+            &rewritten_styles,
+        )?;
+        worksheet_xml.as_file_mut().flush()?;
+    }
+
+    source.seek(SeekFrom::Start(0))?;
+    let archive = ZipArchive::new(source).map_err(|error| {
+        Error::insert_package(format!("cannot reopen source workbook: {error}"))
+    })?;
+    let replacements = BTreeMap::from([(styles_path.to_owned(), styles_xml)]);
+    let mut worksheet_reader = BufReader::new(worksheet_xml.reopen()?);
+    write_package(
+        archive,
+        destination,
+        &replacements,
+        &BTreeSet::new(),
+        Some((worksheet_path, &mut worksheet_reader)),
         None,
         &mut checkpoint,
     )
@@ -969,7 +1033,7 @@ fn relationship_part_path(source: &str) -> Result<String> {
     }
 }
 
-fn styles_path(inventory: &PackageInventory) -> Result<String> {
+pub(super) fn styles_path(inventory: &PackageInventory) -> Result<String> {
     let mut paths = inventory
         .relationships
         .iter()

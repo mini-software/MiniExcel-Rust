@@ -7,9 +7,9 @@ use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 #[cfg(feature = "async")]
 use futures_util::StreamExt;
 use miniexcel::{
-    CellValue, DynamicRow, ExistingSheetPolicy, HeaderMode, HeaderStyle, HorizontalAlignment,
-    InsertOptions, MiniExcel, ReadOptions, RgbColor, SheetVisibility, TableStyle,
-    TargetRelationshipPolicy, VerticalAlignment, WriteOptions,
+    CellReference, CellValue, DynamicRow, ExistingSheetPolicy, HeaderMode, HeaderStyle,
+    HorizontalAlignment, InsertOptions, MiniExcel, ReadOptions, RgbColor, SheetVisibility,
+    TableStyle, TargetRelationshipPolicy, VerticalAlignment, WriteOptions,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -825,6 +825,122 @@ fn write_options_matrix_repeated_inserts_preserve_and_deduplicate_styles() {
         initial_sheet
     );
     assert_eq!(final_inventory.sheets.len(), 11);
+}
+
+#[test]
+fn workbook_edit_applies_reverse_ordered_font_colors_when_saved() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("style-edit.xlsx");
+    let schema = (1..=24).map(|column| format!("Column{column}")).collect::<Vec<_>>();
+    let rows = (1..=100).map(|row| {
+        let mut values = DynamicRow::new();
+        for (index, name) in schema.iter().enumerate() {
+            values.insert(name.clone(), CellValue::Int((row * 100 + index) as i64));
+        }
+        Ok(values)
+    });
+    MiniExcel::insert_with_schema(
+        &path,
+        &schema,
+        rows,
+        &InsertOptions::new().with_sheet_name("Data"),
+    )
+    .unwrap();
+
+    let initial_bytes = std::fs::read(&path).unwrap();
+    let initial_inventory = package_inventory(&initial_bytes);
+    let initial_data = initial_inventory.sheets.iter().find(|sheet| sheet.name == "Data").unwrap();
+    let initial_worksheet = entry_text(&initial_bytes, &format!("xl/{}", initial_data.target));
+    let initial_styles = read_entry(&initial_bytes, "xl/styles.xml");
+    let initial_a1 = cell_xf(&initial_styles, cell_style_index(&initial_worksheet, "A1"));
+
+    MiniExcel::edit_sheet(&path, "Data")
+        .set_font_color("A1".parse::<CellReference>().unwrap(), RgbColor::new(0, 255, 0))
+        .set_font_color("X100".parse::<CellReference>().unwrap(), RgbColor::new(0, 0, 255))
+        .set_font_color("A1".parse::<CellReference>().unwrap(), RgbColor::new(255, 0, 0))
+        .save()
+        .unwrap();
+
+    let bytes = std::fs::read(&path).unwrap();
+    let inventory = package_inventory(&bytes);
+    let data = inventory.sheets.iter().find(|sheet| sheet.name == "Data").unwrap();
+    let worksheet = entry_text(&bytes, &format!("xl/{}", data.target));
+    let styles = read_entry(&bytes, "xl/styles.xml");
+    let a1_font = cell_xf(&styles, cell_style_index(&worksheet, "A1")).font_id;
+    let x100_font = cell_xf(&styles, cell_style_index(&worksheet, "X100")).font_id;
+    assert_eq!(font_rgb(&styles, a1_font).as_deref(), Some("FFFF0000"));
+    assert_eq!(font_rgb(&styles, x100_font).as_deref(), Some("FF0000FF"));
+    let mut expected_a1 = initial_a1;
+    expected_a1.font_id = a1_font;
+    assert_eq!(cell_xf(&styles, cell_style_index(&worksheet, "A1")), expected_a1);
+
+    let counts = parse_styles(&styles);
+    MiniExcel::edit_sheet(&path, "Data")
+        .set_font_color("X100".parse::<CellReference>().unwrap(), RgbColor::new(0, 0, 255))
+        .set_font_color("A1".parse::<CellReference>().unwrap(), RgbColor::new(255, 0, 0))
+        .save()
+        .unwrap();
+    assert_eq!(parse_styles(&read_entry(&std::fs::read(&path).unwrap(), "xl/styles.xml")), counts);
+
+    let before_failure = std::fs::read(&path).unwrap();
+    assert!(
+        MiniExcel::edit_sheet(&path, "Data")
+            .set_font_color("XFD1048576".parse::<CellReference>().unwrap(), RgbColor::new(1, 2, 3),)
+            .save()
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before_failure);
+}
+
+#[test]
+fn workbook_edit_without_operations_leaves_the_file_unchanged() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("style-edit-noop.xlsx");
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("No-op", 1)],
+        &InsertOptions::new().with_sheet_name("Data"),
+    )
+    .unwrap();
+    let before = std::fs::read(&path).unwrap();
+
+    MiniExcel::edit_sheet(&path, "Data").save().unwrap();
+
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn workbook_edit_reuses_font_and_xf_for_matching_source_styles() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("style-edit-dedup.xlsx");
+    MiniExcel::insert(
+        &path,
+        &[dynamic_insert_row("First", 1), dynamic_insert_row("Second", 2)],
+        &InsertOptions::new().with_sheet_name("Data"),
+    )
+    .unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let before_counts = parse_styles(&read_entry(&before, "xl/styles.xml"));
+
+    MiniExcel::edit_sheet(&path, "dAtA")
+        .set_font_color("A2".parse::<CellReference>().unwrap(), RgbColor::new(0x12, 0x34, 0x56))
+        .set_font_color("A3".parse::<CellReference>().unwrap(), RgbColor::new(0x12, 0x34, 0x56))
+        .save()
+        .unwrap();
+
+    let bytes = std::fs::read(&path).unwrap();
+    let inventory = package_inventory(&bytes);
+    let data = inventory.sheets.iter().find(|sheet| sheet.name == "Data").unwrap();
+    let worksheet = entry_text(&bytes, &format!("xl/{}", data.target));
+    let styles = read_entry(&bytes, "xl/styles.xml");
+    let after_counts = parse_styles(&styles);
+    let a2_style = cell_style_index(&worksheet, "A2");
+    let a3_style = cell_style_index(&worksheet, "A3");
+
+    assert_eq!(a2_style, a3_style);
+    assert_eq!(after_counts.fonts, before_counts.fonts + 1);
+    assert_eq!(after_counts.cell_xfs, before_counts.cell_xfs + 1);
+    assert_eq!(font_rgb(&styles, cell_xf(&styles, a2_style).font_id).as_deref(), Some("FF123456"));
 }
 
 #[test]
@@ -2498,6 +2614,38 @@ fn cell_xf_attributes(event: &BytesStart<'_>) -> CellXf {
 fn cell_xf_signatures(styles_xml: &[u8]) -> Vec<CellXf> {
     let count = parse_styles(styles_xml).cell_xfs;
     (0..count).map(|index| cell_xf(styles_xml, index)).collect()
+}
+
+fn font_rgb(styles_xml: &[u8], font_index: usize) -> Option<String> {
+    let mut reader = Reader::from_reader(styles_xml);
+    let mut in_fonts = false;
+    let mut current_font = None;
+    let mut next_font = 0;
+    loop {
+        match reader.read_event().expect("parse styles XML") {
+            Event::Start(event) if local_name(event.name().as_ref()) == b"fonts" => {
+                in_fonts = true;
+            }
+            Event::End(event) if local_name(event.name().as_ref()) == b"fonts" => {
+                return None;
+            }
+            Event::Start(event) if in_fonts && local_name(event.name().as_ref()) == b"font" => {
+                current_font = Some(next_font);
+                next_font += 1;
+            }
+            Event::End(event) if in_fonts && local_name(event.name().as_ref()) == b"font" => {
+                current_font = None;
+            }
+            Event::Start(event) | Event::Empty(event)
+                if current_font == Some(font_index)
+                    && local_name(event.name().as_ref()) == b"color" =>
+            {
+                return attribute(&event, b"rgb");
+            }
+            Event::Eof => return None,
+            _ => {}
+        }
+    }
 }
 
 fn attribute(event: &BytesStart<'_>, key: &[u8]) -> Option<String> {

@@ -141,7 +141,7 @@ impl StructuredRow {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CellReference {
     row: usize,
     column: usize,

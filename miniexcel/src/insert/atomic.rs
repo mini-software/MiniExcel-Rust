@@ -13,14 +13,10 @@ use super::package::PackageInventory;
 use super::rewrite::{
     PackageRewriteStage, ReplacementPlan, append_worksheet_to_writer_with_hook,
     mutate_worksheet_metadata_to_writer_with_hook, plan_replacement, remap_sheet_index,
-    reorder_worksheet_to_writer_with_hook, replace_worksheet_to_writer_with_hook, styles_path,
-    update_font_colors_to_writer_with_hook,
+    reorder_worksheet_to_writer_with_hook, replace_worksheet_to_writer_with_hook,
 };
 use crate::writer::validate_sheet_name;
-use crate::{
-    CellReference, Error, ExistingSheetPolicy, Result, RgbColor, SheetVisibility,
-    TargetRelationshipPolicy,
-};
+use crate::{Error, ExistingSheetPolicy, Result, SheetVisibility, TargetRelationshipPolicy};
 
 const WORKSHEET_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
@@ -515,62 +511,6 @@ pub(crate) fn reorder_sheet_to_path(
     new_sheet_index: i32,
 ) -> Result<()> {
     reorder_sheet_to_path_with_hook(path.as_ref(), sheet_name, new_sheet_index, |_| Ok(()))
-}
-
-pub(crate) fn update_font_colors_to_path(
-    path: &Path,
-    sheet_name: &str,
-    colors: &std::collections::BTreeMap<CellReference, RgbColor>,
-) -> Result<()> {
-    validate_sheet_name(sheet_name, &std::collections::HashSet::new())?;
-    if colors.is_empty() {
-        return Ok(());
-    }
-    let _guard = PathMutationGuard::acquire(path, "worksheet style update")?;
-    let source_fingerprint = SourceFingerprint::read(path)?;
-    let source_metadata = fs::metadata(path)?;
-    let mut source = File::open(path)?;
-    let inventory = PackageInventory::inspect(&mut source)?;
-    let target = inventory
-        .find_sheet(sheet_name)
-        .cloned()
-        .ok_or_else(|| Error::sheet_not_found(sheet_name))?;
-    let styles_path = styles_path(&inventory)?;
-    let parent = sibling_directory(path);
-    let mut temporary =
-        tempfile::Builder::new().prefix(".miniexcel-").suffix(".xlsx.tmp").tempfile_in(parent)?;
-
-    source.rewind()?;
-    update_font_colors_to_writer_with_hook(
-        source,
-        temporary.as_file_mut(),
-        &target.target,
-        &styles_path,
-        colors,
-        |_| Ok(()),
-    )?;
-    temporary.as_file_mut().flush()?;
-    temporary.as_file().sync_all()?;
-    validate_rewritten_package(temporary.reopen()?, &target.name)?;
-    let rewritten = PackageInventory::inspect(temporary.reopen()?)?;
-    if rewritten.sheets != inventory.sheets
-        || rewritten.views != inventory.views
-        || rewritten.defined_names != inventory.defined_names
-        || rewritten.relationships != inventory.relationships
-        || rewritten.entry_names != inventory.entry_names
-        || rewritten.content_types != inventory.content_types
-    {
-        return Err(Error::atomic_commit(
-            "worksheet style update changed unrelated workbook metadata",
-        ));
-    }
-    if SourceFingerprint::read(path)? != source_fingerprint {
-        return Err(Error::atomic_commit(format!(
-            "source workbook '{}' changed during worksheet style update",
-            path.display(),
-        )));
-    }
-    replace_temporary(temporary, path, source_metadata.permissions())
 }
 
 fn reorder_sheet_to_path_with_hook<H>(

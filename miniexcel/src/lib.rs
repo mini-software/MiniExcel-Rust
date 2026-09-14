@@ -21,8 +21,6 @@ pub mod serde_helpers;
 mod sheet;
 mod streaming;
 mod template;
-#[cfg(not(target_arch = "wasm32"))]
-mod workbook_edit;
 mod writer;
 
 pub use analytics::{
@@ -54,5 +52,3 @@ pub use rag::{
 };
 pub use sheet::{SheetInfo, SheetType, SheetVisibility};
 pub use streaming::{ByteQuerySummary, QuerySummary};
-#[cfg(not(target_arch = "wasm32"))]
-pub use workbook_edit::WorkbookEditor;

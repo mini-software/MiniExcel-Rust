@@ -430,6 +430,31 @@ test("splitter drag keeps the resize cursor over interactive descendants", async
   await expect.poll(() => cursorOf(page.getByTestId("rail-splitter"))).toBe("col-resize");
 });
 
+test("splitter keyboard bounds update ARIA state and persist across reloads", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "The splitter only exists in the two-column layout");
+  await page.goto("/");
+  await expect(page.getByTestId("file-name")).toHaveText("miniexcel-browser-demo.xlsx");
+
+  const splitter = page.getByTestId("rail-splitter");
+  await expect(splitter).toHaveAttribute("aria-valuemin", "260");
+  await expect(splitter).toHaveAttribute("aria-valuemax", "720");
+  await splitter.focus();
+
+  await page.keyboard.press("Home");
+  await expect.poll(() => railWidth(page)).toBe(260);
+  await expect(splitter).toHaveAttribute("aria-valuenow", "260");
+  await expect.poll(async () => (await readLayout(page)).width).toBe(260);
+
+  await page.keyboard.press("End");
+  await expect.poll(() => railWidth(page)).toBe(720);
+  await expect(splitter).toHaveAttribute("aria-valuenow", "720");
+  await expect.poll(async () => (await readLayout(page)).width).toBe(720);
+
+  await page.reload();
+  await expect.poll(() => railWidth(page)).toBe(720);
+  await expect(page.getByTestId("rail-splitter")).toHaveAttribute("aria-valuenow", "720");
+});
+
 for (const project of ["mobile", "mobile-narrow"]) {
   test(`${project} toggles the stacked control rail without horizontal overflow`, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== project);

@@ -218,9 +218,13 @@ input:disabled {
 .workspace {
   min-height: 0;
   display: grid;
-  grid-template-columns: 380px minmax(0, 1fr);
+  grid-template-columns: var(--rail-width, 380px) 14px minmax(0, 1fr);
   padding: 16px;
-  gap: 16px;
+  gap: 0;
+}
+
+.workspace.is-collapsed {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .control-rail,
@@ -235,6 +239,45 @@ input:disabled {
 
 .control-rail {
   overflow-y: auto;
+}
+
+.rail-splitter {
+  position: relative;
+  align-self: stretch;
+  min-height: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.rail-splitter::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: var(--line-strong);
+  opacity: 0.5;
+  transition: background-color 160ms ease, opacity 160ms ease;
+}
+
+.rail-splitter:hover::before,
+.rail-splitter:focus-visible::before,
+body.is-resizing .rail-splitter::before {
+  background: var(--green);
+  opacity: 1;
+}
+
+.rail-splitter:focus-visible {
+  outline: 3px solid rgb(46 100 138 / 35%);
+  outline-offset: -2px;
+}
+
+body.is-resizing,
+body.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 .control-section {
@@ -643,6 +686,43 @@ input:disabled {
   border-bottom: 1px solid var(--line);
 }
 
+.preview-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.rail-toggle {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+
+.rail-toggle:hover {
+  color: var(--green);
+  background: var(--green-soft);
+  border-color: var(--green);
+}
+
+.rail-toggle[aria-expanded="false"] {
+  color: var(--muted);
+  background: var(--surface-soft);
+}
+
+.rail-toggle svg {
+  width: 19px;
+  height: 19px;
+}
+
 .preview-title {
   min-width: 0;
 }
@@ -916,6 +996,10 @@ input:disabled {
     gap: 10px;
   }
 
+  .rail-splitter {
+    display: none;
+  }
+
   .control-rail {
     overflow: visible;
   }
@@ -988,6 +1072,10 @@ input:disabled {
     flex-direction: column;
     min-height: 126px;
     padding: 14px;
+  }
+
+  .preview-heading {
+    width: 100%;
   }
 
   .preview-title {

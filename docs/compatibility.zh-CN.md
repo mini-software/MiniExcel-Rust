@@ -143,7 +143,7 @@ Rust integration test 复用仓库 `tests/data/xlsx` 下的现有文件，包括
 - 借用动态/类型化/structured reader、重复 metadata 读取、callback 停止/error，以及借用动态/schema/类型化/多表 writer。
 - structured formula text、缓存值、A1 地址、style ID、内置/自定义 number format、range 和提前丢弃迭代器。
 
-Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、多工作表、visible/hidden/very-hidden 状态、active sheet 选择、行数、空 schema、默认/自定义/禁用冻结窗格、header/headerless/typed AutoFilter 范围、从右到左 view、有界固定 AutoWidth 输出、explicit/hidden column layout、普通 body 换行及 formatted-value 排除、body 对齐与换行/number format 组合、默认/自定义 header style、默认/最小 cell style 模式、显式 path 覆盖行为和 worksheet name 验证。模板测试覆盖标量与混合文本、原生 number/boolean、XML 转义、公式注入防护、缺失变量策略、空数组与非空数组、多工作表、样式保留、path 覆盖和 byte 工作流。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range，以及桌面/移动 viewport。
+Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、多工作表、visible/hidden/very-hidden 状态、active sheet 选择、行数、空 schema、默认/自定义/禁用冻结窗格、header/headerless/typed AutoFilter 范围、从右到左 view、有界固定 AutoWidth 输出、explicit/hidden column layout、普通 body 换行及 formatted-value 排除、body 对齐与换行/number format 组合、默认/自定义 header style、默认/最小 cell style 模式、显式 path 覆盖行为和 worksheet name 验证。模板测试覆盖标量与混合文本、原生 number/boolean、XML 转义、公式注入防护、缺失变量策略、空数组与非空数组、多工作表、样式保留、path 覆盖和 byte 工作流。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range、可折叠、可拖曳调整宽度且会校验保存布局的控制栏，以及桌面/移动 viewport。
 
 `TableStyle` 控制普通 cell format，并不是 OOXML table 抽象。两种模式都不会创建 `xl/tables` entry 或 worksheet `tableParts`。
 

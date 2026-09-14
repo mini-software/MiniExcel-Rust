@@ -29,6 +29,18 @@ use crate::{ExistingSheetPolicy, InsertOptions, SheetVisibility, TargetRelations
 pub struct MiniExcel;
 
 impl MiniExcel {
+    /// Starts a deferred, fluent edit for one worksheet in an existing XLSX workbook.
+    ///
+    /// Operations are normalized and ordered only when [`crate::WorkbookEditor::save`] is called.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[must_use]
+    pub fn edit_sheet(
+        path: impl AsRef<Path>,
+        sheet_name: impl Into<String>,
+    ) -> crate::WorkbookEditor {
+        crate::WorkbookEditor::new(path.as_ref().to_owned(), sheet_name.into())
+    }
+
     /// Returns worksheet names in workbook order.
     pub fn get_sheet_names(path: impl AsRef<Path>) -> Result<Vec<String>> {
         crate::streaming::sheet_names(path)

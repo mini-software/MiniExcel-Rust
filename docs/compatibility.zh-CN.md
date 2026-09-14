@@ -54,6 +54,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | 类型化导出 | `save_as_serialized<T>()` | 内部使用 Serde 映射 |
 | 多工作表导出 | `save_as_sheets()` / `save_as_serialized_sheets()` | 保留输入工作表顺序并返回数据行数 |
 | `InsertSheet` append/replace | `insert()` / `insert_with_schema()` / `insert_serialized()` / borrowed reader-to-writer variants | Path API 为原子操作；独立 borrowed stream 要求空 sink，并在无原子 commit 的情况下保持相同 package 行为 |
+| 延迟 cell 字体颜色编辑 | `MiniExcel::edit_sheet()` / `WorkbookEditor::set_font_color()` / `save()` | Rust-only path API；支持单个 worksheet 中已有 cell、RGB color、有界内存 XML rewrite 与原子 commit |
 | Async Insert producer | `insert_with_schema_async*()` | 可选 `async` feature；bounded producer channel，XLSX 工作在专用 blocking thread |
 | Async path query | `query_async*()` / `query_as_async*()` | 可选 `async` feature；bounded 动态/Serde stream、协作式 cancellation、blocking XLSX worker |
 | Async dynamic/Serde export | `save_as_with_schema_async*()` / `save_as_serialized_async*()` | 可选 `async` feature；显式或首行推断 schema、bounded producer、原子 destination、协作式 cancellation、data-cell progress |
@@ -74,7 +75,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 | 调用方持有的 XLSX input | `visit_*_from_reader()` / metadata `*_from_reader()` | 借用 `Read + Seek`；同步 visitor 模型 |
 | 调用方持有的 XLSX output | `save_as*_to_writer()` | 借用 `Write + Send`；动态、schema、类型化和多工作表 |
 
-`MiniExcel` 是唯一公共行为入口。Reader、writer、parser 和具体迭代器类型均为 crate 内部实现。公共支持类型仅限 row/cell value、结构化 provenance row、option、error/result 和 Serde date/time helper。
+`MiniExcel` 是主要公共行为入口。Reader、writer、parser 和具体迭代器类型均为 crate 内部实现。`WorkbookEditor` 仅由 `MiniExcel::edit_sheet()` 返回，用于延迟 worksheet 编辑。其他公共支持类型仅限 row/cell value、结构化 provenance row、option、error/result 和 Serde date/time helper。
 
 ## 兼容性默认值
 
@@ -125,7 +126,7 @@ Rust MVP 在统一的 `MiniExcel` facade 后实现最小但实用的 MiniExcel �
 
 backend 对所选 worksheet entry 执行两次顺序、有界内存扫描。第一次记录使用范围和紧凑 merged-cell 矩形。这是为了在合法文件省略 `<dimension>` 时保持 MiniExcel 兼容的稳定动态 schema、像 .NET reader 一样保留仅含 style 的 row element，并在不展开地址 map 的情况下支持按需 merged-cell 填充。第二次扫描输出 row，只保留当前活动 merge range 的锚点值。Worksheet XML 和先前 row 永远不会保留；内存主要由内存或磁盘索引的 shared string、style、merge metadata、parser buffer、当前 row 和有界 channel 构成。
 
-内部 writer 组装包含一个或多个工作表的新 ZIP package。路径保存默认拒绝已有文件，也可显式替换。Path Insert API 通过验证后的 package rewrite 与同目录临时文件原子替换来追加或替换 worksheet；未修改的 ZIP entry 和现有 worksheet identity 会保留。独立 borrowed Insert API 接受 `Read + Seek` input 与空的 `Write + Seek` output，调用后两者保持 open，并在不提供 atomic commit、rollback 或写后验证的情况下保持相同 package 行为。可返回错误的显式 schema producer 只消费一次，经磁盘 spool 与 constant-memory worksheet writer 处理。生成的 donor worksheet XML、shared-string conversion、style-ID rebase 与 ZIP insertion 均使用临时文件 stream，因此 worksheet memory 与 row count 无关。Path Insert 还通过 advisory lock 与 commit 前 source fingerprint 防止并发更新丢失。模板填充会在复制的 package 中重写 worksheet XML；worksheet 样式和无关 ZIP part 会保留。数组展开会移动 row/cell 地址并更新 worksheet dimension。公式表达式会保留但不会重算；版本 1 不会在插行后调整公式引用、merge range、table、drawing 或 defined name。
+内部 writer 组装包含一个或多个工作表的新 ZIP package。路径保存默认拒绝已有文件，也可显式替换。Path Insert API 通过验证后的 package rewrite 与同目录临时文件原子替换来追加或替换 worksheet；未修改的 ZIP entry 和现有 worksheet identity 会保留。独立 borrowed Insert API 接受 `Read + Seek` input 与空的 `Write + Seek` output，调用后两者保持 open，并在不提供 atomic commit、rollback 或写后验证的情况下保持相同 package 行为。可返回错误的显式 schema producer 只消费一次，经磁盘 spool 与 constant-memory worksheet writer 处理。生成的 donor worksheet XML、shared-string conversion、style-ID rebase 与 ZIP insertion 均使用临时文件 stream，因此 worksheet memory 与 row count 无关。Path Insert 还通过 advisory lock 与 commit 前 source fingerprint 防止并发更新丢失。`WorkbookEditor` 会把字体颜色操作延迟到 `save()`，届时按 cell 坐标排序，同一 cell 以最后登记的操作为准；随后扫描所选 worksheet 的已有 style ID、去重克隆 font/XF record、经临时文件流式重写 worksheet、验证 package 并原子提交。当前只编辑 worksheet XML 中已经存在的 cell。模板填充会在复制的 package 中重写 worksheet XML；worksheet 样式和无关 ZIP part 会保留。数组展开会移动 row/cell 地址并更新 worksheet dimension。公式表达式会保留但不会重算；版本 1 不会在插行后调整公式引用、merge range、table、drawing 或 defined name。
 
 ## 测试来源
 
@@ -143,7 +144,7 @@ Rust integration test 复用仓库 `tests/data/xlsx` 下的现有文件，包括
 - 借用动态/类型化/structured reader、重复 metadata 读取、callback 停止/error，以及借用动态/schema/类型化/多表 writer。
 - structured formula text、缓存值、A1 地址、style ID、内置/自定义 number format、range 和提前丢弃迭代器。
 
-Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、多工作表、visible/hidden/very-hidden 状态、active sheet 选择、行数、空 schema、默认/自定义/禁用冻结窗格、header/headerless/typed AutoFilter 范围、从右到左 view、有界固定 AutoWidth 输出、explicit/hidden column layout、普通 body 换行及 formatted-value 排除、body 对齐与换行/number format 组合、默认/自定义 header style、默认/最小 cell style 模式、显式 path 覆盖行为和 worksheet name 验证。模板测试覆盖标量与混合文本、原生 number/boolean、XML 转义、公式注入防护、缺失变量策略、空数组与非空数组、多工作表、样式保留、path 覆盖和 byte 工作流。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range，以及桌面/移动 viewport。
+Writer test 通过 `MiniExcel::save_as*()` 生成临时 workbook，并使用 `MiniExcel::query*()` 回读，覆盖动态和类型化 value、date、多工作表、visible/hidden/very-hidden 状态、active sheet 选择、行数、空 schema、默认/自定义/禁用冻结窗格、header/headerless/typed AutoFilter 范围、从右到左 view、有界固定 AutoWidth 输出、explicit/hidden column layout、普通 body 换行及 formatted-value 排除、body 对齐与换行/number format 组合、默认/自定义 header style、默认/最小 cell style 模式、显式 path 覆盖行为和 worksheet name 验证。模板测试覆盖标量与混合文本、原生 number/boolean、XML 转义、公式注入防护、缺失变量策略、空数组与非空数组、多工作表、样式保留、path 覆盖和 byte 工作流。WASM adapter 有原生 unit test，Browser Lab Playwright test 则覆盖生成 workbook 的渲染、query 控件、包含端点的结束 range、可折叠、可拖曳调整宽度且会校验保存布局的控制栏，以及桌面/移动 viewport。
 
 `TableStyle` 控制普通 cell format，并不是 OOXML table 抽象。两种模式都不会创建 `xl/tables` entry 或 worksheet `tableParts`。
 

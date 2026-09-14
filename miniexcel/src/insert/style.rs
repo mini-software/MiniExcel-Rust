@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Cursor, Read, Write};
 
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
 use super::donor::DonorWorksheet;
-use crate::{Error, Result};
+use crate::{CellReference, Error, Result, RgbColor};
 
 const FIRST_CUSTOM_NUM_FMT_ID: u32 = 164;
 const MAX_NUM_FMT_ID: u32 = u16::MAX as u32;
@@ -39,6 +39,152 @@ pub(crate) fn rebase_styles(
     donor: &DonorWorksheet,
 ) -> Result<StyleRebaseResult> {
     rebase_style_reader(target_styles_xml, &donor.styles.xml, donor.worksheet_reader()?)
+}
+
+pub(crate) fn collect_cell_styles<R>(
+    xml: R,
+    cells: &BTreeSet<CellReference>,
+) -> Result<BTreeMap<CellReference, u32>>
+where
+    R: BufRead,
+{
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut styles = BTreeMap::new();
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| Error::insert_package(format!("invalid worksheet XML: {error}")))?;
+        match event {
+            Event::Start(cell) | Event::Empty(cell) if local_name(cell.name().as_ref()) == b"c" => {
+                if let Some(address) = attribute(&cell, b"r")? {
+                    let reference = address.parse::<CellReference>()?;
+                    if cells.contains(&reference) {
+                        styles.insert(reference, numeric_attribute(&cell, b"s")?.unwrap_or(0));
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    if let Some(cell) = cells.iter().find(|cell| !styles.contains_key(cell)) {
+        return Err(Error::insert_package(format!("cell '{cell}' does not exist")));
+    }
+    Ok(styles)
+}
+
+pub(crate) fn update_font_colors(
+    styles_xml: &[u8],
+    cell_styles: &BTreeMap<CellReference, u32>,
+    colors: &BTreeMap<CellReference, RgbColor>,
+) -> Result<(Vec<u8>, BTreeMap<CellReference, u32>)> {
+    let document = StyleDocument::parse(styles_xml)?;
+    let fonts = document.nodes(StyleSection::Fonts)?;
+    let cell_xfs = document.nodes(StyleSection::CellXfs)?;
+    let mut font_indexes = fonts
+        .iter()
+        .enumerate()
+        .map(|(index, node)| Ok((node.key()?, index as u32)))
+        .collect::<Result<HashMap<_, _>>>()?;
+    let mut xf_indexes = cell_xfs
+        .iter()
+        .enumerate()
+        .map(|(index, node)| Ok((node.key()?, index as u32)))
+        .collect::<Result<HashMap<_, _>>>()?;
+    let mut appended_fonts = Vec::new();
+    let mut appended_xfs = Vec::new();
+    let mut rewritten_cells = BTreeMap::new();
+
+    for (cell, color) in colors {
+        let old_xf_id = *cell_styles
+            .get(cell)
+            .ok_or_else(|| Error::insert_package(format!("cell '{cell}' has no style")))?;
+        let old_xf = cell_xfs.get(old_xf_id as usize).ok_or_else(|| {
+            Error::insert_package(format!("cell '{cell}' references missing style {old_xf_id}"))
+        })?;
+        let old_font_id = numeric_attribute(old_xf.root()?, b"fontId")?.unwrap_or(0);
+        let old_font = fonts.get(old_font_id as usize).ok_or_else(|| {
+            Error::insert_package(format!(
+                "style {old_xf_id} references missing font {old_font_id}"
+            ))
+        })?;
+        let new_font = old_font.with_font_color(*color)?;
+        let font_key = new_font.key()?;
+        let new_font_id = if let Some(index) = font_indexes.get(&font_key) {
+            *index
+        } else {
+            let index = (fonts.len() + appended_fonts.len()) as u32;
+            font_indexes.insert(font_key, index);
+            appended_fonts.push(new_font);
+            index
+        };
+        let new_xf = old_xf.with_attributes(&[
+            (b"fontId", new_font_id.to_string()),
+            (b"applyFont", "1".to_owned()),
+        ])?;
+        let xf_key = new_xf.key()?;
+        let new_xf_id = if let Some(index) = xf_indexes.get(&xf_key) {
+            *index
+        } else {
+            let index = (cell_xfs.len() + appended_xfs.len()) as u32;
+            xf_indexes.insert(xf_key, index);
+            appended_xfs.push(new_xf);
+            index
+        };
+        rewritten_cells.insert(*cell, new_xf_id);
+    }
+
+    validate_limits(
+        document.nodes(StyleSection::NumFmts)?.len(),
+        fonts.len() + appended_fonts.len(),
+        document.nodes(StyleSection::Fills)?.len(),
+        document.nodes(StyleSection::Borders)?.len(),
+        document.nodes(StyleSection::CellStyleXfs)?.len(),
+        cell_xfs.len() + appended_xfs.len(),
+    )?;
+    let appended = BTreeMap::from([
+        (StyleSection::NumFmts, Vec::new()),
+        (StyleSection::Fonts, appended_fonts),
+        (StyleSection::Fills, Vec::new()),
+        (StyleSection::Borders, Vec::new()),
+        (StyleSection::CellStyleXfs, Vec::new()),
+        (StyleSection::CellXfs, appended_xfs),
+    ]);
+    Ok((document.render(&appended)?, rewritten_cells))
+}
+
+pub(crate) fn rewrite_worksheet_font_colors<R, W>(
+    xml: R,
+    output: W,
+    styles: &BTreeMap<CellReference, u32>,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(output);
+    let mut buffer = Vec::new();
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| Error::insert_package(format!("invalid worksheet XML: {error}")))?;
+        match event {
+            Event::Start(cell) if local_name(cell.name().as_ref()) == b"c" => {
+                write_event(&mut writer, Event::Start(rewrite_selected_cell(&cell, styles)?))?;
+            }
+            Event::Empty(cell) if local_name(cell.name().as_ref()) == b"c" => {
+                write_event(&mut writer, Event::Empty(rewrite_selected_cell(&cell, styles)?))?;
+            }
+            Event::Eof => break,
+            event => write_event(&mut writer, event.into_owned())?,
+        }
+        buffer.clear();
+    }
+    Ok(())
 }
 
 fn rebase_style_xml(
@@ -203,6 +349,45 @@ impl XmlNode {
             Some(Event::Empty(_)) => Event::Empty(replacement),
             _ => return Err(Error::insert_package("style component has no element root")),
         };
+        Ok(Self { events })
+    }
+
+    fn with_font_color(&self, color: RgbColor) -> Result<Self> {
+        let mut events = self.events.clone();
+        let mut color_event = BytesStart::new("color");
+        let rgb = format!("FF{:06X}", color.value());
+        color_event.push_attribute(("rgb", rgb.as_str()));
+        let replacement = Event::Empty(color_event.into_owned());
+        if events.len() == 1 && matches!(events.first(), Some(Event::Empty(_))) {
+            let root = self.root()?;
+            let qualified_name = root.name();
+            let name = std::str::from_utf8(qualified_name.as_ref())
+                .map_err(|_| Error::insert_package("font element name is not UTF-8"))?;
+            return Ok(Self {
+                events: vec![
+                    Event::Start(clone_start(root)?),
+                    replacement,
+                    Event::End(BytesEnd::new(name.to_owned())),
+                ],
+            });
+        }
+        let mut index = 1;
+        while index + 1 < events.len() {
+            match &events[index] {
+                Event::Start(start) if local_name(start.name().as_ref()) == b"color" => {
+                    let end = element_end(&events, index)?;
+                    events.splice(index..=end, [replacement]);
+                    return Ok(Self { events });
+                }
+                Event::Empty(empty) if local_name(empty.name().as_ref()) == b"color" => {
+                    events[index] = replacement;
+                    return Ok(Self { events });
+                }
+                _ => index += 1,
+            }
+        }
+        let insertion = events.len().saturating_sub(1);
+        events.insert(insertion, replacement);
         Ok(Self { events })
     }
 }
@@ -740,6 +925,20 @@ fn replace_attributes(
         }
     }
     Ok(output)
+}
+
+fn rewrite_selected_cell(
+    cell: &BytesStart<'_>,
+    styles: &BTreeMap<CellReference, u32>,
+) -> Result<BytesStart<'static>> {
+    let Some(address) = attribute(cell, b"r")? else {
+        return clone_start(cell);
+    };
+    let reference = address.parse::<CellReference>()?;
+    match styles.get(&reference) {
+        Some(style) => replace_attributes(cell, &[(b"s", style.to_string())]),
+        None => clone_start(cell),
+    }
 }
 
 fn clone_start(event: &BytesStart<'_>) -> Result<BytesStart<'static>> {

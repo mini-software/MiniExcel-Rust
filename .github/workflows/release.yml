@@ -50,7 +50,7 @@ jobs:
             throw "Rust workspace package versions must all equal $version."
           }
           $webVersion = (Get-Content web-demo/package.json -Raw | ConvertFrom-Json).version
-          $webLockVersion = (Get-Content web-demo/package-lock.json -Raw | ConvertFrom-Json).version
+          $webLockVersion = (Get-Content web-demo/package-lock.json -Raw | ConvertFrom-Json -AsHashtable)['version']
           if ($webVersion -ne $version -or $webLockVersion -ne $version) {
             throw "Browser Lab package versions must all equal $version."
           }

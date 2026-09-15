@@ -86,9 +86,11 @@ jobs:
         shell: pwsh
         run: |
           $asset = "miniexcel-cli-$env:RELEASE_TAG-windows-x64.zip"
-          New-Item -ItemType Directory -Path target/release-cli | Out-Null
-          Copy-Item LICENSE, README.md, target/release/miniexcel.exe target/release-cli/
-          Compress-Archive -Path target/release-cli/* -DestinationPath "target/$asset"
+          $staging = Join-Path $env:RUNNER_TEMP 'release-cli'
+          Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          Copy-Item LICENSE, README.md, target/release/miniexcel.exe $staging
+          Compress-Archive -Path "$staging/*" -DestinationPath "target/$asset" -Force
       - uses: actions/upload-artifact@v4
         with:
           name: release-cli

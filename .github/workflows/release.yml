@@ -160,7 +160,7 @@ jobs:
         shell: bash
         run: |
           version="${RELEASE_TAG#v}"
-          status=$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" "https://crates.io/api/v1/crates/miniexcel/$version")
+          status=$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" --user-agent "MiniExcel-Rust release workflow (https://github.com/mini-software/MiniExcel-Rust)" "https://crates.io/api/v1/crates/miniexcel/$version")
           case "$status" in
             200) echo "published=true" >> "$GITHUB_OUTPUT" ;;
             404) echo "published=false" >> "$GITHUB_OUTPUT" ;;
@@ -180,7 +180,7 @@ jobs:
         run: |
           version="${RELEASE_TAG#v}"
           for attempt in {1..20}; do
-            status=$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" "https://crates.io/api/v1/crates/miniexcel/$version")
+            status=$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" --user-agent "MiniExcel-Rust release workflow (https://github.com/mini-software/MiniExcel-Rust)" "https://crates.io/api/v1/crates/miniexcel/$version")
             case "$status" in
               200) exit 0 ;;
               404) ;;

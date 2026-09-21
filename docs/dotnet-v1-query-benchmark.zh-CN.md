@@ -36,7 +36,7 @@ worksheet 的 fallback 路径。内容 hash 使用 stack 或 pooled UTF-8 buffer
 
 2026-09-10 的 Windows x64 测试使用声明 dimension 的 100,000 行 x 10 列工作簿，每个 runtime、
 每个场景运行 5 个独立进程。`MiniExcel 1.46.0`、通过 .NET 调用的
-`MiniExcel.Rust 0.1.0-preview.2` 与原生
+`MiniExcel.Rust 0.5.0-preview.1` 与原生
 `MiniExcel Rust 0.4.0` 的所有规范化值完全一致。
 
 | 场景 | Runtime | 耗时中位数 | 行/秒 | 首行延迟 | 托管分配 | 峰值工作集 |

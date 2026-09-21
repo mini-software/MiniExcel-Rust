@@ -292,7 +292,7 @@ Workbook editing、Template、formula、formatting に依存する前に、
 ### 最新 NuGet 結果
 
 最新の Windows x64 テストでは、dimension を宣言した 100,000 行 x 10 列の workbook で
-`MiniExcel 1.46.0`、.NET wrapper `MiniExcel.Rust 0.1.0-preview.2`、native `MiniExcel Rust 0.4.0` を比較しました。
+`MiniExcel 1.46.0`、.NET wrapper `MiniExcel.Rust 0.5.0-preview.1`、native `MiniExcel Rust 0.4.0` を比較しました。
 runtime とシナリオごとに 5 個の新規 process を使用し、計測前にすべての値を検証しています。
 
 | シナリオ | Runtime | 中央値 | 行/秒 | 最初の行 | Managed allocation | Peak working set |

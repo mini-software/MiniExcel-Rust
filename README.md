@@ -118,7 +118,7 @@ See the [compatibility matrix](docs/compatibility.md), [analytics and RAG contra
 ### Latest NuGet Results
 
 The latest Windows x64 run compared public `MiniExcel 1.46.0`, the
-`MiniExcel.Rust 0.1.0-preview.2` .NET wrapper, and native `MiniExcel Rust 0.4.0` over a declared-dimension
+`MiniExcel.Rust 0.5.0-preview.1` .NET wrapper, and native `MiniExcel Rust 0.4.0` over a declared-dimension
 workbook containing 100,000 rows x 10 columns. Five fresh processes ran per runtime and scenario;
 every row, column, and normalized value matched before timing.
 

@@ -296,7 +296,7 @@ Consulta la [matriz de compatibilidad](../compatibility.md), el [contrato de an�
 ### Últimos Resultados NuGet
 
 La última prueba Windows x64 comparó `MiniExcel 1.46.0`, el wrapper .NET
-`MiniExcel.Rust 0.1.0-preview.2` y `MiniExcel Rust 0.4.0` nativo sobre un workbook con dimension
+`MiniExcel.Rust 0.5.0-preview.1` y `MiniExcel Rust 0.4.0` nativo sobre un workbook con dimension
 declarada de 100.000 filas x 10 columnas,
 con cinco procesos nuevos por runtime y escenario. Todos los valores se verificaron antes de medir.
 

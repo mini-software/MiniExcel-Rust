@@ -7,6 +7,7 @@
 [![Crates.io](https://img.shields.io/crates/v/miniexcel.svg)](https://crates.io/crates/miniexcel)
 [![Downloads](https://img.shields.io/crates/d/miniexcel.svg)](https://crates.io/crates/miniexcel)
 [![Documentation](https://docs.rs/miniexcel/badge.svg)](https://docs.rs/miniexcel)
+[![NuGet](https://img.shields.io/nuget/vpre/MiniExcel.Rust.svg)](https://www.nuget.org/packages/MiniExcel.Rust)
 [![CI](https://github.com/mini-software/MiniExcel-Rust/actions/workflows/rust.yml/badge.svg)](https://github.com/mini-software/MiniExcel-Rust/actions/workflows/rust.yml)
 [![GitHub stars](https://img.shields.io/github/stars/mini-software/MiniExcel-Rust?logo=github)](https://github.com/mini-software/MiniExcel-Rust)
 [![License](https://img.shields.io/crates/l/miniexcel.svg)](LICENSE)
@@ -52,8 +53,10 @@ v1 `1.46.0`, reuses its configuration and mapping types, and routes calls
 made through `MiniExcelRust` to the Rust native library.
 
 ```bash
-dotnet add package MiniExcel.Rust --version 0.1.0-preview.2
+dotnet add package MiniExcel.Rust --prerelease
 ```
+
+See the [NuGet page](https://www.nuget.org/packages/MiniExcel.Rust) for published versions.
 
 ```csharp
 using MiniExcelLibs;
@@ -115,7 +118,7 @@ See the [compatibility matrix](docs/compatibility.md), [analytics and RAG contra
 ### Latest NuGet Results
 
 The latest Windows x64 run compared public `MiniExcel 1.46.0`, the
-`MiniExcel.Rust 0.1.0-preview.2` .NET wrapper, and native `MiniExcel Rust 0.4.0` over a declared-dimension
+`MiniExcel.Rust 0.5.0-preview.1` .NET wrapper, and native `MiniExcel Rust 0.4.0` over a declared-dimension
 workbook containing 100,000 rows x 10 columns. Five fresh processes ran per runtime and scenario;
 every row, column, and normalized value matched before timing.
 

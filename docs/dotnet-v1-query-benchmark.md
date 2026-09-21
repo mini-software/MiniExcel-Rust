@@ -37,7 +37,7 @@ stack or pooled UTF-8 buffers so temporary benchmark arrays do not dominate mana
 
 The 2026-09-10 Windows x64 run used a declared-dimension workbook with 100,000 rows x 10 columns
 and five fresh processes per runtime and scenario. `MiniExcel 1.46.0`,
-`MiniExcel.Rust 0.1.0-preview.2` through .NET, and native
+`MiniExcel.Rust 0.5.0-preview.1` through .NET, and native
 `MiniExcel Rust 0.4.0` matched every normalized value.
 
 | Scenario | Runtime | Median elapsed | Rows/s | First row | Managed allocation | Peak working set |

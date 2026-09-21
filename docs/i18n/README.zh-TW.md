@@ -7,6 +7,7 @@
 [![Crates.io](https://img.shields.io/crates/v/miniexcel.svg)](https://crates.io/crates/miniexcel)
 [![下載量](https://img.shields.io/crates/d/miniexcel.svg)](https://crates.io/crates/miniexcel)
 [![文件](https://docs.rs/miniexcel/badge.svg)](https://docs.rs/miniexcel)
+[![NuGet](https://img.shields.io/nuget/vpre/MiniExcel.Rust.svg)](https://www.nuget.org/packages/MiniExcel.Rust)
 [![CI](https://github.com/mini-software/MiniExcel-Rust/actions/workflows/rust.yml/badge.svg)](https://github.com/mini-software/MiniExcel-Rust/actions/workflows/rust.yml)
 [![GitHub Stars](https://img.shields.io/github/stars/mini-software/MiniExcel-Rust?logo=github)](https://github.com/mini-software/MiniExcel-Rust)
 [![授權](https://img.shields.io/crates/l/miniexcel.svg)](../../LICENSE)
@@ -51,8 +52,10 @@ cargo add miniexcel
 重用其設定與 mapping 型別，並將透過 `MiniExcelRust` 發起的呼叫交給 Rust 原生程式庫執行。
 
 ```bash
-dotnet add package MiniExcel.Rust --version 0.1.0-preview.2
+dotnet add package MiniExcel.Rust --prerelease
 ```
+
+已發佈的版本請見 [NuGet 頁面](https://www.nuget.org/packages/MiniExcel.Rust)。
 
 ```csharp
 using MiniExcelLibs;
@@ -283,7 +286,7 @@ Template、公式或格式功能前，請先在[相容性矩陣](../compatibilit
 ### 最新 NuGet 結果
 
 最新 Windows x64 測試使用已宣告 dimension 的 100,000 列 x 10 欄 workbook，比較公開的
-`MiniExcel 1.46.0`、`.NET` 包裝器 `MiniExcel.Rust 0.1.0-preview.2` 與原生
+`MiniExcel 1.46.0`、`.NET` 包裝器 `MiniExcel.Rust 0.5.0-preview.1` 與原生
 `MiniExcel Rust 0.4.0`；每個 runtime、每個場景執行 5 個獨立 process。計時前已逐列、逐欄、逐值驗證一致。
 
 | 場景 | Runtime | 耗時中位數 | 列/秒 | 首列延遲 | Managed allocation | Peak working set |

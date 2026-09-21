@@ -7,6 +7,7 @@
 [![Crates.io](https://img.shields.io/crates/v/miniexcel.svg)](https://crates.io/crates/miniexcel)
 [![Descargas](https://img.shields.io/crates/d/miniexcel.svg)](https://crates.io/crates/miniexcel)
 [![Documentación](https://docs.rs/miniexcel/badge.svg)](https://docs.rs/miniexcel)
+[![NuGet](https://img.shields.io/nuget/vpre/MiniExcel.Rust.svg)](https://www.nuget.org/packages/MiniExcel.Rust)
 [![CI](https://github.com/mini-software/MiniExcel-Rust/actions/workflows/rust.yml/badge.svg)](https://github.com/mini-software/MiniExcel-Rust/actions/workflows/rust.yml)
 [![GitHub Stars](https://img.shields.io/github/stars/mini-software/MiniExcel-Rust?logo=github)](https://github.com/mini-software/MiniExcel-Rust)
 [![Licencia](https://img.shields.io/crates/l/miniexcel.svg)](../../LICENSE)
@@ -52,8 +53,10 @@ v1 `1.46.0`, reutiliza sus tipos de configuración y mapping, y
 ejecuta mediante la biblioteca nativa de Rust las llamadas realizadas a `MiniExcelRust`.
 
 ```bash
-dotnet add package MiniExcel.Rust --version 0.1.0-preview.2
+dotnet add package MiniExcel.Rust --prerelease
 ```
+
+Consulte la [página de NuGet](https://www.nuget.org/packages/MiniExcel.Rust) para ver las versiones publicadas.
 
 ```csharp
 using MiniExcelLibs;

@@ -7,6 +7,7 @@
 [![Crates.io](https://img.shields.io/crates/v/miniexcel.svg)](https://crates.io/crates/miniexcel)
 [![ダウンロード](https://img.shields.io/crates/d/miniexcel.svg)](https://crates.io/crates/miniexcel)
 [![ドキュメント](https://docs.rs/miniexcel/badge.svg)](https://docs.rs/miniexcel)
+[![NuGet](https://img.shields.io/nuget/vpre/MiniExcel.Rust.svg)](https://www.nuget.org/packages/MiniExcel.Rust)
 [![CI](https://github.com/mini-software/MiniExcel-Rust/actions/workflows/rust.yml/badge.svg)](https://github.com/mini-software/MiniExcel-Rust/actions/workflows/rust.yml)
 [![GitHub Stars](https://img.shields.io/github/stars/mini-software/MiniExcel-Rust?logo=github)](https://github.com/mini-software/MiniExcel-Rust)
 [![ライセンス](https://img.shields.io/crates/l/miniexcel.svg)](LICENSE)
@@ -52,8 +53,10 @@ v1 `1.46.0` に固定して依存し、その設定型と mapping 型を再利�
 `MiniExcelRust` の呼び出しを Rust ネイティブライブラリで実行します。
 
 ```bash
-dotnet add package MiniExcel.Rust --version 0.1.0-preview.2
+dotnet add package MiniExcel.Rust --prerelease
 ```
+
+公開済みのバージョンは [NuGet ページ](https://www.nuget.org/packages/MiniExcel.Rust) をご覧ください。
 
 ```csharp
 using MiniExcelLibs;
